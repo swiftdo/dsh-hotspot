@@ -5,7 +5,8 @@ import {
   buildDirectPrompt,
   collectStreamText,
   normalizeCatalog,
-  normalizeWriterSelection,
+  normalizeWriterConfig,
+  resolveWriterSelection,
   pickModelEntry,
   pickProviderEntry,
   resolveRoute,
@@ -86,6 +87,25 @@ function textOf(result) {
   return '';
 }
 
+/**
+ * 子代理能不能用指定模型，是 provider 自己的能力，不是我们说了算。
+ *
+ * 宿主支持 `getProvider` 时先问一句：不支持就明确报错，而不是静默回退到父代理的模型
+ * （那会让人以为换成了大模型，实际跑的还是默认那个）。老宿主没有这个查询方法时
+ * 交给 `startActivation` 自己的能力校验去报，错误码是 UNSUPPORTED_CAPABILITY。
+ */
+export function assertAgentModelOverride(service, provider) {
+  if (!service || typeof service.getProvider !== 'function') return;
+  const entry = service.getProvider(provider);
+  if (!entry) throw new Error(`子代理 provider「${provider}」没有注册，无法指定模型`);
+  if (!entry.capabilities?.agentOptions) {
+    throw new Error(
+      `子代理 provider「${provider}」不支持指定模型：把「写正文」的模型改成「跟随默认」，` +
+        `或把写作方式切到「只用手头证据」（不联网，走一次 completion，模型照样生效）`,
+    );
+  }
+}
+
 /** 宿主里 provider 名不止一个时，`spawn` 是默认的内置 provider，优先用它。 */
 export function pickProvider(providers) {
   const list = Array.isArray(providers) ? providers.filter((p) => typeof p === 'string' && p) : [];
@@ -121,25 +141,40 @@ export async function listCatalog(llm) {
   return normalizeCatalog(catalog);
 }
 
-export function writerSelectionPath(digestDir) {
+export function writerConfigPath(digestDir) {
   return path.join(String(digestDir || '.hotspot'), 'writer-config.json');
 }
 
-export async function readWriterSelection(digestDir) {
+/**
+ * 读写作配置。文件不存在或读坏都回默认值，不让面板因为一个配置打不开。
+ * 返回的是完整结构：{ mode, global, writer, polish }。
+ */
+export async function readWriterConfig(digestDir) {
   try {
-    const raw = await readFile(writerSelectionPath(digestDir), 'utf8');
-    return normalizeWriterSelection(JSON.parse(raw));
+    const raw = await readFile(writerConfigPath(digestDir), 'utf8');
+    return normalizeWriterConfig(JSON.parse(raw));
   } catch {
-    return normalizeWriterSelection(null);
+    return normalizeWriterConfig(null);
   }
 }
 
-export async function saveWriterSelection(digestDir, selection) {
-  const clean = normalizeWriterSelection(selection);
-  const file = writerSelectionPath(digestDir);
+/**
+ * 局部更新：只改传进来的那几段，其余沿用盘上的值。
+ * 把 writer/polish 清成空对即「跟随全局」——normalizeWriterConfig 会把它归一成空。
+ */
+export async function saveWriterConfig(digestDir, patch = {}) {
+  const current = await readWriterConfig(digestDir);
+  const next = normalizeWriterConfig({
+    version: 2,
+    mode: patch.mode ?? current.mode,
+    global: { ...current.global, ...(patch.global || {}) },
+    writer: { ...current.writer, ...(patch.writer || {}) },
+    polish: { ...current.polish, ...(patch.polish || {}) },
+  });
+  const file = writerConfigPath(digestDir);
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(clean, null, 2)}\n`, 'utf8');
-  return clean;
+  await writeFile(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  return next;
 }
 
 /** 一次 completion 的文本；message 形状优先用宿主自己的 createUserMessage，拿不到再退回朴素形状。 */
@@ -218,11 +253,12 @@ export function createWriter({
     const title = brief.title || draftTitle || clean;
     const url = brief.url || brief.sources[0]?.url || '';
 
-    const stored = await readWriterSelection(absDirOf(projectRoot));
-    const selection = normalizeWriterSelection({
-      provider: wantedProvider || stored.provider,
-      model: wantedModel || stored.model,
-    });
+    const stored = await readWriterConfig(absDirOf(projectRoot));
+    const configured = resolveWriterSelection(stored, 'writer');
+    const selection = {
+      provider: wantedProvider || configured.provider,
+      model: wantedModel || configured.model,
+    };
     // 默认走子代理（能联网搜）；只有明确要「只用手头证据」时才走一次 completion。
     const mode = wantedMode === 'direct' || wantedMode === 'agent' ? wantedMode : stored.mode;
 
@@ -241,7 +277,10 @@ export function createWriter({
         );
       }
       const provider = selection.provider || pickProvider(typeof service.list === 'function' ? service.list() : []);
-      route = { provider, model: '' };
+      // 面板选了模型就把它带进子代理；provider 不支持覆盖时明说，不自作主张回退。
+      const agentOptions = selection.model ? { provider, model: selection.model } : null;
+      if (agentOptions) assertAgentModelOverride(service, provider);
+      route = { provider, model: agentOptions?.model ?? '' };
 
       const artifact = writerArtifactPath(absDirOf(projectRoot), clean);
       await mkdir(path.dirname(artifact), { recursive: true });
@@ -267,7 +306,11 @@ export function createWriter({
         run = await service.startActivation({
           provider,
           label: 'hotspot-writer',
-          request: { prompt: [{ type: 'text', text: prompt }], parent },
+          request: {
+            prompt: [{ type: 'text', text: prompt }],
+            parent,
+            ...(agentOptions ? { agentOptions } : {}),
+          },
           signal: controller.signal,
           delivery: 'caller',
         });
@@ -418,11 +461,11 @@ export function createPolisher({
       throw new Error('宿主没有提供 llm 服务，无法润色正文');
     }
     const catalog = await listCatalog(llm);
-    const stored = await readWriterSelection(absDirOf(projectRoot));
-    const selection = normalizeWriterSelection({
-      provider: wantedProvider || stored.provider,
-      model: wantedModel || stored.model,
-    });
+    const configured = resolveWriterSelection(await readWriterConfig(absDirOf(projectRoot)), 'polish');
+    const selection = {
+      provider: wantedProvider || configured.provider,
+      model: wantedModel || configured.model,
+    };
     const route = resolveRoute(catalog, selection);
     if (!route) throw new Error('宿主没有可用的模型路由，请先在面板里选一个模型');
 

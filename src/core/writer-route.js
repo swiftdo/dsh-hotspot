@@ -46,6 +46,53 @@ export function normalizeCatalog(entries) {
   return catalog;
 }
 
+/**
+ * 写作配置：一个全局默认，写正文与润色可以各自覆盖。
+ *
+ * 为什么分用途：润色是短任务（只改表达、不联网），写正文要长上下文 + 搜索工具，
+ * 两边用同一个模型总有一边不合适。空着的用途一律跟随 global。
+ *
+ * 旧文件是扁平的 `{ provider, model, mode }`，读到时当成 global，行为与以前一致。
+ */
+export function normalizeWriterConfig(raw) {
+  const record = raw && typeof raw === 'object' ? raw : {};
+  const pairOf = (value) => ({
+    provider: firstString(value?.provider),
+    model: firstString(value?.model),
+  });
+  // 旧格式的顶层字段就是全局默认；新格式的 global 覆盖它。
+  const legacy = pairOf(record);
+  const globalPair = pairOf(record.global);
+  const global = {
+    provider: globalPair.provider || legacy.provider,
+    model: globalPair.model || legacy.model,
+  };
+
+  // 覆盖项必须成对出现：只给一个模型、不给 provider 的，等于没选，回落到全局。
+  const usable = (pair) => Boolean(pair.provider && pair.model);
+  const writer = pairOf(record.writer);
+  const polish = pairOf(record.polish);
+
+  return {
+    version: 2,
+    mode: record.mode === 'direct' ? 'direct' : 'agent',
+    global,
+    writer: usable(writer) ? writer : { provider: '', model: '' },
+    polish: usable(polish) ? polish : { provider: '', model: '' },
+  };
+}
+
+/**
+ * 某个用途实际生效的选择。purpose: 'writer'（写正文）| 'polish'（润色）。
+ * @returns {{ provider: string, model: string, mode: 'agent'|'direct' }}
+ */
+export function resolveWriterSelection(config, purpose = 'writer') {
+  const normalized = normalizeWriterConfig(config);
+  const own = normalized[purpose] ?? { provider: '', model: '' };
+  const pair = own.provider && own.model ? own : normalized.global;
+  return { provider: pair.provider, model: pair.model, mode: normalized.mode };
+}
+
 /** 存盘的选择只保留三个字段，别的字段一律丢掉。mode 只有 agent（联网搜）与 direct（只用手头证据）。 */
 export function normalizeWriterSelection(raw) {
   const record = raw && typeof raw === 'object' ? raw : {};

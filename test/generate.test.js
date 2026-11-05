@@ -5,13 +5,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
+import { resolveWriterSelection } from '../src/core/writer-route.js';
 import {
   createPolisher,
   createWriter,
   pickParentAgent,
   pickProvider,
-  readWriterSelection,
-  saveWriterSelection,
+  readWriterConfig,
+  saveWriterConfig,
 } from '../src/server/generate.js';
 
 const CANDIDATE = {
@@ -249,16 +250,40 @@ test('direct 模式：没有可用模型路由时明确报错，不静默产出�
   );
 });
 
-test('模型选择：存盘后下一次生成沿用，缺省是 agent 模式', async () => {
+test('模型选择：全局默认 + 按用途覆盖，缺省跟随全局', async () => {
   const { root } = await setup();
   const dir = path.join(root, '.hotspot');
-  const saved = await saveWriterSelection(dir, { provider: 'openai', model: 'gpt-x', mode: 'direct' });
-  assert.deepEqual(saved, { provider: 'openai', model: 'gpt-x', mode: 'direct' });
-  assert.deepEqual(await readWriterSelection(dir), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
-  assert.deepEqual(await readWriterSelection(path.join(root, 'nope')), {
-    provider: '',
-    model: '',
+  const empty = { provider: '', model: '' };
+
+  const saved = await saveWriterConfig(dir, { mode: 'direct', global: { provider: 'openai', model: 'gpt-x' } });
+  assert.deepEqual(saved, {
+    version: 2,
+    mode: 'direct',
+    global: { provider: 'openai', model: 'gpt-x' },
+    writer: empty,
+    polish: empty,
+  });
+  assert.deepEqual(resolveWriterSelection(saved, 'writer'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+  assert.deepEqual(resolveWriterSelection(saved, 'polish'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+
+  // 局部更新：只动润色，全局保持不变
+  const overridden = await saveWriterConfig(dir, { polish: { provider: 'deepseek', model: 'chat' } });
+  assert.equal(overridden.global.model, 'gpt-x');
+  assert.deepEqual(resolveWriterSelection(overridden, 'polish'), { provider: 'deepseek', model: 'chat', mode: 'direct' });
+  assert.deepEqual(resolveWriterSelection(overridden, 'writer'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+
+  // 清掉覆盖 = 回到跟随全局
+  const cleared = await saveWriterConfig(dir, { polish: empty });
+  assert.deepEqual(cleared.polish, empty);
+  assert.deepEqual(resolveWriterSelection(cleared, 'polish'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+
+  assert.deepEqual(await readWriterConfig(dir), cleared);
+  assert.deepEqual(await readWriterConfig(path.join(root, 'nope')), {
+    version: 2,
     mode: 'agent',
+    global: empty,
+    writer: empty,
+    polish: empty,
   });
 });
 
@@ -358,4 +383,65 @@ test('候选按 sources.json 的 id 定位：中文标题 + 自定义 slug 也�
   const prompt = fake.calls[0].request.prompt[0].text;
   assert.match(prompt, /摘要：演示用候选/, '摘要要进提示词');
   assert.match(prompt, /金额未披露/, '一手源原文要进提示词');
+});
+
+test('agent 模式：面板选的模型通过 agentOptions 传给子代理', async () => {
+  const { root, target, store, artifact } = await setup();
+  const fake = fakeSubagents(artifact, { body: '## 事实\n\n正文。', sources: [] });
+  const withCaps = {
+    ...fake.service,
+    getProvider: () => ({ capabilities: { agentOptions: true } }),
+  };
+  const dir = path.join(root, '.hotspot');
+  await saveWriterConfig(dir, { writer: { provider: 'openai', model: 'gpt-x' } });
+
+  const write = createWriter({
+    getSubagents: () => withCaps,
+    getAgents: () => fakeAgents({ roots: [liveAgent] }),
+    digestDir: '.hotspot',
+  });
+  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
+
+  assert.deepEqual(fake.calls[0].request.agentOptions, { provider: 'openai', model: 'gpt-x' });
+  assert.equal(value.model, 'gpt-x', '结果里要如实报告实际用的模型');
+});
+
+test('agent 模式：provider 不支持指定模型时明确报错，不静默回退', async () => {
+  const { root, target, store } = await setup();
+  const fake = fakeSubagents(path.join(root, '.hotspot', 'writer', 'demo-post.json'), { body: '正文。', sources: [] });
+  const noCaps = {
+    ...fake.service,
+    getProvider: () => ({ capabilities: { agentOptions: false } }),
+  };
+  const dir = path.join(root, '.hotspot');
+  await saveWriterConfig(dir, { global: { provider: 'spawn', model: 'whatever' } });
+
+  const write = createWriter({
+    getSubagents: () => noCaps,
+    getAgents: () => fakeAgents({ roots: [liveAgent] }),
+    digestDir: '.hotspot',
+  });
+  await assert.rejects(
+    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
+    /不支持指定模型/,
+  );
+  assert.equal(fake.calls.length, 0, '不支持就不该发起激活');
+});
+
+test('agent 模式：没选模型时不传 agentOptions，跟着父代理的模型跑', async () => {
+  const { root, target, store, artifact } = await setup();
+  const fake = fakeSubagents(artifact, { body: '## 事实\n\n正文。', sources: [] });
+  const withCaps = {
+    ...fake.service,
+    getProvider: () => ({ capabilities: { agentOptions: true } }),
+  };
+
+  const write = createWriter({
+    getSubagents: () => withCaps,
+    getAgents: () => fakeAgents({ roots: [liveAgent] }),
+    digestDir: '.hotspot',
+  });
+  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
+  assert.equal(fake.calls[0].request.agentOptions, undefined);
+  assert.equal(value.model, '');
 });
