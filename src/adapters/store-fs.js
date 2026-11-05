@@ -48,7 +48,16 @@ export function createFsStore(config) {
     async loadDigest(date) {
       const target = date === 'latest' ? 'latest' : date;
       const file = path.join(digestDir, `${target}.json`);
-      return JSON.parse(await readFile(file, 'utf8'));
+      let text;
+      try {
+        text = await readFile(file, 'utf8');
+      } catch (error) {
+        // 文件不存在是常态（还没抓过），返回 null 让调用方给「先跑 hotspot_run」。
+        // 坏 JSON 仍然抛：吞掉会表现成「明明抓过，却报没有候选」，最难查。
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      }
+      return JSON.parse(text);
     },
 
     async loadRecent(limit = 14) {
