@@ -90,6 +90,11 @@ node src/cli.js supplement <slug> --list     # 看已登记的补料
 
 DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报错再回头补。
 
+两处配套，省掉手工登记：
+
+- **`hotspot_get` 带 `registerSlug`**：把该候选的多源原文一次性登记成补料。digest 按天滚动，隔天再写这篇草稿时 `latest` 里已经没有这个 cluster，check 也就不再自动认它的来源——写之前先固化一份。
+- **面板里的证据条**：打开草稿/文章的「预览与修改」后，正文上方有一条 `📎 证据 N 条`，展开可看每条补料的标题、类型、字数与正文摘要。转正后这条也还在，因为 sources.json 跟着一起搬走了。
+
 ## 三道机械校验
 
 发布前必须全过，否则文章只能留在 `docs/draft/`：
@@ -132,7 +137,7 @@ git push origin HEAD
 
 `src/plugin.js` 是薄壳：把 core 的端口接上 `ctx`，然后就没它的事了。
 
-**已在真实运行时验证**（DeepSeek Harness 0.2.1-rc.5，`dsh web --port 0`）：apply 执行、`tools` 服务就绪、三个工具注册成功。
+**已在真实运行时验证**（DeepSeek Harness 0.2.1-rc.5，`dsh web --port 0`）：apply 执行、`tools` 服务就绪、四个工具注册成功。
 
 接口是从已安装插件的源码里读出来的，不是猜的：
 

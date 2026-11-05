@@ -10,6 +10,7 @@ import {
   collectSupplementEvidence,
   normalizeSupplementEntry,
   normalizeSupplementFile,
+  registerCandidateSources,
   upsertSupplement,
 } from '../src/core/supplement.js';
 import { checkNumbers, checkExternalLinks } from '../src/core/validate.js';
@@ -157,4 +158,48 @@ test('promote 把补料一起搬到文章目录，转正后仍读得到', async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('一键登记候选来源：有原文的登记、没原文的记失败原因、addSupplement 抛错不中断', async () => {
+  const calls = [];
+  const target = {
+    addSupplement: async (slug, input) => {
+      if (input.url === 'https://boom.com/x') throw new Error('磁盘写满了');
+      calls.push({ slug, url: input.url, kind: input.kind, title: input.title });
+      return { added: true };
+    },
+  };
+
+  const sources = [
+    { source: 'gh', title: 'Release v6.1.2', url: 'https://github.com/a/b' },
+    { source: 'blog', title: '作者博客', url: 'https://swift.org/blog/x/' },
+    { source: 'news', title: '没有原文的源', url: 'https://missing.com/y' },
+    { source: 'boom', title: '写盘失败', url: 'https://boom.com/x' },
+  ];
+  const raw = [
+    { url: 'https://github.com/a/b', content: 'v6.1.2 修掉 3 个问题' },
+    { url: 'https://swift.org/blog/x', content: '作者复盘' },
+    { url: 'https://boom.com/x', content: '会抛错' },
+  ];
+
+  const outcome = await registerCandidateSources(target, 'demo', sources, raw);
+
+  assert.deepEqual(outcome.registered, ['https://github.com/a/b', 'https://swift.org/blog/x']);
+  assert.equal(outcome.failed.length, 2);
+  assert.match(outcome.failed[0].reason, /没有留存原文/);
+  assert.match(outcome.failed[1].reason, /磁盘写满了/);
+  assert.equal(calls.length, 2, '抛错的那条不应算进登记数');
+  assert.equal(calls[0].kind, 'candidate');
+  assert.equal(calls[0].slug, 'demo');
+  assert.equal(calls[1].title, '作者博客');
+});
+
+test('一键登记候选来源：空来源与空 raw 不炸', async () => {
+  const target = { addSupplement: async () => ({ added: true }) };
+  const empty = await registerCandidateSources(target, 'demo', [], []);
+  assert.deepEqual(empty, { registered: [], failed: [] });
+
+  const noRaw = await registerCandidateSources(target, 'demo', [{ url: 'https://a.com/x' }], []);
+  assert.equal(noRaw.registered.length, 0);
+  assert.equal(noRaw.failed.length, 1);
 });

@@ -8,6 +8,7 @@ import { renderMarkdown } from './core/digest.js';
 import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
+import { registerCandidateSources } from './core/supplement.js';
 import { createRoutes, PREFIX } from './server/api.js';
 
 /**
@@ -204,6 +205,11 @@ export function apply(ctx, config = {}) {
                 type: 'string',
                 description: '候选 id（必填），可用完整 id 或序号（#3）',
               },
+              registerSlug: {
+                type: 'string',
+                description:
+                  '可选：传草稿 slug，则把该候选的全部来源原文一次性登记为补料（写正文前先固化证据账本，避免 digest 隔天滚动后来源丢失）',
+              },
             },
             output: {
               schema: {
@@ -215,6 +221,8 @@ export function apply(ctx, config = {}) {
                   title: { type: 'string' },
                   url: { type: 'string' },
                   text: { type: 'string' },
+                  registered: { type: 'number' },
+                  registerFailed: { type: 'array', items: { type: 'string' } },
                 },
               },
               render(_args, value) {
@@ -237,12 +245,36 @@ export function apply(ctx, config = {}) {
                 const match = raw.find((r) => r.url === source.url);
                 blocks.push(`\n## ${source.source}\n${(match?.content || source.title).slice(0, 1500)}`);
               }
+
+              // 一键把候选的多源原文固化进草稿的证据账本：digest 会按天滚动，
+              // 隔天再写这篇草稿时来源可能已经不在 latest 里了
+              const registerSlug = String(args?.registerSlug ?? '').trim();
+              let registered = 0;
+              const registerFailed = [];
+              if (registerSlug) {
+                if (!target) {
+                  registerFailed.push('尚未配置博客项目根目录');
+                } else {
+                  const outcome = await registerCandidateSources(target, registerSlug, item.sources, raw);
+                  registered = outcome.registered.length;
+                  for (const miss of outcome.failed) {
+                    registerFailed.push(`${miss.url}（${miss.reason}）`);
+                  }
+                  blocks.push(
+                    `\n已登记 ${registered} 条候选来源为补料（草稿 ${registerSlug}）` +
+                      (registerFailed.length ? `；未登记 ${registerFailed.length} 条` : ''),
+                  );
+                }
+              }
+
               return {
                 found: true,
                 id: item.id,
                 title: item.title,
                 url: item.url,
                 text: blocks.join('\n'),
+                registered,
+                registerFailed,
               };
             },
           }),

@@ -378,3 +378,81 @@ test('API 路由：支持在线读取、修改与转正发布文章 /dsh-hotspot
   assert.equal(prData.ok, true);
   assert.equal(promotedSlug, 'my-draft');
 });
+
+test('API 路由：读取文章时附带补料证据账本（不塞整页正文）', async () => {
+  let askedSlug = null;
+  const deps = {
+    projectRoot: '/mock/path',
+    store: { loadDigest: async () => null },
+    target: {
+      articleDir: 'docs/article',
+      draftDir: 'docs/draft',
+      profile: async () => ({ tagVocabulary: [], keywords: [] }),
+      listArticles: async () => [],
+      listDrafts: async () => [],
+      readArticle: async (file) => ({ file, content: '# 正文\n\nSwift 6.1.2' }),
+      readSupplements: async (slug) => {
+        askedSlug = slug;
+        return {
+          file: `docs/draft/${slug}/sources.json`,
+          entries: [
+            {
+              url: 'https://swift.org/blog/x',
+              host: 'swift.org',
+              title: 'Swift 博客',
+              kind: 'official',
+              fetchedAt: '2026-11-05T00:00:00.000Z',
+              content: 'x'.repeat(200),
+            },
+          ],
+        };
+      },
+    },
+    runScan: async () => ({ digest: null, status: {} }),
+  };
+
+  const route = createRoutes(deps).find((r) => r.path === '/dsh-hotspot/api/article');
+  const { req, res, result } = mockReqRes(
+    'GET',
+    '/dsh-hotspot/api/article?file=docs/draft/my-draft/index.md'
+  );
+  await route.handler(req, res);
+
+  const data = result().json();
+  assert.equal(data.ok, true);
+  assert.equal(data.value.content, '# 正文\n\nSwift 6.1.2');
+  assert.equal(askedSlug, 'my-draft', 'slug 应从 index.md 的父目录名反推');
+  assert.equal(data.value.supplements.count, 1);
+  assert.equal(data.value.supplements.entries[0].host, 'swift.org');
+  assert.equal(data.value.supplements.entries[0].chars, 200);
+  assert.equal(data.value.supplements.entries[0].preview.length, 160, '列表只给摘要');
+  assert.equal(data.value.supplements.entries[0].content, undefined, '不应把整页正文塞进响应');
+});
+
+test('API 路由：补料读不到时正文照常返回', async () => {
+  const deps = {
+    projectRoot: '/mock/path',
+    store: { loadDigest: async () => null },
+    target: {
+      articleDir: 'docs/article',
+      draftDir: 'docs/draft',
+      profile: async () => ({ tagVocabulary: [], keywords: [] }),
+      listArticles: async () => [],
+      listDrafts: async () => [],
+      readArticle: async (file) => ({ file, content: '# 正文' }),
+      readSupplements: async () => {
+        throw new Error('sources.json 坏了');
+      },
+    },
+    runScan: async () => ({ digest: null, status: {} }),
+  };
+
+  const route = createRoutes(deps).find((r) => r.path === '/dsh-hotspot/api/article');
+  const { req, res, result } = mockReqRes('GET', '/dsh-hotspot/api/article?file=docs/draft/x/index.md');
+  await route.handler(req, res);
+
+  const data = result().json();
+  assert.equal(data.ok, true);
+  assert.equal(data.value.content, '# 正文');
+  assert.equal(data.value.supplements.count, 0);
+});

@@ -780,6 +780,85 @@ window.__ModuleLoader__.load({
         overflow: hidden;
         min-height: 0;
       }
+      /* ── 证据账本（sources.json）横条 ── */
+      .hs-evidence {
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--dsw-alias-border-l1, #282a34);
+        background: rgba(99, 102, 241, 0.06);
+      }
+      .hs-evidence-toggle {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px 18px;
+        background: transparent;
+        border: none;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+        font-size: 12px;
+        cursor: pointer;
+        text-align: left;
+        transition: background 140ms ease, color 140ms ease;
+      }
+      .hs-evidence-toggle:hover {
+        background: rgba(99, 102, 241, 0.1);
+        color: var(--dsw-alias-label-primary, #ececf1);
+      }
+      .hs-evidence-hosts {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        opacity: 0.75;
+      }
+      .hs-evidence-caret {
+        opacity: 0.6;
+        font-size: 11px;
+      }
+      .hs-evidence-list {
+        max-height: 30vh;
+        overflow-y: auto;
+        padding: 0 18px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .hs-evidence-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.22);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+      }
+      .hs-evidence-link {
+        color: #8b9cff;
+        font-size: 12px;
+        font-weight: 500;
+        text-decoration: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hs-evidence-link:hover {
+        text-decoration: underline;
+      }
+      .hs-evidence-meta {
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .hs-evidence-preview {
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+        opacity: 0.8;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
       .hs-editor-textarea {
         flex: 1;
         height: 100%;
@@ -1178,6 +1257,8 @@ window.__ModuleLoader__.load({
       const [editContent, setEditContent] = useState('');
       const [editOriginalContent, setEditOriginalContent] = useState('');
       const [editViewMode, setEditViewMode] = useState('split'); // 'split' | 'edit' | 'preview'
+      const [editSupplements, setEditSupplements] = useState(null); // 证据账本（sources.json）
+      const [showEvidence, setShowEvidence] = useState(false);
       const [isSavingArticle, setIsSavingArticle] = useState(false);
       const [isPromotingArticle, setIsPromotingArticle] = useState(false);
 
@@ -1272,6 +1353,8 @@ window.__ModuleLoader__.load({
               ...item,
               file: data.value.file || filePath
             });
+            setEditSupplements(data.value.supplements || null);
+            setShowEvidence(false);
             setEditViewMode('split');
           } else {
             showToast(data.error || '读取文章内容失败', true);
@@ -2610,6 +2693,35 @@ window.__ModuleLoader__.load({
                   }
                 }, '✕ 关闭')
               ])
+            ]),
+
+            // 证据账本：写正文时联网补料登记过什么，转正后仍能追溯
+            editSupplements && editSupplements.count > 0 && h('div', { className: 'hs-evidence' }, [
+              h('button', {
+                className: 'hs-evidence-toggle',
+                onClick: () => setShowEvidence((v) => !v)
+              }, [
+                h('span', null, `📎 证据 ${editSupplements.count} 条`),
+                h('span', { className: 'hs-evidence-hosts' },
+                  [...new Set(editSupplements.entries.map((e) => e.host))].join(' · ')),
+                h('span', { className: 'hs-evidence-caret' }, showEvidence ? '收起' : '展开')
+              ]),
+              showEvidence && h('div', { className: 'hs-evidence-list' },
+                editSupplements.entries.map((entry, i) => h('div', {
+                  key: `${entry.url}-${i}`,
+                  className: 'hs-evidence-item'
+                }, [
+                  h('a', {
+                    className: 'hs-evidence-link',
+                    href: entry.url,
+                    target: '_blank',
+                    rel: 'noreferrer'
+                  }, entry.title || entry.host),
+                  h('span', { className: 'hs-evidence-meta' },
+                    `${entry.kind || 'other'} · ${entry.chars} 字 · ${(entry.fetchedAt || '').slice(0, 10)}`),
+                  entry.preview && h('div', { className: 'hs-evidence-preview' }, entry.preview)
+                ]))
+              )
             ]),
 
             // 主体 Body

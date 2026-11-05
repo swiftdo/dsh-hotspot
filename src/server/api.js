@@ -607,6 +607,34 @@ export function createRoutes(deps) {
             const val = typeof data === 'string'
               ? { file, content: data }
               : (data || { file, content: '' });
+
+            // 补料（证据账本）随正文一起返回：面板上要能回答"这段数字是从哪读来的"。
+            // 用 slug 参数可显式指定，否则从 index.md 的父目录名反推。
+            if (typeof target.readSupplements === 'function') {
+              try {
+                const slug = parsedUrl.searchParams.get('slug')
+                  || path.basename(path.dirname(val.file || file));
+                const supplements = await target.readSupplements(slug);
+                val.slug = slug;
+                val.supplements = {
+                  count: supplements.entries.length,
+                  file: supplements.file ?? null,
+                  entries: supplements.entries.map((entry) => ({
+                    url: entry.url,
+                    host: entry.host,
+                    title: entry.title,
+                    kind: entry.kind,
+                    fetchedAt: entry.fetchedAt,
+                    chars: [...(entry.content ?? '')].length,
+                    preview: (entry.content ?? '').slice(0, 160),
+                  })),
+                };
+              } catch {
+                // 补料只是附加信息，读不到不能连正文一起拖挂
+                val.supplements = { count: 0, file: null, entries: [] };
+              }
+            }
+
             sendJson(res, 200, { ok: true, value: val });
           } catch (err) {
             sendJson(res, 404, { ok: false, error: err.message });

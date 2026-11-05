@@ -131,3 +131,43 @@ export function collectSupplementEvidence(entries, opts = {}) {
 
   return { sourceTexts, allowedUrls, allowedHosts };
 }
+
+/**
+ * 把候选 cluster 的全部来源原文一次性登记成补料。
+ *
+ * 值得单独做一步的原因：digest 按天滚动，`latest` 只保留当天候选。隔天再写这篇
+ * 草稿时，check 已经找不到当初那个 cluster，候选来源不再自动进证据边界。写之前
+ * 先固化一份，来源就跟着草稿走（promote 时还会一起搬到文章目录）。
+ *
+ * @param {{ addSupplement: (slug: string, input: any) => Promise<any> }} target
+ * @param {string} slug
+ * @param {Array<{ url?: string, title?: string, source?: string }>} sources
+ * @param {Array<{ url?: string, content?: string }>} [raw]
+ */
+export async function registerCandidateSources(target, slug, sources, raw = []) {
+  const registered = [];
+  const failed = [];
+  const raws = Array.isArray(raw) ? raw : [];
+
+  for (const source of Array.isArray(sources) ? sources : []) {
+    const url = canonicalUrl(source?.url);
+    const match = raws.find((item) => canonicalUrl(item?.url) === url);
+    if (!match?.content) {
+      failed.push({ url: String(source?.url ?? ''), reason: '没有留存原文' });
+      continue;
+    }
+    try {
+      await target.addSupplement(slug, {
+        url: source.url,
+        title: source.title || source.source,
+        kind: 'candidate',
+        content: match.content,
+      });
+      registered.push(url);
+    } catch (error) {
+      failed.push({ url: String(source?.url ?? ''), reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  return { registered, failed };
+}
