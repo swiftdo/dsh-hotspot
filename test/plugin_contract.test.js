@@ -53,9 +53,11 @@ test('limit 优先级：参数 > rank.limit > 插件配置', () => {
   );
 });
 
-test('带 projectRoot 的工具用运行时目录，而不是启动时的配置', () => {
+test('目录来源：面板 > 博客仓库配置 > 默认，工具用运行时目录', () => {
   assert.ok(source.includes('createVitePressTarget({ root: pr, articleDir, draftDir })'));
-  assert.ok(!source.includes("articleDir: config.articleDir || 'docs'"));
+  assert.ok(source.includes('pickDirs('), '需要合并「宿主配置 / 博客仓库配置 / 默认值」');
+  assert.ok(source.includes('readProjectDirs('), '要读博客仓库里的目录配置，否则面板显示与实际不符');
+  assert.ok(!source.includes('createVitePressTarget({ root: pr, articleDir: config.articleDir'));
 });
 
 test('写正文不再走子代理：只保留一次 completion 的路径', () => {

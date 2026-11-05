@@ -994,7 +994,7 @@ export function createRoutes(deps) {
             sendJson(res, 403, {
               ok: false,
               code: 'ERR_ARTICLE_PROTECTED',
-              error: `超出管辖范围：已发布文章受保护，插件只改草稿目录（${relativeDraftDir(target)}）下的文件`,
+              error: `超出管辖范围：只能改草稿目录 ${path.resolve(target.draftDir)} 下的文件（收到 ${String(file)}）`,
             });
             return;
           }
@@ -1092,7 +1092,7 @@ export function createRoutes(deps) {
           sendJson(res, 403, {
             ok: false,
             code: 'ERR_ARTICLE_PROTECTED',
-            error: `超出管辖范围：已发布文章受保护，插件只删草稿目录（${relativeDraftDir(target)}）下的文件`,
+            error: `超出管辖范围：只能删草稿目录 ${path.resolve(target.draftDir)} 下的文件（收到 ${String(file)}）`,
           });
           return;
         }

@@ -23,6 +23,7 @@ import { createRoutes, PREFIX } from './server/api.js';
 import { createJobRunner } from './server/jobs.js';
 import { createSingleFlight } from './core/lock.js';
 import { createErrorLog } from './server/errors.js';
+import { pickDirs } from './core/project-config.js';
 import { createHotspotTools } from './tools.js';
 
 /**
@@ -60,14 +61,35 @@ export function apply(ctx, config = {}) {
   };
   const warn = ctx.logger?.warn?.bind(ctx.logger) ?? ((...args) => console.warn('[dsh-hotspot]', ...args));
 
+  /**
+   * 博客仓库自己写的目录配置。宿主的插件配置里通常没有这三项，真正的目录约定
+   * 往往写在仓库里（`dsh-hotspot.config.json`）—— 以前这里不读，于是 panel 显示
+   * 一套目录、实际按默认目录找文件。
+   */
+  function readProjectDirs(root) {
+    if (!root) return {};
+    for (const name of ['dsh-hotspot.config.json', 'hotspot.config.json']) {
+      const file = path.join(root, name);
+      if (!existsSync(file)) continue;
+      try {
+        return JSON.parse(readFileSync(file, 'utf8'));
+      } catch {
+        /* 配置写坏了不该拦住插件启动：面板里会显示目录不一致 */
+        return {};
+      }
+    }
+    return {};
+  }
+
   // 默认不提供写死目录。未配置有效 projectRoot 时进入未绑定状态，不可执行草稿落地。
   const configuredRoot = config.projectRoot ? path.resolve(config.projectRoot) : '';
   let projectRoot = '';
   let target = null;
   // 运行时目录名：面板改过之后，带 projectRoot 参数的工具调用也要跟着走，
   // 不能再用启动时的 config.articleDir（那条路径会写错目录）。
-  let articleDir = config.articleDir;
-  let draftDir = config.draftDir;
+  let bootDirs = pickDirs({ panel: config, project: readProjectDirs(configuredRoot) });
+  let articleDir = bootDirs.articleDir;
+  let draftDir = bootDirs.draftDir;
   if (configuredRoot && existsSync(configuredRoot)) {
     projectRoot = configuredRoot;
     target = createVitePressTarget({ root: projectRoot, articleDir, draftDir });
@@ -128,8 +150,18 @@ export function apply(ctx, config = {}) {
     }
     const digestDir = newConfig.digestDir || config.digestDir || '.hotspot';
     currentDigestDir = digestDir;
-    articleDir = newConfig.articleDir || config.articleDir || 'docs';
-    draftDir = newConfig.draftDir || config.draftDir || '.drafts';
+    // 面板刚保存的值 > 博客仓库配置 > 默认；不读博客仓库那份的话，
+    // 面板顶部的目录与实际使用的目录会对不上（草稿列表空、删除说路径不对）
+    const merged = pickDirs({
+      panel: newConfig,
+      project: readProjectDirs(projectRoot),
+      fallback: {
+        articleDir: config.articleDir || 'docs',
+        draftDir: config.draftDir || '.drafts',
+      },
+    });
+    articleDir = merged.articleDir;
+    draftDir = merged.draftDir;
     store = createFsStore({
       dir: projectRoot ? path.join(projectRoot, digestDir) : path.join(process.cwd(), digestDir),
     });

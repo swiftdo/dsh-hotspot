@@ -39,6 +39,16 @@ export function sourceLabel(source) {
   return String(source.id || '');
 }
 
+/** 绝对目录 → 相对仓库根；拿不到就回空串，让调用方退回配置值。 */
+function relativeDir(root, dir) {
+  if (!dir) return '';
+  // 已经是相对路径（测试替身或某些适配器会这么给）就原样返回
+  if (!path.isAbsolute(dir)) return dir;
+  if (!root) return '';
+  const rel = path.relative(root, dir);
+  return rel && !rel.startsWith('..') ? rel : '';
+}
+
 export function createStateBuilder({ readConfig, configFileIn, getTarget, getStore, getProjectRoot, jobs }) {
   async function buildState() {
     const config = await readConfig();
@@ -108,11 +118,13 @@ export function createStateBuilder({ readConfig, configFileIn, getTarget, getSto
       // 'config' = 抓配置里的源；'builtin' = 配置没写源，正在用内置默认源。
       sourcesMode,
       activeSources,
+      // 以 target 的实际目录为准：它才是读写文件时用的那套路径。
+      // 反过来（配置优先）会出现「面板显示 .drafts，实际去 docs/draft 找」的错觉。
       blog: {
         configured: hasConfiguredRoot,
         projectRoot: activeProjectRoot,
-        articleDir: config.articleDir || (getTarget()?.articleDir || 'docs'),
-        draftDir: config.draftDir || (getTarget()?.draftDir || '.drafts'),
+        articleDir: relativeDir(activeProjectRoot, getTarget()?.articleDir) || config.articleDir || 'docs/article',
+        draftDir: relativeDir(activeProjectRoot, getTarget()?.draftDir) || config.draftDir || '.drafts',
         digestDir: config.digestDir || '.hotspot',
       },
       config: {

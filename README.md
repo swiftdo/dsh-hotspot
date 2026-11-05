@@ -497,6 +497,8 @@ flowchart TB
 - **缺省文章目录不同**。插件侧 `articleDir` 缺省 `docs`（最早只服务「文章直接放 `docs/` 下」这种布局），而 CLI 走适配器默认值 `docs/article`（`src/adapters/target-vitepress.js` 里的 `config.articleDir ?? 'docs/article'`）。插件的默认值会盖掉适配器的默认值，所以同一个仓库在插件里和 CLI 里可能指向不同目录——配置里显式写死 `articleDir` 就没有歧义。
 - **配置键不同**。插件读顶层的 `articleDir` / `draftDir` / `digestDir`，CLI 读 `target.articleDir` / `target.draftDir`。两个键写在同一个文件里，各读各的。
 
+目录的合并顺序是 **面板/宿主显式配置 > 博客仓库配置（顶层键或 `target.*`）> 适配器默认值**。插件以前只认第一层：仓库里写着 `draftDir: ".drafts"`，它的 target 却按默认值去 `docs/draft` 找，于是面板顶部显示一套目录、草稿列表却是空的。现在 `/api/state` 的 `blog.articleDir` / `blog.draftDir` 报的也是 target 实际使用的目录。
+
 候选上限的优先级是 `工具参数 limit > 项目配置 rank.limit > cordis.patch.yml 的 limit`。早期版本把 `config.limit` 写在前面，而 patch 里默认就有 `limit: 15`，于是面板里改的上限永远不生效——现在按上面这个顺序解析。
 
 ### 没配置博客目录时会怎样
