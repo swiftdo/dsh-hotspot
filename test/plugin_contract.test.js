@@ -85,3 +85,21 @@ test('面板契约：生成草稿先确认标题与 slug，写作可取消', () 
   assert.ok(client.includes('校验未过'), '写完但校验没过要留在卡片上');
   assert.ok(client.includes('正文待写'), '骨架草稿要能一眼看出来');
 });
+
+test('订阅源页：内置源 hero 已移除，清单改成行式', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(!client.includes('内置精选源'), 'hero 不再出现在页面上');
+  assert.ok(!client.includes('hs-hero-banner'), 'hero 的样式与标记一起删掉');
+  assert.ok(client.includes('hs-src-rows'), '清单用行式渲染');
+  assert.ok(client.includes('⚡ 启用全部内置'), '批量启用入口还在（移到了清单卡头）');
+  assert.ok(client.includes('hs-src-rss'), 'RSS 地址条保留');
+});
+
+test('设置页：tab 与页内标题统一叫「设置」，高级参数可折叠', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(client.includes("}, '设置')"), 'tab 文案应与页内标题一致');
+  assert.ok(!client.includes("}, '策略与路径配置')"), '旧的 tab 文案不该再出现');
+  assert.ok(client.includes('hs-cfg-jump'), '四组之间要有锚点跳转');
+  assert.ok(client.includes('高级排序参数'), '很少改的两个参数默认收起');
+  assert.ok(client.includes('showAdvancedRank'), '折叠状态要能记住');
+});

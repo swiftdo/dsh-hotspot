@@ -338,49 +338,6 @@ window.__ModuleLoader__.load({
         line-height: 1.5;
       }
 
-      /* ── 精选推荐 Hero Banner ── */
-      .hs-hero-banner {
-        background: linear-gradient(135deg, rgba(77, 182, 160, 0.12) 0%, rgba(30, 41, 59, 0.6) 100%);
-        border: 1px solid rgba(77, 182, 160, 0.3);
-        border-radius: 12px;
-        padding: 16px 20px;
-        margin-bottom: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        flex-wrap: wrap;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-      }
-      .hs-hero-left {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-      }
-      .hs-hero-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 10px;
-        background: rgba(77, 182, 160, 0.2);
-        color: var(--dsw-alias-brand-primary, #4db6a0);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-      }
-      .hs-hero-title {
-        font-size: 14px;
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .hs-hero-desc {
-        font-size: 12px;
-        color: var(--dsw-alias-label-secondary, #9da1b0);
-        margin-top: 2px;
-      }
-
       /* ── 今日状态条：一行说清「今天有几条、什么时候抓的」 ── */
       .hs-today {
         display: flex;
@@ -787,6 +744,143 @@ window.__ModuleLoader__.load({
         margin-top: 5px;
         line-height: 1.4;
       }
+
+      /* ── 订阅源页：单行添加 + 行式清单 ── */
+      .hs-src-add {
+        display: grid;
+        grid-template-columns: 132px 170px 1fr auto;
+        gap: 8px;
+        align-items: center;
+      }
+      .hs-src-add.hn {
+        grid-template-columns: 132px 150px 1fr 120px auto;
+      }
+      @media (max-width: 900px) {
+        .hs-src-add,
+        .hs-src-add.hn { grid-template-columns: 1fr; }
+      }
+      .hs-src-rows { display: flex; flex-direction: column; }
+      .hs-src-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 11px 2px;
+        border-top: 1px solid var(--dsw-alias-border-l1, #282a34);
+      }
+      .hs-src-row:first-child { border-top: 0; }
+      .hs-src-row.pending { opacity: 0.72; }
+      .hs-src-main { min-width: 0; }
+      .hs-src-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        flex-wrap: wrap;
+      }
+      .hs-src-target {
+        margin-top: 2px;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #7c8290);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hs-src-kind {
+        font-size: 10.5px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--dsw-alias-border-l1, #343845);
+        background: var(--dsw-alias-bg-layer-2, #1f212a);
+        color: var(--dsw-alias-label-secondary, #9aa0ae);
+        white-space: nowrap;
+      }
+      .hs-src-kind.rss { color: #7dd3fc; border-color: rgba(125, 211, 252, 0.28); background: rgba(56, 189, 248, 0.07); }
+      .hs-src-kind.release { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.28); background: rgba(167, 139, 250, 0.08); }
+      .hs-src-kind.hn { color: #fbbf24; border-color: rgba(251, 191, 36, 0.25); background: rgba(245, 158, 11, 0.08); }
+      .hs-src-builtin { color: #a5b4fc; border-color: rgba(99, 102, 241, 0.35); background: rgba(99, 102, 241, 0.16); }
+      .hs-src-actions { display: flex; gap: 4px; align-items: center; }
+      .hs-src-suggest {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        margin-top: 10px;
+        border: 1px dashed var(--dsw-alias-border-l1, #343845);
+        border-radius: 9px;
+        font-size: 12px;
+        color: var(--dsw-alias-label-secondary, #9aa0ae);
+      }
+      .hs-src-suggest strong { color: var(--dsw-alias-label-primary, #ececf1); font-weight: 600; }
+      .hs-src-rss {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 14px;
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 10px;
+        background: var(--dsw-alias-bg-layer-1, #181920);
+      }
+      .hs-src-rss-label { font-size: 11.5px; color: var(--dsw-alias-label-secondary, #7c8290); white-space: nowrap; }
+      .hs-src-rss-url {
+        flex: 1;
+        min-width: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #9aa0ae);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* ── 设置页：锚点跳转 / 折叠行 / 更紧的间距节奏 ── */
+      .hs-cfg-jump {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin: -4px 0 16px;
+      }
+      .hs-cfg-jump button {
+        font-family: inherit;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #9aa0ae);
+        background: transparent;
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        border-radius: 999px;
+        padding: 3px 10px;
+        cursor: pointer;
+        transition: color 140ms var(--hs-ease-out), border-color 140ms var(--hs-ease-out);
+      }
+      .hs-cfg-jump button:hover {
+        color: var(--dsw-alias-label-primary, #ececf1);
+        border-color: var(--dsw-alias-border-hover, #3a3e4c);
+      }
+      .hs-cfg-fold {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        margin-top: 2px;
+        padding: 9px 0 0;
+        background: transparent;
+        border: 0;
+        border-top: 1px dashed var(--dsw-alias-border-l1, #282a34);
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        font-family: inherit;
+        font-size: 11.5px;
+        cursor: pointer;
+      }
+      .hs-cfg-fold:hover { color: var(--dsw-alias-label-primary, #ececf1); }
+      /* 间距只在这个页面收：四组之间 26，组内卡片 10，字段行列 12 */
+      .hs-cfg-section { margin-bottom: 26px; }
+      .hs-cfg-section .hs-card { margin-bottom: 10px; }
+      .hs-cfg-section .hs-card:last-child { margin-bottom: 0; }
+      .hs-cfg-section .hs-form-grid { gap: 12px 14px; }
+      .hs-cfg-overview { margin-bottom: 16px; }
+      .hs-cfg-stat { padding: 9px 13px; }
+      .hs-cfg-section-head { margin: 0 2px 10px; }
 
       /* ── 设置页：概览条 / 分组 / 字段 / 常驻保存条 ── */
       .hs-cfg-head {
@@ -1982,6 +2076,8 @@ window.__ModuleLoader__.load({
       const [deploying, setDeploying] = useState(false);
       const [deployResult, setDeployResult] = useState(null);
       const [savingConfig, setSavingConfig] = useState(false);
+      // 「高级排序参数」默认收起：半衰期与聚类阈值平时不该占视线
+      const [showAdvancedRank, setShowAdvancedRank] = useState(false);
 
       // 博客根目录快速绑定与生成草稿必填弹窗状态
       const [quickBlogRoot, setQuickBlogRoot] = useState('');
@@ -2998,7 +3094,7 @@ window.__ModuleLoader__.load({
                   showToast(
                     deployDetected.script
                       ? `检测到 ${deployDetected.script}，在配置里点「使用探测结果」并保存即可部署`
-                      : '先在「策略与路径配置」里绑定部署脚本',
+                      : '先在「设置」里绑定部署脚本',
                     true
                   );
                   return;
@@ -3007,7 +3103,7 @@ window.__ModuleLoader__.load({
               },
               disabled: deploying || !isBlogConfigured,
               title: !isBlogConfigured
-                ? '先在「策略与路径配置」里绑定博客项目根目录'
+                ? '先在「设置」里绑定博客项目根目录'
                 : deployConfigured
                   ? `执行部署：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
                   : '尚未绑定部署脚本，点击前往配置'
@@ -3078,7 +3174,7 @@ window.__ModuleLoader__.load({
             className: `hs-tab ${tab === 'config' ? 'active' : ''}`,
             onClick: () => setTab('config'),
             key: 'tab-cfg'
-          }, '策略与路径配置')
+          }, '设置')
         ]),
 
         // ── 内容主体 ──
@@ -3394,200 +3490,208 @@ window.__ModuleLoader__.load({
             ])
           ]),
 
-          // ── TAB: 订阅源管理 ──
-          tab === 'sources' && h('div', { key: 'sources-panel' }, [
-            // 内置精选源 Hero：只解释「内置是什么」，不再单开一块列表
-            h('div', { className: 'hs-hero-banner' }, [
-              h('div', { className: 'hs-hero-left' }, [
-                h('div', { className: 'hs-hero-icon' }, [
-                  h('svg', { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2 }, [
-                    h('path', { d: 'M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z' })
+          // ── TAB: 订阅源管理（添加一行 + 行式清单；内置源不单开 hero） ──
+          tab === 'sources' && (() => {
+            const enabledCount = listedSources.length;
+            const customCount = builtinMode ? 0 : configuredSources.length;
+            const builtinEnabled = listedSources.filter(s => builtinIds.has(s.id)).length;
+            const feedsTotal = state?.digest?.status?.feedsTotal;
+            const feedsOk = state?.digest?.status?.feedsOk;
+            const kindLabel = (kind) => (
+              kind === 'github-release' ? 'GitHub Release'
+                : kind === 'hn' ? 'Hacker News'
+                  : kind === 'atom' ? 'Atom'
+                    : 'RSS / Atom'
+            );
+            const kindClass = (kind) => (
+              kind === 'github-release' ? 'release' : kind === 'hn' ? 'hn' : 'rss'
+            );
+            const targetOf = (source) => {
+              if (source.url) return source.url;
+              if (source.repo) return `github.com/${source.repo} · releases.atom（无需 token）`;
+              if (source.kind === 'hn') return `Hacker News 榜单 · minPoints ${source.minPoints ?? '—'}`;
+              return '';
+            };
+
+            const kindOptions = [
+              { value: 'rss', label: 'RSS / Atom' },
+              { value: 'github-release', label: 'GitHub Release' },
+              { value: 'hn', label: 'Hacker News' }
+            ];
+
+            return h('div', { key: 'sources-panel' }, [
+              h('div', { className: 'hs-cfg-head' }, [
+                h('div', null, [
+                  h('div', { className: 'hs-cfg-title' }, '订阅源'),
+                  h('div', { className: 'hs-cfg-subtitle' },
+                    '聚合扫描会并发采集所有启用的源；同一件事被多个源覆盖时，候选的「跨源共现」分才站得住')
+                ]),
+                builtinMode
+                  ? h('span', { className: 'hs-cfg-state warn' }, [h('span', { className: 'hs-cfg-dot' }), '内置默认源生效中'])
+                  : h('span', { className: 'hs-cfg-state ok' }, [h('span', { className: 'hs-cfg-dot' }), `${enabledCount} 个源生效中`])
+              ]),
+
+              h('div', { className: 'hs-cfg-overview' }, [
+                h('div', { className: 'hs-cfg-stat' }, [
+                  h('div', { className: 'hs-cfg-stat-label' }, '生效中'),
+                  h('div', { className: 'hs-cfg-stat-value' }, [String(enabledCount), h('span', { className: 'weak' }, '个源')])
+                ]),
+                h('div', { className: 'hs-cfg-stat' }, [
+                  h('div', { className: 'hs-cfg-stat-label' }, '自定义'),
+                  h('div', { className: 'hs-cfg-stat-value' }, [String(customCount), h('span', { className: 'weak' }, '个')])
+                ]),
+                h('div', { className: 'hs-cfg-stat' }, [
+                  h('div', { className: 'hs-cfg-stat-label' }, '内置'),
+                  h('div', { className: 'hs-cfg-stat-value' }, [
+                    String(builtinEnabled),
+                    h('span', { className: 'weak' }, missingBuiltins.length ? `另有 ${missingBuiltins.length} 个未启用` : '个')
                   ])
                 ]),
-                h('div', null, [
-                  h('div', { className: 'hs-hero-title' }, [
-                    '内置精选源',
-                    h('span', { className: 'hs-tag-pill ai', style: { fontSize: 10 } }, `${builtinSources.length} 个 · 开箱即用`)
+                h('div', { className: 'hs-cfg-stat' }, [
+                  h('div', { className: 'hs-cfg-stat-label' }, '最近抓取'),
+                  h('div', { className: 'hs-cfg-stat-value', style: { fontSize: 12 } },
+                    feedsTotal == null
+                      ? h('span', { className: 'weak' }, '还没有记录')
+                      : [
+                          h('span', null, `${feedsOk}/${feedsTotal}`),
+                          h('span', { className: 'weak' }, feedsOk === feedsTotal ? '全部成功' : '部分失败')
+                        ])
+                ])
+              ]),
+
+              h('div', { className: 'hs-cfg-section' }, [
+                h('div', { className: 'hs-cfg-section-head' }, [
+                  h('div', { className: 'hs-cfg-section-title' }, '添加'),
+                  h('div', { className: 'hs-cfg-section-note' }, 'RSS / Atom · GitHub Release · Hacker News')
+                ]),
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: `hs-src-add ${newKind === 'hn' ? 'hn' : ''}` }, [
+                    h('select', {
+                      className: 'hs-select',
+                      value: newKind,
+                      onChange: (e) => setNewKind(e.target.value)
+                    }, kindOptions.map(o => h('option', { key: o.value, value: o.value }, o.label))),
+                    h('input', {
+                      className: 'hs-input hs-cfg-mono',
+                      placeholder: 'swift-org',
+                      value: newId,
+                      onChange: (e) => setNewId(e.target.value)
+                    }),
+                    h('input', {
+                      className: 'hs-input hs-cfg-mono',
+                      placeholder: newKind === 'github-release'
+                        ? 'apple/swift'
+                        : (newKind === 'hn' ? '留空即可，HN 不需要 URL' : 'https://www.swift.org/atom.xml'),
+                      value: newTarget,
+                      disabled: newKind === 'hn',
+                      onChange: (e) => setNewTarget(e.target.value)
+                    }),
+                    newKind === 'hn' && h('input', {
+                      className: 'hs-input',
+                      type: 'number',
+                      placeholder: 'minPoints 100',
+                      value: newPoints,
+                      onChange: (e) => setNewPoints(e.target.value)
+                    }),
+                    h('button', { className: 'hs-btn primary', onClick: handleAddSource }, '+ 添加')
                   ]),
-                  h('div', { className: 'hs-hero-desc' },
-                    '插件自带的推荐源不单独占一块列表：启用后就出现在下方「订阅源清单」里，并带「内置」标签；一个自定义源都没有时，内置源直接生效。'
-                  )
+                  h('div', { className: 'hs-form-hint' },
+                    'ID 用于来源标注，改一次就是新源；GitHub Release 填 owner/repo，Hacker News 只需要最低热度')
                 ])
               ]),
-              builtinMode
-                ? h('span', {
-                    className: 'hs-tag-pill',
-                    style: { background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', borderColor: 'rgba(245, 158, 11, 0.3)', padding: '5px 12px' }
-                  }, '默认源生效中 · 未配置自定义源')
-                : missingBuiltins.length > 0
-                  ? h('button', { className: 'hs-btn primary', onClick: handleEnableBuiltins }, [
-                      h('span', { style: { marginRight: 4 } }, '⚡'),
-                      `一键启用全部（${missingBuiltins.length}）`
-                    ])
-                  : h('span', {
-                      className: 'hs-tag-pill',
-                      style: { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.3)', padding: '5px 12px' }
-                    }, '✓ 内置源已全部启用')
-            ]),
 
-            // 新增源表单 Card
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, '添加新的采集订阅源'),
-                  h('div', { className: 'hs-card-subtitle' }, '支持 RSS/Atom 播客、GitHub Release 版本更新与 Hacker News 热门榜单')
-                ])
-              ]),
-              h('div', { className: 'hs-form-grid', style: { marginBottom: 14 } }, [
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '源标识 ID'),
-                  h('input', {
-                    className: 'hs-input',
-                    placeholder: '如 swift-org 或 vercel-blog',
-                    value: newId,
-                    onChange: (e) => setNewId(e.target.value)
-                  })
-                ]),
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '数据源类型'),
-                  h('select', {
-                    className: 'hs-select',
-                    value: newKind,
-                    onChange: (e) => setNewKind(e.target.value)
-                  }, [
-                    h('option', { value: 'rss' }, 'RSS / Atom Feed'),
-                    h('option', { value: 'github-release' }, 'GitHub Release 仓库'),
-                    h('option', { value: 'hn' }, 'Hacker News 榜单')
-                  ])
-                ]),
-                h('div', { className: 'hs-form-item', style: { gridColumn: newKind === 'hn' ? 'span 1' : 'span 2' } }, [
-                  h('label', { className: 'hs-form-label' }, newKind === 'github-release' ? 'GitHub 仓库 (owner/repo)' : 'Feed URL 地址'),
-                  h('input', {
-                    className: 'hs-input',
-                    placeholder: newKind === 'github-release' ? '例如 apple/swift 或 facebook/react' : 'https://...',
-                    value: newTarget,
-                    onChange: (e) => setNewTarget(e.target.value)
-                  })
-                ]),
-                newKind === 'hn' && h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '最低热度分数 (minPoints)'),
-                  h('input', {
-                    className: 'hs-input',
-                    type: 'number',
-                    placeholder: '100',
-                    value: newPoints,
-                    onChange: (e) => setNewPoints(e.target.value)
-                  })
-                ])
-              ]),
-              h('button', {
-                className: 'hs-btn primary',
-                onClick: handleAddSource
-              }, '+ 确认添加此订阅源')
-            ]),
-
-            // 现有订阅源列表 Card：内置源并进同一张表，用「内置」标签区分
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' },
-                    `订阅源清单（生效中 ${listedSources.length}${missingBuiltins.length ? ` · 内置待启用 ${missingBuiltins.length}` : ''}${builtinMode ? ' · 内置默认源' : ''}）`
-                  ),
-                  h('div', { className: 'hs-card-subtitle' },
+              h('div', { className: 'hs-cfg-section' }, [
+                h('div', { className: 'hs-cfg-section-head' }, [
+                  h('div', { className: 'hs-cfg-section-title' }, '订阅源清单'),
+                  h('div', { className: 'hs-cfg-section-note' },
                     builtinMode
-                      ? '配置里没有自定义源，扫描直接使用内置默认源；添加任意自定义源后以配置为准'
-                      : '聚合扫描时会并发采集所有已启用的源；带「内置」标签的来自插件自带推荐源'
-                  )
-                ])
-              ]),
-              h('table', { className: 'hs-table' }, [
-                h('thead', null, [
-                  h('tr', null, [
-                    h('th', { style: { width: 170 } }, 'ID 标识'),
-                    h('th', { style: { width: 120 } }, '类型'),
-                    h('th', null, '抓取目标 / 规则'),
-                    h('th', { style: { width: 80, textAlign: 'right' } }, '操作')
-                  ])
+                      ? '配置里没有自定义源，扫描直接用内置默认源'
+                      : '带「内置」标签的来自插件自带推荐源')
                 ]),
-                h('tbody', null, [
-                  listedSources.map(s => {
-                    let typeBadgeClass = 'hs-tag-pill';
-                    if (s.kind === 'rss') typeBadgeClass = 'hs-tag-pill ai';
-                    if (s.kind === 'github-release') typeBadgeClass = 'hs-tag-pill code';
-                    return h('tr', { key: s.id }, [
-                      h('td', { style: { fontWeight: 600 } }, [
-                        s.id,
-                        builtinIds.has(s.id) && h('span', {
-                          className: 'hs-tag-pill',
-                          style: { marginLeft: 6, fontSize: 10, background: 'rgba(99, 102, 241, 0.18)', color: '#a5b4fc', borderColor: 'rgba(99, 102, 241, 0.35)' }
-                        }, '内置')
-                      ]),
-                      h('td', null, h('span', { className: typeBadgeClass }, s.kind)),
-                      h('td', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontFamily: 'monospace', fontSize: 12 } },
-                        s.url || s.repo || `Hacker News (minPoints: ${s.minPoints})`
-                      ),
-                      h('td', { style: { textAlign: 'right' } }, builtinMode
-                        ? h('span', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontSize: 11 } }, '默认生效')
-                        : h('button', {
-                            className: 'hs-btn danger',
-                            style: { padding: '3px 8px', fontSize: 11 },
-                            onClick: () => handleDeleteSource(s.id)
-                          }, '移除'))
-                    ]);
-                  }),
-                  missingBuiltins.map(b => h('tr', { key: `builtin-${b.id}`, style: { opacity: 0.75 } }, [
-                    h('td', { style: { fontWeight: 600 } }, [
-                      b.id,
-                      h('span', {
-                        className: 'hs-tag-pill',
-                        style: { marginLeft: 6, fontSize: 10, background: 'rgba(99, 102, 241, 0.18)', color: '#a5b4fc', borderColor: 'rgba(99, 102, 241, 0.35)' }
-                      }, '内置')
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, `生效中 ${enabledCount} 个`),
+                      h('div', { className: 'hs-card-subtitle' }, '单源失败只记录下来，不中断其他源；失败名单出现在候选页的抓取详情里')
                     ]),
-                    h('td', null, h('span', { className: 'hs-tag-pill ai' }, b.kind || 'rss')),
-                    h('td', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontFamily: 'monospace', fontSize: 12 } },
-                      b.url || b.repo || ''
-                    ),
-                    h('td', { style: { textAlign: 'right' } }, h('button', {
+                    !builtinMode && missingBuiltins.length > 0 && h('button', {
                       className: 'hs-btn',
-                      style: { padding: '3px 8px', fontSize: 11 },
-                      onClick: () => handleAddPresetSource(b)
-                    }, '启用'))
-                  ]))
-                ])
-              ])
-            ]),
+                      onClick: handleEnableBuiltins
+                    }, `⚡ 启用全部内置（${missingBuiltins.length}）`)
+                  ]),
 
-            // RSS 属于「源」：订阅地址放这里，不占候选页的位置。
-            h('div', { className: 'hs-card', style: { marginTop: 12 } }, [
-              h('div', { className: 'hs-card-header', style: { marginBottom: 8 } }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, 'RSS 订阅'),
-                  h('div', { className: 'hs-card-subtitle' }, '把候选和当天原文一起丢进阅读器')
-                ]),
-                h('div', { style: { display: 'flex', gap: 8 } }, [
-                  h('button', {
-                    className: 'hs-btn',
-                    onClick: async () => {
-                      try {
-                        await navigator.clipboard.writeText(rssHref);
-                        showToast('RSS 地址已复制');
-                      } catch {
-                        showToast('复制失败，请手动复制：' + rssHref, true);
-                      }
-                    }
-                  }, '复制地址'),
-                  h('a', {
-                    href: rssHref,
-                    target: '_blank',
-                    rel: 'noreferrer',
-                    className: 'hs-btn ghost',
-                    style: { textDecoration: 'none' }
-                  }, '打开')
+                  enabledCount === 0 && h('div', {
+                    style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)', padding: '6px 2px' }
+                  }, '还没有任何源：先加一个自定义源，或启用下面的内置推荐源。'),
+
+                  h('div', { className: 'hs-src-rows' }, [
+                    listedSources.map(source => h('div', { key: source.id, className: 'hs-src-row' }, [
+                      h('span', { className: `hs-src-kind ${kindClass(source.kind)}` }, kindLabel(source.kind)),
+                      h('div', { className: 'hs-src-main' }, [
+                        h('div', { className: 'hs-src-title' }, [
+                          source.id,
+                          builtinIds.has(source.id) && h('span', { className: 'hs-src-kind hs-src-builtin' }, '内置')
+                        ]),
+                        h('div', { className: 'hs-src-target', title: targetOf(source) }, targetOf(source))
+                      ]),
+                      h('div', { className: 'hs-src-actions' }, builtinMode
+                        ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #9da1b0)' } }, '默认生效')
+                        : h('button', {
+                            className: 'hs-btn ghost',
+                            style: { padding: '3px 8px', fontSize: 11, color: '#f87171' },
+                            onClick: () => handleDeleteSource(source.id)
+                          }, '移除'))
+                    ])),
+
+                    missingBuiltins.map(builtin => h('div', {
+                      key: `builtin-${builtin.id}`,
+                      className: 'hs-src-row pending'
+                    }, [
+                      h('span', { className: `hs-src-kind ${kindClass(builtin.kind)}` }, kindLabel(builtin.kind)),
+                      h('div', { className: 'hs-src-main' }, [
+                        h('div', { className: 'hs-src-title' }, [
+                          builtin.id,
+                          h('span', { className: 'hs-src-kind hs-src-builtin' }, '内置'),
+                          h('span', { className: 'hs-src-kind' }, '未启用')
+                        ]),
+                        h('div', { className: 'hs-src-target', title: targetOf(builtin) }, targetOf(builtin))
+                      ]),
+                      h('div', { className: 'hs-src-actions' }, h('button', {
+                        className: 'hs-btn',
+                        style: { padding: '3px 10px', fontSize: 11 },
+                        onClick: () => handleAddPresetSource(builtin)
+                      }, '启用'))
+                    ]))
+                  ])
                 ])
               ]),
-              h('code', { className: 'hs-rss-url', title: rssHref }, rssHref)
-            ])
-          ]),
+
+              // RSS 属于「源」：一条 slim 地址条，不占一整张卡
+              h('div', { className: 'hs-src-rss' }, [
+                h('span', { className: 'hs-src-rss-label' }, 'RSS 订阅'),
+                h('span', { className: 'hs-src-rss-url', title: rssHref }, rssHref),
+                h('button', {
+                  className: 'hs-btn',
+                  style: { padding: '3px 10px', fontSize: 11 },
+                  onClick: async () => {
+                    try {
+                      await navigator.clipboard.writeText(rssHref);
+                      showToast('RSS 地址已复制');
+                    } catch {
+                      showToast('复制失败，请手动复制：' + rssHref, true);
+                    }
+                  }
+                }, '复制'),
+                h('a', {
+                  href: rssHref,
+                  target: '_blank',
+                  rel: 'noreferrer',
+                  className: 'hs-btn ghost',
+                  style: { textDecoration: 'none', padding: '3px 10px', fontSize: 11 }
+                }, '打开')
+              ])
+            ]);
+          })(),
 
           // ── TAB: 草稿箱（只做草稿该做的事：找草稿、看正文、转正、废弃） ──
           (tab === 'drafts' || tab === 'articles') && (() => {
@@ -3813,7 +3917,11 @@ window.__ModuleLoader__.load({
                 hint
               );
 
-            const section = (title, note, children) => h('div', { className: 'hs-cfg-section', key: `sec-${title}` }, [
+            const section = (id, title, note, children) => h('div', {
+              className: 'hs-cfg-section',
+              key: `sec-${id}`,
+              id: `cfg-${id}`
+            }, [
               h('div', { className: 'hs-cfg-section-head' }, [
                 h('div', { className: 'hs-cfg-section-title' }, title),
                 note ? h('div', { className: 'hs-cfg-section-note' }, note) : null
@@ -3841,6 +3949,19 @@ window.__ModuleLoader__.load({
                   : h('span', { className: 'hs-cfg-state warn' }, [h('span', { className: 'hs-cfg-dot' }), '未绑定仓库'])
               ]),
 
+              // 四组之间互相隔得远，给一排锚点：点一下直接滚过去
+              h('div', { className: 'hs-cfg-jump' }, [
+                [['connect', '连接'], ['generate', '生成'], ['publish', '发布'], ['profile', '画像']].map(([id, label]) =>
+                  h('button', {
+                    key: id,
+                    type: 'button',
+                    onClick: () => {
+                      const node = typeof document !== 'undefined' ? document.getElementById(`cfg-${id}`) : null;
+                      if (node?.scrollIntoView) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                  }, label))
+              ]),
+
               h('div', { className: 'hs-cfg-overview' }, [
                 stat('博客仓库', h('span', { className: 'path', title: state?.blog?.projectRoot || '' }, repoName)),
                 stat('已发布文章', [
@@ -3865,7 +3986,7 @@ window.__ModuleLoader__.load({
                   : h('span', { className: 'weak' }, '还没有记录'))
               ]),
 
-              section('连接', '换仓库会重新扫描画像，草稿与文章都跟着新根目录走', [
+              section('connect', '连接', '换仓库会重新扫描画像，草稿与文章都跟着新根目录走', [
                 h('div', { className: 'hs-card' }, [
                   h('div', { className: 'hs-card-header' }, [
                     h('div', null, [
@@ -3930,7 +4051,7 @@ window.__ModuleLoader__.load({
                 ])
               ]),
 
-              section('生成', '抓多少、留多新、判多重 —— 只影响候选排序与合规闸门', [
+              section('generate', '生成', '抓多少、留多新、判多重 —— 只影响候选排序与合规闸门', [
                 h('div', { className: 'hs-card' }, [
                   h('div', { className: 'hs-card-header' }, [
                     h('div', null, [
@@ -3940,7 +4061,15 @@ window.__ModuleLoader__.load({
                   ]),
                   h('div', { className: 'hs-form-grid' }, [
                     numberField('候选上限', 'limit', rankLimit, setRankLimit, '条 / 天', '单日推荐候选数量（默认 15）'),
-                    numberField('回溯时间窗', 'sinceHours', rankSinceHours, setRankSinceHours, '小时', '只采集这段时间内发布的内容（默认 36）'),
+                    numberField('回溯时间窗', 'sinceHours', rankSinceHours, setRankSinceHours, '小时', '只采集这段时间内发布的内容（默认 36）')
+                  ]),
+                  // 两个很少改的参数收起来：页面长度直接少一行
+                  h('button', {
+                    type: 'button',
+                    className: 'hs-cfg-fold',
+                    onClick: () => setShowAdvancedRank(v => !v)
+                  }, `${showAdvancedRank ? '▾' : '▸'} 高级排序参数（半衰期 / 聚类阈值）`),
+                  showAdvancedRank && h('div', { className: 'hs-form-grid', style: { marginTop: 12 } }, [
                     numberField('新鲜度半衰期', 'halfLifeHours', rankHalfLifeHours, setRankHalfLifeHours, '小时', '越过半衰期得分减半（默认 24）'),
                     numberField('聚类阈值', 'clusterThreshold', rankClusterThreshold, setRankClusterThreshold, '0.3–0.95', '标题相似度门槛，越高合并越保守（默认 0.6）', { step: '0.05' })
                   ])
@@ -4053,7 +4182,7 @@ window.__ModuleLoader__.load({
                 ])
               ]),
 
-              section('发布', 'build → script 顺序执行，任一步失败即停', [
+              section('publish', '发布', 'build → script 顺序执行，任一步失败即停', [
                 h('div', { className: 'hs-card', key: 'deploy-card' }, [
                   h('div', { className: 'hs-card-header' }, [
                     h('div', null, [
@@ -4136,7 +4265,7 @@ window.__ModuleLoader__.load({
                 ])
               ]),
 
-              section('画像', '从存量文章归纳，只读；决定候选的 tag 与关键词加权', [
+              section('profile', '画像', '从存量文章归纳，只读；决定候选的 tag 与关键词加权', [
                 h('div', { className: 'hs-card' }, [
                   h('div', { className: 'hs-card-header' }, [
                     h('div', null, [
