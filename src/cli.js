@@ -2,12 +2,14 @@
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 import { createPipeline } from './core/pipeline.js';
 import { rankClusters } from './core/rank.js';
 import { renderMarkdown } from './core/digest.js';
 import { validateArticle, parseFrontmatter } from './core/validate.js';
+import { dateLabel } from './core/normalize.js';
 import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
@@ -22,8 +24,10 @@ hotspot —— 热点采集 → 去重 → 确定性排序 → 草稿落地
   hotspot check <slug>                    草稿发布前三道机械校验
   hotspot promote <slug>                  草稿转正到 docs/article/
   hotspot publish <slug> [--yes]          校验 → 构建 → 提交 → 推送 → 上传
+  hotspot doctor [--online] [--root <dir>] 自检：配置、目标项目、源、DSH 安装状态
 
   --root <dir>   目标项目根目录，默认当前目录
+  --online       doctor 时真的去连每个源（会发网络请求）
 `;
 
 function parseArgs(argv) {
@@ -351,6 +355,167 @@ async function cmdPublish() {
   log('\n✓ 发布完成');
 }
 
+function line(state, label, detail = '') {
+  const symbol = state === 'ok' ? '✓' : state === 'warn' ? '!' : '✗';
+  log(`  ${symbol} ${pad(label, 16)}${detail}`);
+}
+
+/**
+ * 自检。分两层：这里能跑的是「插件外面」的一切 —— 配置、目标项目、源的连通性、
+ * 有没有装进 DSH profile。真正「装进 DSH 后能不能用」要在 App 里看管理页，
+ * 因为那需要 DSH 运行时。
+ */
+async function cmdDoctor() {
+  const online = Boolean(flags.get('online'));
+  const results = [];
+  const add = (state, label, detail) => {
+    results.push({ state, label });
+    line(state, label, detail);
+  };
+
+  log(`\nhotspot doctor  ${cwd}\n`);
+
+  let config = null;
+  const configFile = path.join(cwd, 'hotspot.config.json');
+  if (!existsSync(configFile)) {
+    add('fail', '配置文件', '找不到 hotspot.config.json，先跑 hotspot init');
+  } else {
+    try {
+      config = JSON.parse(await readFile(configFile, 'utf8'));
+      add('ok', '配置文件', `${config.sources?.length ?? 0} 个源 · 排序参数${config.rank ? '已设置' : '用默认'}`);
+    } catch (error) {
+      add('fail', '配置文件', `解析失败：${error.message}`);
+    }
+  }
+
+  if (!existsSync(path.join(cwd, 'docs'))) {
+    add('fail', '目标项目', '当前目录下没有 docs/');
+  } else {
+    const target = createVitePressTarget({
+      root: cwd,
+      articleDir: config?.target?.articleDir,
+      draftDir: config?.target?.draftDir,
+    });
+    const profile = await target.profile();
+    add(
+      profile.articles.length > 0 ? 'ok' : 'warn',
+      '已发布文章',
+      profile.articles.length > 0 ? `${profile.articles.length} 篇` : '0 篇，画像是空的，排序会退化成只看新鲜度',
+    );
+    add(
+      profile.tagVocabulary.length > 0 ? 'ok' : 'warn',
+      '受控 tag',
+      profile.tagVocabulary.length > 0
+        ? `${profile.tagVocabulary.length} 个：${profile.tagVocabulary.slice(0, 8).join('、')}`
+        : '没有 tag 词表，新草稿只能用空标签',
+    );
+    const drafts = await target.listDrafts();
+    add('ok', '草稿目录', `${path.relative(cwd, target.draftDir)}/ · ${drafts.length} 篇`);
+  }
+
+  if (Array.isArray(config?.sources)) {
+    const problems = [];
+    for (const source of config.sources) {
+      if (!source.id) problems.push('有源缺 id');
+      else if (source.kind === 'rss' || source.kind === 'atom') {
+        if (!source.url) problems.push(`${source.id} 缺 url`);
+      } else if (source.kind === 'github-release') {
+        if (!source.repo) problems.push(`${source.id} 缺 repo`);
+      } else if (source.kind !== 'hn') problems.push(`${source.id} 的 kind 未知：${source.kind}`);
+    }
+    add(problems.length === 0 ? 'ok' : 'fail', '源字段', problems.length ? problems.join('；') : '必需字段齐全');
+  }
+
+  if (online && Array.isArray(config?.sources) && config.sources.length > 0) {
+    let sources;
+    try {
+      sources = createSources(config.sources);
+    } catch (error) {
+      add('fail', '源连通', `构造源失败：${error.message}`);
+      sources = [];
+    }
+    if (sources.length > 0) {
+      const since = new Date(Date.now() - 7 * 86400000);
+      const fetched = await Promise.all(
+        sources.map(async (source) => {
+          try {
+            const items = await source.fetch(since, { timeoutMs: 15000 });
+            return { id: source.id, count: items.length, error: null };
+          } catch (error) {
+            return { id: source.id, count: 0, error: error.message };
+          }
+        }),
+      );
+      const okCount = fetched.filter((r) => !r.error).length;
+      add(
+        okCount === fetched.length ? 'ok' : okCount > 0 ? 'warn' : 'fail',
+        '源连通',
+        fetched.map((r) => (r.error ? `${r.id} ✗ ${r.error}` : `${r.id} ${r.count} 条`)).join(' · '),
+      );
+    }
+  } else if (Array.isArray(config?.sources) && config.sources.length > 0) {
+    add('ok', '源连通', `跳过（加 --online 会真的连一次，${config.sources.length} 个源）`);
+  }
+
+  const store = createFsStore({ dir: path.resolve(cwd, config?.store?.dir ?? '.hotspot') });
+  let digest = null;
+  try {
+    digest = await store.loadDigest('latest');
+  } catch {
+    digest = null;
+  }
+  if (!digest) {
+    add('warn', 'digest', '还没有，跑一次 hotspot run');
+  } else {
+    const today = dateLabel(new Date());
+    add(
+      digest.date === today ? 'ok' : 'warn',
+      'digest',
+      `${digest.date} · 候选 ${digest.items.length} 条 · 源 ${digest.status.feedsOk}/${digest.status.feedsTotal}` +
+        (digest.date === today ? '' : '（不是今天的）'),
+    );
+  }
+
+  const profilesDir = path.join(os.homedir(), '.dsh', 'profiles');
+  if (!existsSync(profilesDir)) {
+    add('warn', 'DSH 安装', '没有 ~/.dsh/profiles，这台机器上好像没装 DSH');
+  } else {
+    const names = (await readdir(profilesDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    const installed = [];
+    for (const name of names) {
+      try {
+        const pkg = JSON.parse(await readFile(path.join(profilesDir, name, 'package.json'), 'utf8'));
+        const bundles = pkg?.dsh?.profile?.bundles ?? [];
+        if (!bundles.includes('hotspot')) continue;
+        const resolvable = existsSync(path.join(profilesDir, name, 'node_modules', 'hotspot'));
+        installed.push(`${name}${resolvable ? '' : '（bundles 里有，但 node_modules 解析不到）'}`);
+      } catch {
+        /* 没有 package.json 的 profile 跳过 */
+      }
+    }
+    if (installed.length === 0) {
+      add('warn', 'DSH 安装', `没装进任何 profile（现有：${names.join('、') || '无'}）`);
+    } else {
+      add('ok', 'DSH 安装', installed.join(' · '));
+    }
+  }
+
+  const failed = results.filter((r) => r.state === 'fail').length;
+  const warned = results.filter((r) => r.state === 'warn').length;
+  log('');
+  if (failed > 0) {
+    log(`✗ ${failed} 项失败${warned ? `，${warned} 项警告` : ''} —— 修掉失败项再继续`);
+    process.exitCode = 1;
+  } else if (warned > 0) {
+    log(`! 全部通过，但有 ${warned} 项警告`);
+  } else {
+    log('✓ 全部通过');
+  }
+  log('  装进 DSH 后，还要打开 <DSH 地址>/hotspot/ 看管理页才能确认运行时可用\n');
+}
+
 async function main() {
   switch (command) {
     case 'init': return cmdInit();
@@ -360,6 +525,7 @@ async function main() {
     case 'check': return cmdCheck();
     case 'promote': return cmdPromote();
     case 'publish': return cmdPublish();
+    case 'doctor': return cmdDoctor();
     case undefined:
     case '-h':
     case '--help':

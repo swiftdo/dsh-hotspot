@@ -48,7 +48,29 @@ node src/cli.js scaffold '#3'          # 生成 docs/draft/<slug>/index.md
 node src/cli.js check <slug>           # 三道机械校验
 node src/cli.js promote <slug>         # 转到 docs/article/，去掉 sitemap:false
 node src/cli.js publish <slug> --yes   # 校验 → 构建 → 提交 → 推送 → 上传
+node src/cli.js doctor --online        # 自检：配置 / 目标项目 / 每个源 / DSH 安装状态
 ```
+
+## 怎么确认它真的可用
+
+分三层，从便宜到贵。**下层不过就别看上层**，否则会把"配置错"误判成"插件坏了"。
+
+| 层 | 命令 / 动作 | 通过的标准 |
+|---|---|---|
+| 1 项目侧 | `hotspot doctor --online` | 没有 ✗；源能连通、能扫到文章、tag 词表非空 |
+| 2 打包侧 | `dsh --profile <名字> --dump-config \| grep -A6 hotspot` | 配置树里出现 `- id: hotspot`，config 正确 |
+| 3 运行时 | 启动后在 App 里打开 `<地址>/hotspot/` | 页面能开、`/api/state` 有数据、会话里能调 `hotspot_run` |
+
+第 2、3 层依赖 DSH 装好并重启。第 3 层是最关键的一层，因为前两层都可能"看起来正常但实际没生效"——踩过的两个坑（`output.render` 返回裸字符串、`output.schema` 写了 `required`）都属于这种静默失败。判断办法：`cordis.patch.yml` 里把 `verbose` 设成 `true`，启动日志应出现
+
+```text
+[hotspot] hotspot: 插件已加载
+[hotspot] tools 服务就绪=true
+[hotspot] 已注册 3 个工具：hotspot_run / hotspot_get / hotspot_scaffold
+[hotspot] 已注册 7 条路由，管理页 /hotspot/
+```
+
+四行缺哪一行，问题就在哪一层：第一行缺失 = 模块没被加载（看 `did not activate` 列表）；第二行 false = tools 服务没起来；第三行缺失 = 注册抛异常了（异常被 Cordis 吞掉，插件里的 try/catch 会打出来）；第四行缺失 = webServer 没就绪。
 
 ## 三道机械校验
 
