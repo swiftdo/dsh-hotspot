@@ -66,6 +66,27 @@
   .item .title { font-weight: 500; }
   .item .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .score { font-variant-numeric: tabular-nums; color: var(--accent); }
+  .stats { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 10px; }
+  .stat b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 11px; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.ok { color: var(--accent); border-color: rgba(77, 182, 160, .45); background: rgba(77, 182, 160, .1); }
+  .badge.warn { color: var(--warn); border-color: rgba(224, 163, 74, .45); background: rgba(224, 163, 74, .1); }
+  .rss-card { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .rss-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--accent); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .link-btn { color: var(--muted); font-size: 12px; text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; white-space: nowrap; }
+  .link-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .rank { color: var(--muted); font-size: 12px; min-width: 26px; font-variant-numeric: tabular-nums; }
+  .feed-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 26px 0 4px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .feed-head strong { font-weight: 500; }
+  .feed-head .count { color: var(--accent); }
+  .feed-row { padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .feed-row:last-child { border-bottom: 0; }
+  .feed-row .title a { color: var(--text); text-decoration: none; }
+  .feed-row .title a:hover { color: var(--accent); }
+  .feed-row .summary { color: var(--muted); font-size: 12px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  header .spacer { flex: 1; }
+  header { flex-wrap: wrap; }
   .tag { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
   details { margin-top: 6px; }
   summary { cursor: pointer; color: var(--muted); font-size: 12px; }
@@ -82,6 +103,8 @@
 <header>
   <h1>dsh-hotspot</h1>
   <span class="path" id="projectPath"></span>
+  <span class="spacer"></span>
+  <button class="ghost" id="rssTop" title="复制 RSS 订阅地址">RSS 订阅</button>
   <button class="ghost" id="reload">刷新</button>
   <button class="ghost" id="deploy" style="display:none">部署站点</button>
   <button class="primary" id="run">立即抓取</button>
@@ -257,29 +280,98 @@ async function saveSources() {
   }
 }
 
+function rssUrl() {
+  return location.origin + (state?.feed?.rssPath || '/dsh-hotspot/rss.xml');
+}
+
+function fmtTime(value) {
+  const when = value ? new Date(value) : null;
+  if (!when || Number.isNaN(when.getTime())) return '';
+  return when.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+async function copyText(text, message) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message);
+    return;
+  } catch {
+    // 非安全上下文里 clipboard API 不可用，退回选中复制
+  }
+  const holder = document.createElement('textarea');
+  holder.value = text;
+  holder.style.position = 'fixed';
+  holder.style.opacity = '0';
+  document.body.appendChild(holder);
+  holder.select();
+  try {
+    document.execCommand('copy');
+    toast(message);
+  } catch {
+    toast('复制失败，请手动选择地址：' + text, true);
+  }
+  holder.remove();
+}
+
+let feedExpanded = false;
+const FEED_PREVIEW = 24;
+
 function renderItems() {
   const digest = state.digest;
+  const rss = rssUrl();
+
   if (!digest) {
-    $('digestMeta').innerHTML = '<span class="muted">还没有 digest，点右上角「立即抓取」跑一次。</span>';
-    $('itemList').innerHTML = '';
+    $('digestMeta').innerHTML =
+      '<div class="row"><strong style="font-weight:500">今天还没有抓取记录</strong>' +
+      '<span class="muted">点右上角「立即抓取」跑一次，候选与订阅源会同时有内容。</span></div>';
+    $('itemList').innerHTML = '<span class="muted">暂无候选</span>';
     return;
   }
-  const s = digest.status;
-  const health = s.degraded ? '严重降级' : (s.feedsOk === s.feedsTotal ? '正常' : '部分降级');
-  $('digestMeta').innerHTML =
-    '<div class="row"><strong style="font-weight:500">' + esc(digest.date) + '</strong>' +
-    '<span class="muted">抓取 ' + s.feedsOk + '/' + s.feedsTotal + ' 源 · 原始 ' + s.itemsRaw +
-    ' 条 · 去重后 ' + s.itemsDeduped + ' 条 · 候选 ' + s.candidates + ' 条 · ' + health + '</span></div>' +
-    (s.failedSources.length ? '<div class="muted" style="margin-top:6px">失败：' + esc(s.failedSources.join('、')) + '</div>' : '');
 
-  $('itemList').innerHTML = digest.items.map((item) => {
-    const tags = item.tags.map((t) => '<span class="tag">' + esc(t) + '</span>').join('');
+  const status = digest.status || {};
+  const health = status.degraded
+    ? '<span class="badge warn">严重降级</span>'
+    : (status.feedsOk === status.feedsTotal
+      ? '<span class="badge ok">抓取正常</span>'
+      : '<span class="badge warn">部分降级</span>');
+  const stat = (value, label) => '<div class="stat"><b>' + esc(value) + '</b><span>' + esc(label) + '</span></div>';
+
+  $('digestMeta').innerHTML =
+    '<div class="row" style="justify-content:space-between">' +
+      '<div class="row"><strong style="font-weight:500;font-size:15px">' + esc(digest.date) + '</strong>' + health + '</div>' +
+      '<span class="muted">生成于 ' + esc(fmtTime(digest.generatedAt) || '—') + '</span>' +
+    '</div>' +
+    '<div class="stats">' +
+      stat((status.feedsOk ?? 0) + '/' + (status.feedsTotal ?? 0), '成功源') +
+      stat(status.itemsRaw ?? 0, '抓取原文') +
+      stat(status.itemsDeduped ?? 0, '去重后') +
+      stat(status.candidates ?? digest.items.length, '候选') +
+      stat(state.feed?.items?.length ?? 0, '今日文章') +
+    '</div>' +
+    (status.failedSources?.length
+      ? '<div class="muted" style="margin-top:8px">失败源：' + esc(status.failedSources.join('、')) + '</div>'
+      : '') +
+    '<div class="rss-card">' +
+      '<span class="badge ok">RSS</span>' +
+      '<code class="rss-url" title="' + esc(rss) + '">' + esc(rss) + '</code>' +
+      '<button class="ghost" data-copy-rss>复制订阅地址</button>' +
+      '<a class="link-btn" href="' + esc(rss) + '" target="_blank" rel="noreferrer">打开订阅源</a>' +
+    '</div>' +
+    '<div class="muted" style="margin-top:8px;font-size:11px">阅读器里候选 ' + (digest.items.length) +
+      ' 条排最前（用当天生成时间），其后是今天抓到的其余文章，单次最多 80 条。</div>';
+
+  $('digestMeta').querySelector('[data-copy-rss]').onclick = () => copyText(rss, 'RSS 订阅地址已复制');
+
+  const itemsHtml = digest.items.map((item, index) => {
+    const tags = (item.tags || []).map((t) => '<span class="tag">' + esc(t) + '</span>').join('');
     const sources = (item.sources || []).map((src) =>
       '<div class="meta">· ' + esc(src.source) + ' — <a href="' + esc(src.url) + '" target="_blank" rel="noreferrer" style="color:var(--muted)">' + esc(src.title).slice(0, 90) + '</a></div>'
     ).join('');
     return '<div class="item">' +
-      '<div class="row"><span class="score">' + item.score.toFixed(1) + '</span>' +
+      '<div class="row"><span class="rank">#' + (index + 1) + '</span>' +
+      '<span class="score">' + (Number(item.score) || 0).toFixed(1) + '</span>' +
       '<span class="title" style="flex:1">' + esc(item.title) + '</span>' +
+      '<a class="link-btn" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">原文</a>' +
       '<button class="ghost" data-scaffold="' + esc(item.id) + '">生成草稿</button></div>' +
       '<div class="meta">' + tags + item.sourceCount + ' 个源 · ' + esc(item.id) + '</div>' +
       '<details><summary>查看来源与摘要</summary>' + sources +
@@ -287,22 +379,43 @@ function renderItems() {
       '</div>';
   }).join('') || '<span class="muted">今天没有候选</span>';
 
-  const feed = (state.feed?.items || []).filter((item) => !item.candidate);
-  if (feed.length) {
-    const feedRows = feed.map((item) => {
-      const when = item.publishedAt ? new Date(item.publishedAt) : null;
-      const whenText = when && !Number.isNaN(when.getTime())
-        ? when.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-        : '';
-      return '<div class="item" style="padding:10px 0">' +
-        '<div class="row"><a class="title" style="flex:1;color:inherit;text-decoration:none" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.title || item.url) + '</a></div>' +
-        '<div class="meta">' + (item.source ? '<span class="tag">' + esc(item.source) + '</span> ' : '') +
-        esc(whenText) + (item.summary ? ' · ' + esc(item.summary) : '') + '</div>' +
+  const feedItems = (state.feed?.items || []).filter((item) => !item.candidate);
+  let feedHtml = '';
+  if (feedItems.length) {
+    const shown = feedExpanded ? feedItems : feedItems.slice(0, FEED_PREVIEW);
+    const rows = shown.map((item) => {
+      const when = fmtTime(item.publishedAt);
+      const summary = String(item.summary || '').trim();
+      return '<div class="feed-row">' +
+        '<div class="title"><a href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.title || item.url) + '</a></div>' +
+        '<div class="meta">' + (item.source ? '<span class="tag">' + esc(item.source) + '</span>' : '') +
+        esc(when) + (summary ? (when ? ' · ' : '') + esc(summary) : '') + '</div>' +
         '</div>';
     }).join('');
-    $('itemList').innerHTML +=
-      '<div style="margin-top:22px"><div class="row"><strong style="font-weight:500">今日订阅文章（' + feed.length + '）</strong>' +
-      '<span class="muted">' + esc(state.feed?.date || '') + ' · 候选之外抓到的原文</span></div>' + feedRows + '</div>';
+    const missingMeta = feedItems.filter((item) => !item.source && !item.publishedAt).length;
+    const toggle = feedItems.length > FEED_PREVIEW
+      ? '<button class="ghost" data-toggle-feed>' + (feedExpanded ? '收起' : '展开全部 ' + feedItems.length + ' 条') + '</button>'
+      : '';
+    feedHtml =
+      '<div class="feed-head">' +
+        '<strong>今日订阅文章 <span class="count">' + feedItems.length + '</span></strong>' +
+        '<span class="muted">' + esc(state.feed?.date || '') + ' · 候选 ' + (digest.items.length) + ' 条已排在上方</span>' +
+        '<span style="flex:1"></span>' + toggle +
+      '</div>' +
+      (missingMeta
+        ? '<div class="muted" style="font-size:11px;margin-top:4px">其中 ' + missingMeta + ' 条是旧格式原文（没有源与时间），重新抓取一次即可补全。</div>'
+        : '') +
+      rows;
+  }
+
+  $('itemList').innerHTML = itemsHtml + feedHtml;
+
+  const toggleButton = $('itemList').querySelector('[data-toggle-feed]');
+  if (toggleButton) {
+    toggleButton.onclick = () => {
+      feedExpanded = !feedExpanded;
+      renderItems();
+    };
   }
 
   $('itemList').querySelectorAll('[data-scaffold]').forEach((button) => {
@@ -456,6 +569,7 @@ document.querySelectorAll('nav button').forEach((button) => {
   };
 });
 
+$('rssTop').onclick = () => copyText(rssUrl(), 'RSS 订阅地址已复制，粘到阅读器里即可订阅');
 $('reload').onclick = load;
 $('writerMode').onchange = saveWriterSelection;
 $('writerModel').onchange = saveWriterSelection;

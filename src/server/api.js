@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
 import { canonicalUrl } from '../core/normalize.js';
+import { buildFeedItems, buildRssXml } from '../core/rss.js';
 
 /**
  * 管理界面的服务端。
@@ -468,6 +469,9 @@ export function createRoutes(deps) {
     }
     const feed = {
       date: digest?.date ?? '',
+      // 候选条数按 digest 计，面板与 RSS 用同一个数，不各自去数一遍。
+      candidateCount: Array.isArray(digest?.items) ? digest.items.length : 0,
+      rssPath: `${PREFIX}/rss.xml`,
       items: (Array.isArray(rawItems) ? rawItems : [])
         .map((item) => ({
           id: item.id ?? '',
@@ -576,6 +580,52 @@ export function createRoutes(deps) {
           sendHtml(res, await readFile(PANEL_FILE, 'utf8'));
         } catch (error) {
           sendJson(res, 500, { ok: false, message: `面板文件读取失败：${error.message}` });
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/rss.xml`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET'])) return;
+        try {
+          const state = await buildState();
+          const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim() || 'http';
+          const host = String(req.headers.host || '127.0.0.1').trim();
+          const selfUrl = `${proto}://${host}${PREFIX}/rss.xml`;
+
+          const sourceNames = Object.fromEntries(
+            [...(state.config.sources ?? []), ...state.builtinSources]
+              .filter((source) => source && source.id)
+              .map((source) => [source.id, source.name || source.id]),
+          );
+          const items = buildFeedItems({
+            digest: state.digest,
+            articles: state.feed?.items ?? [],
+            sourceNames,
+          });
+          const candidateCount = items.filter((item) => item.kind === 'candidate').length;
+          const articleCount = items.length - candidateCount;
+          const stamp = state.digest
+            ? `${state.digest.date} · 候选 ${candidateCount} 条 · 今日文章 ${articleCount} 条`
+            : '今天还没有抓取记录';
+
+          const xml = buildRssXml({
+            title: '今日热点候选 · dsh-hotspot',
+            link: selfUrl,
+            selfUrl,
+            description: `跨源聚合后的技术热点候选，候选排在最前，其后是今天抓到的订阅文章。${stamp}`,
+            lastBuildDate: state.digest?.generatedAt || new Date().toISOString(),
+            items,
+          });
+          res.writeHead(200, {
+            'content-type': 'application/rss+xml; charset=utf-8',
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(xml),
+          });
+          res.end(xml);
+        } catch (error) {
+          sendJson(res, 500, { ok: false, message: error.message });
         }
       },
     },

@@ -356,6 +356,88 @@ window.__ModuleLoader__.load({
       }
 
       /* ── 候选项目卡片 (Candidate Item) ── */
+      /* ── 候选页顶部概览（今日状态 + RSS 订阅） ── */
+      .hs-overview {
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+      }
+      .hs-overview-top {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .hs-overview-date {
+        font-size: 15px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-status-pill {
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        opacity: 0.9;
+      }
+      .hs-overview-stats {
+        display: flex;
+        gap: 22px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+      .hs-mini-stat b {
+        display: block;
+        font-size: 17px;
+        font-weight: 600;
+        line-height: 1.2;
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-mini-stat span {
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
+      .hs-rss-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--dsw-alias-border-l1, #2c2f3a);
+      }
+      .hs-rss-url {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--dsw-alias-brand-primary, #4db6a0);
+        background: var(--dsw-alias-bg-layer-2, #21232d);
+        border: 1px solid var(--dsw-alias-border-l1, #2c2f3a);
+        border-radius: 5px;
+        padding: 3px 8px;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hs-rss-note {
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        margin-top: 6px;
+      }
+      .hs-feed-row:hover {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .hs-feed-summary {
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
       .hs-candidate-card {
         background: var(--dsw-alias-bg-layer-1, #181920);
         border: 1px solid var(--dsw-alias-border-l1, #282a34);
@@ -1209,6 +1291,26 @@ window.__ModuleLoader__.load({
     }
 
     // ── 主面板视图组件 ───────────────────────────────────────────
+    /**
+     * 草稿正文是否还没写。
+     *
+     * scaffold 只给了 frontmatter + 标题 + 来源引用 +「（正文待写）」，预览里看起来就是空的。
+     * 判断规则只看「有没有成段的正文」，不依赖某个固定占位文案：
+     * 去掉 frontmatter、标题、引用块、源列表与空行后还有内容，才算正文已经写了。
+     */
+    function isDraftBodyEmpty(content) {
+      const text = String(content ?? '');
+      if (!text.trim()) return true;
+      if (text.includes('（正文待写）')) return true;
+      const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '');
+      const meaningful = body
+        .split(/\r?\n/)
+        .filter((line) => !/^\s*(?:#|>|[-*+]\s|```|\d+\.\s|$)/.test(line))
+        .join('')
+        .replace(/\s/g, '');
+      return meaningful.length === 0;
+    }
+
     function HotspotMainPanel(props) {
       ensureStyles();
 
@@ -1219,6 +1321,8 @@ window.__ModuleLoader__.load({
       const [filter, setFilter] = useState('');
       const [filterTag, setFilterTag] = useState('all');
       const [toast, setToast] = useState(null);
+      // 今日订阅文章默认只展开一小段，避免候选页被上百条原文撑长。
+      const [feedExpanded, setFeedExpanded] = useState(false);
 
       // 文章列表搜索与过滤状态
       const [articleSearch, setArticleSearch] = useState('');
@@ -1744,6 +1848,38 @@ window.__ModuleLoader__.load({
         );
       });
 
+      // 顶部概览：日期、抓取健康度、各阶段数量与 RSS 订阅地址。
+      // 状态与数字全部派生自 state，页面不自己再存一份。
+      const FEED_PREVIEW = 24;
+      const digest = state?.digest || null;
+      const digestDate = digest?.date || '';
+      const digestStatus = digest?.status || null;
+      const digestGenerated = digest?.generatedAt
+        ? new Date(digest.generatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '';
+      const health = !digestStatus
+        ? null
+        : digestStatus.degraded
+          ? { text: '严重降级', color: '#f87171' }
+          : digestStatus.feedsOk === digestStatus.feedsTotal
+            ? { text: '抓取正常', color: '#34d399' }
+            : { text: '部分降级', color: '#f59e0b' };
+      const rssPath = state?.feed?.rssPath || '/dsh-hotspot/rss.xml';
+      const rssHref = (typeof window !== 'undefined' ? window.location.origin : '') + rssPath;
+      const sourceLabelOf = (id) => {
+        if (!id) return '';
+        const all = [...(state?.config?.sources || []), ...(state?.builtinSources || [])];
+        return all.find((source) => source.id === id)?.name || id;
+      };
+      const overviewStats = [
+        ['成功源', digestStatus ? `${digestStatus.feedsOk}/${digestStatus.feedsTotal}` : '—'],
+        ['抓取原文', digestStatus?.itemsRaw ?? 0],
+        ['去重后', digestStatus?.itemsDeduped ?? 0],
+        ['候选', rawItems.length],
+        ['今日文章', state?.feed?.items?.length ?? 0],
+      ];
+      const visibleFeedItems = feedExpanded ? feedItems : feedItems.slice(0, FEED_PREVIEW);
+
       // 内置源不再单开一块：并进订阅源清单，用「内置」标签区分。
       const builtinSources = state?.builtinSources || [];
       const builtinIds = new Set(builtinSources.map((s) => s.id));
@@ -1980,6 +2116,56 @@ window.__ModuleLoader__.load({
               ])
             ]),
 
+            // 今日概览 + RSS：一眼看到抓取健康度与产出，订阅地址可直接复制
+            h('div', { className: 'hs-overview', key: 'overview' }, [
+              h('div', { className: 'hs-overview-top' }, [
+                h('span', { className: 'hs-overview-date' }, digestDate || '今天还没有抓取'),
+                health && h('span', {
+                  className: 'hs-status-pill',
+                  style: { color: health.color }
+                }, health.text),
+                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                  digestGenerated ? `生成于 ${digestGenerated}` : '抓取一次后这里会显示各阶段产出'),
+                h('span', { style: { flex: 1 } }),
+                h('button', {
+                  className: 'hs-btn ghost',
+                  style: { padding: '4px 9px', fontSize: 11.5 },
+                  onClick: async () => {
+                    try {
+                      if (typeof navigator === 'undefined' || !navigator.clipboard) throw new Error('clipboard unavailable');
+                      await navigator.clipboard.writeText(rssHref);
+                      showToast('RSS 订阅地址已复制');
+                    } catch {
+                      showToast('复制失败，请手动复制：' + rssHref, true);
+                    }
+                  }
+                }, '复制 RSS'),
+                h('a', {
+                  className: 'hs-btn ghost',
+                  href: rssHref,
+                  target: '_blank',
+                  rel: 'noreferrer',
+                  style: { padding: '4px 9px', fontSize: 11.5, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }
+                }, '打开 RSS')
+              ]),
+              h('div', { className: 'hs-overview-stats' },
+                overviewStats.map(([label, value]) => h('div', { className: 'hs-mini-stat', key: label }, [
+                  h('b', null, String(value)),
+                  h('span', null, label)
+                ]))
+              ),
+              h('div', { className: 'hs-rss-bar' }, [
+                h('span', {
+                  className: 'hs-tag-pill',
+                  style: { fontSize: 10, color: '#34d399', borderColor: 'rgba(52, 211, 153, 0.35)' }
+                }, 'RSS'),
+                h('code', { className: 'hs-rss-url', title: rssHref }, rssHref)
+              ]),
+              h('div', { className: 'hs-rss-note' },
+                `阅读器里候选 ${rawItems.length} 条排最前（按当天生成时间），其后是今日抓到的其余文章，单次最多 80 条。`
+              )
+            ]),
+
             // 搜索与快捷过滤条
             h('div', {
               style: {
@@ -2129,24 +2315,53 @@ window.__ModuleLoader__.load({
                   ]);
                 }),
 
-            // 今日订阅文章：候选排在前面，这里只补候选之外的当天原文条目
-            feedDate && feedItems.length > 0 && h('div', { key: 'feed-items', style: { marginTop: 24 } }, [
-              h('div', { className: 'hs-card-header', style: { padding: '0 2px', marginBottom: 10 } }, [
+            // 今日订阅文章：候选排在前面，这里只补候选之外的当天原文条目。
+            // 默认折叠到 24 条 —— raw 一天上百条，全量铺开会把候选页拉得很长。
+            feedDate && feedItems.length > 0 && h('div', { key: 'feed-items', style: { marginTop: 26 } }, [
+              h('div', {
+                style: {
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                  padding: '0 2px 10px',
+                  marginBottom: 6,
+                  borderBottom: '1px solid var(--dsw-alias-border-l1, #2d303b)'
+                }
+              }, [
                 h('div', null, [
-                  h('div', { className: 'hs-card-title' }, `今日订阅文章（${feedItems.length}）`),
+                  h('div', { className: 'hs-card-title' }, [
+                    '今日订阅文章 ',
+                    h('span', { style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, `(${feedItems.length})`)
+                  ]),
                   h('div', { className: 'hs-card-subtitle' },
-                    `${feedDate} 由订阅源抓取、未进入候选的文章；候选热点已排在前面`
+                    `${feedDate} · 候选 ${rawItems.length} 条已排在上方，这里是候选之外抓到的原文`
                   )
-                ])
+                ]),
+                h('span', { style: { flex: 1 } }),
+                feedItems.length > FEED_PREVIEW && h('button', {
+                  className: 'hs-btn ghost',
+                  style: { padding: '4px 9px', fontSize: 11.5 },
+                  onClick: () => setFeedExpanded((value) => !value)
+                }, feedExpanded ? '收起' : `展开全部 ${feedItems.length} 条`),
+                h('a', {
+                  href: rssHref,
+                  target: '_blank',
+                  rel: 'noreferrer',
+                  className: 'hs-btn ghost',
+                  style: { padding: '4px 9px', fontSize: 11.5, textDecoration: 'none' }
+                }, '订阅 RSS')
               ]),
               h('div', { className: 'hs-card', style: { padding: '2px 0' } },
-                feedItems.map((item, idx) => {
+                visibleFeedItems.map((item, idx) => {
                   const when = item.publishedAt ? new Date(item.publishedAt) : null;
                   const whenText = when && !Number.isNaN(when.getTime())
                     ? when.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
                     : '';
+                  const sourceName = sourceLabelOf(item.source);
                   return h('div', {
                     key: item.id || `${item.url}-${idx}`,
+                    className: 'hs-feed-row',
                     style: {
                       display: 'flex',
                       alignItems: 'flex-start',
@@ -2172,21 +2387,12 @@ window.__ModuleLoader__.load({
                         }
                       }, item.title || item.url),
                       h('div', { className: 'hs-candidate-meta', style: { marginTop: 3 } }, [
-                        item.source && h('span', {
+                        sourceName && h('span', {
                           className: 'hs-tag-pill',
                           style: { fontSize: 10 }
-                        }, item.source),
-                        whenText && h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, whenText),
-                        item.summary && h('span', {
-                          style: {
-                            fontSize: 11.5,
-                            color: 'var(--dsw-alias-label-secondary, #8c909e)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            minWidth: 0
-                          }
-                        }, item.summary)
+                        }, sourceName),
+                        whenText && h('span', { style: { fontSize: 11 } }, whenText),
+                        item.summary && h('span', { className: 'hs-feed-summary', style: { minWidth: 0 } }, item.summary)
                       ])
                     ]),
                     h('button', {
@@ -2204,9 +2410,15 @@ window.__ModuleLoader__.load({
                     }, '生成草稿')
                   ]);
                 })
-              )
+              ),
+              !feedExpanded && feedItems.length > FEED_PREVIEW && h('div', { style: { textAlign: 'center', padding: '8px 0 0' } }, [
+                h('button', {
+                  className: 'hs-btn ghost',
+                  style: { fontSize: 11.5 },
+                  onClick: () => setFeedExpanded(true)
+                }, `还有 ${feedItems.length - FEED_PREVIEW} 条，展开查看`)
+              ])
             ])
-
           ]),
 
           // ── TAB: 订阅源管理 ──

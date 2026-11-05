@@ -149,10 +149,15 @@ test('没有 digest 或 store 不支持 loadRaw 时 feed 为空且不报错', as
   t.after(() => rmSync(tempDir, { recursive: true, force: true }));
 
   const noDigest = await readState(makeDeps(tempDir, { loadDigest: async () => null, loadRaw: async () => [rawItem()] }));
-  assert.deepEqual(noDigest.feed, { date: '', items: [] });
+  assert.equal(noDigest.feed.date, '');
+  assert.equal(noDigest.feed.items.length, 0);
+  assert.equal(noDigest.feed.candidateCount, 0);
+  assert.equal(noDigest.feed.rssPath, '/dsh-hotspot/rss.xml');
 
   const noLoadRaw = await readState(makeDeps(tempDir, { loadDigest: async () => digest() }));
-  assert.deepEqual(noLoadRaw.feed, { date: '2026-11-05', items: [] });
+  assert.equal(noLoadRaw.feed.date, '2026-11-05');
+  assert.equal(noLoadRaw.feed.items.length, 0);
+  assert.equal(noLoadRaw.feed.candidateCount, 1);
 });
 
 test('feed 最多返回 300 条', async (t) => {
