@@ -275,6 +275,63 @@ window.__ModuleLoader__.load({
       .hs-toast.err {
         border-left-color: var(--dsw-alias-state-error-primary, #d9636b);
       }
+      .hs-modal-mask {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.65);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1200;
+        backdrop-filter: blur(2px);
+      }
+      .hs-modal {
+        background: var(--dsw-alias-bg-layer-1, #1c1d24);
+        border: 1px solid var(--dsw-alias-border-l1, #2e3038);
+        border-radius: 8px;
+        width: 480px;
+        max-width: 90vw;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        overflow: hidden;
+        animation: hs-fade-in 0.15s ease;
+      }
+      .hs-modal-header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--dsw-alias-border-l1, #2e3038);
+        font-weight: 600;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .hs-modal-body {
+        padding: 16px 18px;
+        line-height: 1.5;
+      }
+      .hs-modal-footer {
+        padding: 12px 18px;
+        border-top: 1px solid var(--dsw-alias-border-l1, #2e3038);
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        background: var(--dsw-alias-bg-base, #15161a);
+      }
+      .hs-alert {
+        padding: 12px 16px;
+        border-radius: 6px;
+        background: rgba(217, 99, 107, 0.1);
+        border: 1px solid var(--dsw-alias-state-error-primary, #d9636b);
+        color: var(--dsw-alias-label-primary, #e8e8ea);
+        margin-bottom: 14px;
+        line-height: 1.5;
+      }
+      .hs-alert.warn {
+        background: rgba(234, 179, 8, 0.08);
+        border-color: rgba(234, 179, 8, 0.4);
+      }
       @keyframes hs-fade-in {
         from { opacity: 0; transform: translateY(6px); }
         to { opacity: 1; transform: translateY(0); }
@@ -342,6 +399,15 @@ window.__ModuleLoader__.load({
       const [publishMaxPerDay, setPublishMaxPerDay] = useState(3);
       const [publishAllowedHosts, setPublishAllowedHosts] = useState('');
       const [savingConfig, setSavingConfig] = useState(false);
+
+      // 博客根目录快速绑定与生成草稿必填弹窗状态
+      const [quickBlogRoot, setQuickBlogRoot] = useState('');
+      const [savingQuickBlog, setSavingQuickBlog] = useState(false);
+      const [scaffoldModalItem, setScaffoldModalItem] = useState(null);
+      const [scaffoldProjectRoot, setScaffoldProjectRoot] = useState('');
+      const [scaffolding, setScaffolding] = useState(false);
+
+      const isBlogConfigured = Boolean(state?.blog?.configured && state?.blog?.projectRoot);
 
       const syncConfigForm = (val) => {
         if (!val) return;
@@ -411,22 +477,67 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const handleScaffold = async (item) => {
+      const handleScaffold = (item) => {
+        if (!isBlogConfigured) {
+          // 未配置博客路径，不可直接候选落地，必须填写提供
+          setScaffoldModalItem(item);
+          setScaffoldProjectRoot(blogProjectRoot || '');
+          return;
+        }
+        executeScaffold(item);
+      };
+
+      const executeScaffold = async (item, customRoot) => {
         try {
+          setScaffolding(true);
+          const payload = { id: item.id };
+          if (customRoot) payload.projectRoot = customRoot.trim();
+
           const res = await fetch(`${API_BASE}/scaffold`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ id: item.id })
+            body: JSON.stringify(payload)
           });
           const data = await res.json();
           if (data.ok) {
-            showToast(`草稿生成成功：${data.value.articlePath}`);
+            showToast(`草稿生成成功：${data.value.file || data.value.slug}`);
+            setScaffoldModalItem(null);
             await loadState();
           } else {
             showToast(data.message || '生成草稿失败', true);
           }
         } catch (err) {
           showToast(err.message, true);
+        } finally {
+          setScaffolding(false);
+        }
+      };
+
+      const handleSaveQuickBlog = async () => {
+        const root = quickBlogRoot.trim();
+        if (!root) {
+          showToast('请提供有效的博客仓库绝对路径', true);
+          return;
+        }
+        try {
+          setSavingQuickBlog(true);
+          const res = await fetch(`${API_BASE}/config`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ projectRoot: root })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showToast('博客仓库根目录已成功绑定！');
+            setQuickBlogRoot('');
+            await loadState();
+          } else {
+            showToast(data.message || '绑定失败', true);
+          }
+        } catch (err) {
+          showToast(err.message, true);
+        } finally {
+          setSavingQuickBlog(false);
         }
       };
 
@@ -608,6 +719,25 @@ window.__ModuleLoader__.load({
         h('main', { className: 'hs-content', key: 'main' }, [
           // ── TAB: 热点候选 ──
           tab === 'candidates' && h('div', { key: 'candidates-panel' }, [
+            !isBlogConfigured && h('div', { className: 'hs-alert warn', key: 'unconfigured-alert' }, [
+              h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '⚠️ 未配置博客项目根目录'),
+              h('div', { style: { fontSize: 13, marginBottom: 8 } }, '插件默认不预设任何博客路径。在落地草稿或发布文章前，必须指定目标博客路径。您可以立即在下方快速绑定，或在生成草稿时按需填写。'),
+              h('div', { style: { display: 'flex', gap: 8 } }, [
+                h('input', {
+                  className: 'hs-input',
+                  style: { flex: 1 },
+                  placeholder: '输入博客项目绝对路径，如 /Users/you/Code/blog',
+                  value: quickBlogRoot,
+                  onChange: (e) => setQuickBlogRoot(e.target.value)
+                }),
+                h('button', {
+                  className: 'hs-btn primary',
+                  onClick: handleSaveQuickBlog,
+                  disabled: savingQuickBlog
+                }, savingQuickBlog ? '绑定中...' : '绑定博客根目录')
+              ])
+            ]),
+
             h('div', { style: { marginBottom: 12 } }, [
               h('input', {
                 className: 'hs-input',
@@ -656,10 +786,10 @@ window.__ModuleLoader__.load({
                         ])
                       ]),
                       h('button', {
-                        className: 'hs-btn',
+                        className: `hs-btn ${!isBlogConfigured ? 'primary' : ''}`,
                         style: { flexShrink: 0 },
                         onClick: () => handleScaffold(item)
-                      }, '生成草稿')
+                      }, !isBlogConfigured ? '填写路径并生成草稿' : '生成草稿')
                     ])
                   ]);
                 })
@@ -940,6 +1070,59 @@ window.__ModuleLoader__.load({
                   showToast('已刷新博客数据');
                 }
               }, '重新探测博客数据')
+            ])
+          ])
+        ]),
+
+        // 强制提供博客路径生成草稿的 Modal 弹窗
+        scaffoldModalItem && h('div', { className: 'hs-modal-mask', key: 'scaffold-modal' }, [
+          h('div', { className: 'hs-modal' }, [
+            h('div', { className: 'hs-modal-header' }, [
+              h('h3', { className: 'hs-modal-title' }, '指定博客项目并生成草稿'),
+              h('button', {
+                className: 'hs-btn',
+                style: { padding: '2px 8px', minWidth: 'auto', borderRadius: '4px' },
+                onClick: () => setScaffoldModalItem(null)
+              }, '✕')
+            ]),
+            h('div', { className: 'hs-modal-body' }, [
+              h('div', { style: { marginBottom: 12, fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } }, [
+                '目标候选：',
+                h('strong', { style: { color: 'var(--dsw-alias-label-primary)' } }, scaffoldModalItem.title)
+              ]),
+              h('div', { className: 'hs-alert warn', style: { marginBottom: 16 } },
+                '当前插件未绑定博客仓库，草稿无法落盘。生成草稿必须提供有效的博客项目绝对路径（如 VitePress 博客根目录）。提供后将为您自动保存并持久化，后续无需重复输入。'
+              ),
+              h('div', { className: 'hs-field' }, [
+                h('label', { className: 'hs-label' }, '博客项目根目录（绝对路径 · 必填）'),
+                h('input', {
+                  className: 'hs-input',
+                  style: { width: '100%', boxSizing: 'border-box' },
+                  placeholder: '/Users/you/Code/my-blog',
+                  value: scaffoldProjectRoot,
+                  onChange: (e) => setScaffoldProjectRoot(e.target.value),
+                  autoFocus: true
+                })
+              ])
+            ]),
+            h('div', { className: 'hs-modal-footer' }, [
+              h('button', {
+                className: 'hs-btn',
+                onClick: () => setScaffoldModalItem(null),
+                disabled: scaffolding
+              }, '取消'),
+              h('button', {
+                className: 'hs-btn primary',
+                onClick: () => {
+                  const root = scaffoldProjectRoot.trim();
+                  if (!root) {
+                    showToast('请填写博客项目根目录路径', true);
+                    return;
+                  }
+                  executeScaffold(scaffoldModalItem, root);
+                },
+                disabled: scaffolding
+              }, scaffolding ? '正在生成草稿...' : '确认并生成草稿')
             ])
           ])
         ]),

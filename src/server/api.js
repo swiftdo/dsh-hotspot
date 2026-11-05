@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createVitePressTarget } from '../adapters/target-vitepress.js';
 
 /**
  * 管理界面的服务端。
@@ -147,6 +148,14 @@ export function createRoutes(deps) {
 
   async function buildState() {
     const config = await readConfig();
+    const hasConfiguredRoot = Boolean(
+      (config.projectRoot && existsSync(path.resolve(config.projectRoot))) ||
+      (currentProjectRoot && existsSync(path.resolve(currentProjectRoot)))
+    );
+    const activeProjectRoot = hasConfiguredRoot
+      ? path.resolve(config.projectRoot || currentProjectRoot)
+      : '';
+
     const [profile, drafts, digest] = await Promise.all([
       currentTarget?.profile().catch(() => ({ tagVocabulary: [], keywords: [], articles: [] })),
       currentTarget?.listDrafts().catch(() => []),
@@ -154,9 +163,11 @@ export function createRoutes(deps) {
     ]);
 
     return {
-      projectRoot: currentProjectRoot,
+      configured: hasConfiguredRoot,
+      projectRoot: activeProjectRoot,
       blog: {
-        projectRoot: config.projectRoot || currentProjectRoot,
+        configured: hasConfiguredRoot,
+        projectRoot: activeProjectRoot,
         articleDir: config.articleDir || (currentTarget?.articleDir || 'docs'),
         draftDir: config.draftDir || (currentTarget?.draftDir || 'docs/draft'),
         digestDir: config.digestDir || '.hotspot',
@@ -402,10 +413,53 @@ export function createRoutes(deps) {
           (Number(key) >= 1 && Number(key) <= digest.items.length ? digest.items[Number(key) - 1] : null);
         if (!item) return sendJson(res, 404, { ok: false, message: `没有候选 ${body.id}` });
 
+        let effectiveTarget = currentTarget;
+        let targetRoot = currentProjectRoot;
+
+        // 若请求中提供了 projectRoot，优先使用该路径，若合法还同步持久化
+        if (body.projectRoot) {
+          const customRoot = path.resolve(String(body.projectRoot).trim());
+          if (!existsSync(customRoot)) {
+            return sendJson(res, 400, { ok: false, message: `指定博客根目录不存在: ${customRoot}` });
+          }
+          targetRoot = customRoot;
+          const config = await readConfig();
+          if (!config.projectRoot || config.projectRoot !== customRoot) {
+            config.projectRoot = customRoot;
+            await writeConfig(config);
+            if (typeof deps.onConfigUpdated === 'function') {
+              try {
+                const updated = await deps.onConfigUpdated(config);
+                if (updated?.projectRoot) currentProjectRoot = updated.projectRoot;
+                if (updated?.store) currentStore = updated.store;
+                if (updated?.target) currentTarget = updated.target;
+              } catch {
+                /* 忽略静默更新失败 */
+              }
+            }
+          }
+          effectiveTarget =
+            currentTarget && currentProjectRoot === customRoot
+              ? currentTarget
+              : createVitePressTarget({
+                  root: customRoot,
+                  articleDir: config.articleDir || 'docs',
+                  draftDir: config.draftDir || 'docs/draft',
+                });
+        }
+
+        if (!targetRoot || !effectiveTarget) {
+          return sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            message: '未配置博客项目路径。必须在控制面板中配置博客根目录，或在生成草稿请求中提供 projectRoot。',
+          });
+        }
+
         try {
-          const existing = await currentTarget.exists(item);
+          const existing = await effectiveTarget.exists(item);
           if (existing.exists) return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
-          const result = await currentTarget.scaffold(item, { draft: true, slug: body.slug });
+          const result = await effectiveTarget.scaffold(item, { draft: true, slug: body.slug });
           sendJson(res, 200, { ok: true, value: result });
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });

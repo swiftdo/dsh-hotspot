@@ -45,47 +45,60 @@ export function apply(ctx, config = {}) {
   };
   const warn = ctx.logger?.warn?.bind(ctx.logger) ?? ((...args) => console.warn('[hotspot]', ...args));
 
-  // projectRoot 通常来自 cordis.patch.yml 的 config。它指向别人机器上不存在的路径时，
-  // 退回 process.cwd() 并明确告警 —— 否则表现是"抓取成功但一个源都没有"，
-  // 而真正的原因只是配置里的路径没改。
+  // 默认不提供写死目录。未配置有效 projectRoot 时进入未绑定状态，不可执行草稿落地。
   const configuredRoot = config.projectRoot ? path.resolve(config.projectRoot) : '';
-  let projectRoot = configuredRoot || process.cwd();
-  if (configuredRoot && !existsSync(configuredRoot)) {
-    ctx.logger?.warn?.(
-      `hotspot: projectRoot 不存在（${configuredRoot}），已退回 ${projectRoot}。请改 cordis.patch.yml 里的 config.projectRoot`,
-    );
-    projectRoot = process.cwd();
+  let projectRoot = '';
+  let target = null;
+  if (configuredRoot && existsSync(configuredRoot)) {
+    projectRoot = configuredRoot;
+    target = createVitePressTarget({
+      root: projectRoot,
+      articleDir: config.articleDir,
+      draftDir: config.draftDir,
+    });
+  } else if (configuredRoot) {
+    ctx.logger?.warn?.(`hotspot: projectRoot 不存在（${configuredRoot}），进入未配置状态`);
   }
-  let store = createFsStore({ dir: path.join(projectRoot, config.digestDir ?? '.hotspot') });
-  let target = createVitePressTarget({
-    root: projectRoot,
-    articleDir: config.articleDir,
-    draftDir: config.draftDir,
+
+  const baseDigestDir = config.digestDir ?? '.hotspot';
+  let store = createFsStore({
+    dir: projectRoot ? path.join(projectRoot, baseDigestDir) : path.join(process.cwd(), baseDigestDir),
   });
 
   function updateRuntime(newConfig = {}) {
-    if (newConfig.projectRoot && existsSync(newConfig.projectRoot)) {
-      projectRoot = path.resolve(newConfig.projectRoot);
+    if (newConfig.projectRoot) {
+      const resolved = path.resolve(newConfig.projectRoot);
+      if (existsSync(resolved)) {
+        projectRoot = resolved;
+      } else {
+        projectRoot = '';
+      }
+    } else if (newConfig.projectRoot === '') {
+      projectRoot = '';
     }
     const digestDir = newConfig.digestDir || config.digestDir || '.hotspot';
     const articleDir = newConfig.articleDir || config.articleDir || 'docs';
     const draftDir = newConfig.draftDir || config.draftDir || 'docs/draft';
-    store = createFsStore({ dir: path.join(projectRoot, digestDir) });
-    target = createVitePressTarget({
-      root: projectRoot,
-      articleDir,
-      draftDir,
+    store = createFsStore({
+      dir: projectRoot ? path.join(projectRoot, digestDir) : path.join(process.cwd(), digestDir),
     });
-    log(`hotspot: 运行时配置已更新，projectRoot=${projectRoot}, articleDir=${articleDir}, draftDir=${draftDir}`);
+    target = projectRoot
+      ? createVitePressTarget({
+          root: projectRoot,
+          articleDir,
+          draftDir,
+        })
+      : null;
+    log(`hotspot: 运行时配置已更新，projectRoot=${projectRoot || '(未配置)'}`);
     return { projectRoot, store, target, runScan };
   }
 
-  // 若 hotspot.config.json 里已配置 projectRoot/dirs，启动时同步生效
+  // 若存在工作区根目录的 hotspot.config.json，尝试加载其配置
   try {
-    const localCfgPath = path.join(projectRoot, 'hotspot.config.json');
+    const localCfgPath = path.join(process.cwd(), 'hotspot.config.json');
     if (existsSync(localCfgPath)) {
       const localCfg = JSON.parse(readFileSync(localCfgPath, 'utf8'));
-      if (localCfg.projectRoot || localCfg.articleDir || localCfg.draftDir || localCfg.digestDir) {
+      if (localCfg.projectRoot) {
         updateRuntime(localCfg);
       }
     }
@@ -95,7 +108,10 @@ export function apply(ctx, config = {}) {
 
   async function readProjectConfig() {
     try {
-      return JSON.parse(await readFile(path.join(projectRoot, 'hotspot.config.json'), 'utf8'));
+      const cfgPath = projectRoot
+        ? path.join(projectRoot, 'hotspot.config.json')
+        : path.join(process.cwd(), 'hotspot.config.json');
+      return JSON.parse(await readFile(cfgPath, 'utf8'));
     } catch {
       return {};
     }
@@ -106,7 +122,9 @@ export function apply(ctx, config = {}) {
     const sources = createSources(projectConfig.sources ?? []);
     if (sources.length === 0) throw new Error('hotspot.config.json 里没有配置任何 sources');
 
-    const profile = await target.profile();
+    const profile = target
+      ? await target.profile()
+      : { tagVocabulary: [], keywords: [], articles: [] };
     const pipeline = createPipeline({
       sources,
       ranker: { rank: (clusters, c) => Promise.resolve(rankClusters(clusters, c)) },
@@ -235,6 +253,7 @@ export function apply(ctx, config = {}) {
             parameters: {
               id: { type: 'string', description: '候选 id（必填）' },
               slug: { type: 'string', description: '目录名；中文标题必须显式指定' },
+              projectRoot: { type: 'string', description: '可选：博客项目根目录（未配置全局路径时必须提供）' },
             },
             output: {
               schema: {
@@ -252,17 +271,38 @@ export function apply(ctx, config = {}) {
               },
             },
             async execute(args) {
+              let effectiveTarget = target;
+              if (args?.projectRoot) {
+                const pr = path.resolve(args.projectRoot);
+                if (!existsSync(pr)) {
+                  return { ok: false, message: `指定博客根目录不存在：${pr}` };
+                }
+                effectiveTarget = createVitePressTarget({
+                  root: pr,
+                  articleDir: config.articleDir || 'docs',
+                  draftDir: config.draftDir || 'docs/draft',
+                });
+              }
+              if (!effectiveTarget) {
+                return {
+                  ok: false,
+                  message: '尚未配置博客项目根目录。请在控制面板填写博客路径，或在参数中指定 projectRoot。',
+                };
+              }
+
               const digest = await store.loadDigest('latest');
               if (!digest) return { ok: false, message: '还没有 digest，先跑 hotspot_run' };
 
               const key = String(args?.id ?? '').replace(/^#/, '');
-              const item = digest.items.find((it) => it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`));
+              const item =
+                digest.items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`)) ??
+                (Number(key) >= 1 && Number(key) <= digest.items.length ? digest.items[Number(key) - 1] : null);
               if (!item) return { ok: false, message: `没有候选 ${args?.id}` };
 
-              const existing = await target.exists(item);
+              const existing = await effectiveTarget.exists(item);
               if (existing.exists) return { ok: false, message: `已经写过：${existing.reason}` };
 
-              const result = await target.scaffold(item, { draft: true, slug: args?.slug });
+              const result = await effectiveTarget.scaffold(item, { draft: true, slug: args?.slug });
               return { ok: true, file: result.file, slug: result.slug };
             },
           }),

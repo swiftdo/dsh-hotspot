@@ -134,3 +134,72 @@ test('API 路由：支持获取与配置博客路径及参数', async (t) => {
   assert.equal(updatedRuntimeConfig.projectRoot, customBlogDir);
   assert.equal(updatedRuntimeConfig.articleDir, 'posts');
 });
+
+test('未配置博客路径时拦截草稿落地，且提供 projectRoot 时可成功落地', async (t) => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'hotspot-scaffold-guard-test-'));
+  const validBlogDir = path.join(tempDir, 'user-blog');
+  mkdirSync(validBlogDir, { recursive: true });
+
+  t.after(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  let scaffoldCalledWith = null;
+  const deps = {
+    projectRoot: '', // 未配置博客根目录
+    store: {
+      loadDigest: async () => ({
+        date: '2026-11-05',
+        items: [{ id: 'h-20261105-01', title: 'Swift 6.2 Released', slugHint: 'swift-6-2' }]
+      }),
+    },
+    target: {
+      articleDir: 'docs',
+      draftDir: 'docs/draft',
+      exists: async () => ({ exists: false }),
+      scaffold: async (candidate, opts) => {
+        scaffoldCalledWith = { candidate, opts };
+        return { file: `docs/draft/${opts.slug || 'test'}/index.md`, slug: opts.slug || 'test' };
+      },
+      profile: async () => ({ tagVocabulary: [], keywords: [], articles: [] }),
+      listDrafts: async () => [],
+    },
+    runScan: async () => ({ digest: null, status: {} }),
+    onConfigUpdated: async (cfg) => {
+      deps.projectRoot = cfg.projectRoot;
+      return { projectRoot: cfg.projectRoot, target: deps.target };
+    },
+  };
+
+  const routes = createRoutes(deps);
+  const scaffoldRoute = routes.find((r) => r.path === '/hotspot/api/scaffold');
+  const stateRoute = routes.find((r) => r.path === '/hotspot/api/state');
+
+  // 1. GET state 返回 configured: false
+  const { req: sReq, res: sRes, result: sResult } = mockReqRes('GET', '/hotspot/api/state');
+  await stateRoute.handler(sReq, sRes);
+  assert.equal(sResult().json().value.configured, false);
+
+  // 2. 未配置博客且请求未提供 projectRoot → 必须拦截
+  const { req: noRootReq, res: noRootRes, result: noRootResult } = mockReqRes('POST', '/hotspot/api/scaffold', {
+    id: 'h-20261105-01',
+  });
+  await scaffoldRoute.handler(noRootReq, noRootRes);
+  assert.equal(noRootResult().status, 400);
+  const noRootJson = noRootResult().json();
+  assert.equal(noRootJson.ok, false);
+  assert.equal(noRootJson.code, 'ERR_NO_BLOG_ROOT');
+
+  // 3. 在生成草稿时提供 projectRoot → 校验成功并生成草稿，且更新 projectRoot
+  const { req: withRootReq, res: withRootRes, result: withRootResult } = mockReqRes('POST', '/hotspot/api/scaffold', {
+    id: 'h-20261105-01',
+    projectRoot: validBlogDir,
+  });
+  await scaffoldRoute.handler(withRootReq, withRootRes);
+  assert.equal(withRootResult().status, 200);
+  const withRootJson = withRootResult().json();
+  assert.equal(withRootJson.ok, true);
+  assert.equal(deps.projectRoot, validBlogDir);
+  assert.ok(scaffoldCalledWith, 'target.scaffold 应被调用');
+  assert.equal(scaffoldCalledWith.candidate.id, 'h-20261105-01');
+});

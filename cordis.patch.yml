@@ -10,7 +10,7 @@
     - id: dsh-hotspot
       name: dsh-hotspot
       config:
-        projectRoot: /Users/laijihua/Desktop/Code/blog/swiftdo.github.io
+        projectRoot: ""
         digestDir: .hotspot
         limit: 15
         verbose: false # 排查加载问题时改 true，会往宿主 stdout 打印加载信息
