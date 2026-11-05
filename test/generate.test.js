@@ -106,13 +106,13 @@ test('子代理写产物 → 宿主登记补料 → 写正文 → 释放子代�
   assert.equal(fake.calls[0].provider, 'spawn');
   assert.equal(fake.calls[0].delivery, 'caller');
 
-  const draft = readFileSync(path.join(root, 'docs', 'draft', 'demo-post', 'index.md'), 'utf8');
+  const draft = readFileSync(path.join(target.draftDir, 'demo-post', 'index.md'), 'utf8');
   assert.ok(draft.includes('## 事实'), '正文应写进草稿');
   assert.ok(draft.includes('title: Demo Post'), 'frontmatter 必须保留');
   assert.ok(draft.includes('# Demo Post'), '缺 H1 时宿主补一个');
   assert.ok(!draft.includes('（正文待写）'), '写完不该留占位');
 
-  const supplements = JSON.parse(readFileSync(path.join(root, 'docs', 'draft', 'demo-post', 'sources.json'), 'utf8'));
+  const supplements = JSON.parse(readFileSync(path.join(target.draftDir, 'demo-post', 'sources.json'), 'utf8'));
   assert.equal(supplements.entries.length, 1);
   assert.equal(supplements.entries[0].kind, 'web');
 });
@@ -134,7 +134,7 @@ test('子代理没交产物时抛错，不写草稿', async () => {
   const write = createWriter({ getSubagents: () => service, getAgents: () => fakeAgents({ roots: [liveAgent] }) });
   await assert.rejects(() => write({ slug: 'demo-post', store, target, projectRoot: root }), /没有交出可用产物/);
 
-  const draft = readFileSync(path.join(root, 'docs', 'draft', 'demo-post', 'index.md'), 'utf8');
+  const draft = readFileSync(path.join(target.draftDir, 'demo-post', 'index.md'), 'utf8');
   assert.ok(draft.includes('（正文待写）'), '失败时草稿保持原样');
 });
 

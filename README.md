@@ -14,15 +14,17 @@
 |---|---|---|
 | 文章是 `<目录>/<slug>/index.md` 或 `<目录>/<slug>.md` | 两种布局都能扫到 | — |
 | 已发布文章目录 | 默认 `docs/article` | `target.articleDir` |
-| 草稿目录 | 默认 `docs/draft` | `target.draftDir` |
+| 草稿目录 | 默认 `.drafts`（**站点目录之外**） | `target.draftDir` |
 | frontmatter 字段 | `title` / `description` / `createTime` / `date` / `tags`，**不写 `permalink`** | — |
-| 草稿不进站点地图 | 写 `sitemap: false`，`promote` 时删掉 | — |
+| 草稿不进站点地图 | 草稿在站点外时不需要；在 `docs/` 内才写 `sitemap: false`，`promote` 时删掉 | — |
 | tag 词表 | 从存量文章归纳，同一 tag 的多种写法按小写归并 | — |
 | `init` 时项目里要有 `docs/` | 没有就判定"这不是一个 VitePress 项目" | — |
 
 `docs/` 之下怎么分层随你：文章直接在 `docs/` 一级就把 `articleDir` 设成 `docs`，放 `docs/posts/` 就设成 `docs/posts`。草稿目录同理。
 
-`sitemap: false` 只是往 frontmatter 里写一个字段——它变成 `noindex` 是靠你博客侧的插件解释的。如果你的站点不认这个字段，草稿仍然会被搜索引擎抓到，那就改用别的占位手段（或者干脆别把草稿提交上去）。
+**草稿默认放在 `docs/` 外面**（`.drafts/`），这是有意的：VitePress 只构建 `srcDir`，站点目录之外的 Markdown 根本进不了产物，也就不需要任何博客侧配合。把草稿放在 `docs/` 里会有三个麻烦——它们照样被构建成页面、只靠 `sitemap: false` 从站点地图里剔除、而那个字段能不能生效取决于你博客侧的插件。`hotspot doctor` 在检测到草稿目录落在站点内时会给出警告。
+
+只有草稿确实配置在 `docs/` 内时，`scaffold` 才会写 `sitemap: false`（那种布局只能靠博客侧解释这个字段来兜底）。转正时无论有没有这个字段都会删掉。
 
 ## 为什么不用模型打分
 
@@ -96,7 +98,7 @@ sequenceDiagram
   T-->>U: 候选表
 
   U->>T: hotspot_get 3（registerSlug=my-post）
-  T->>B: 读 digest/raw，写 docs/draft/my-post/sources.json
+  T->>B: 读 digest/raw，写 .drafts/my-post/sources.json
   T-->>U: 多源原文（核对版本号、日期）
 
   Note over U: 联网搜官方 release notes / issue，综合后写正文，再去 AI 味
@@ -105,14 +107,14 @@ sequenceDiagram
   T->>B: sources.json 追加一条（正文 ≤ 4000 字）
 
   U->>T: hotspot_scaffold 3（slug=my-post，body=写好的正文）
-  T->>B: 写 index.md + sources.json（记下 candidate.id），sitemap: false
+  T->>B: 写 .drafts/my-post/index.md + sources.json（记下 candidate.id）
 
   U->>T: hotspot_check my-post（改稿走 hotspot_write，写完自动复核）
   T->>B: 读正文 + 一手源 + 补料
   T-->>U: 三道检查 + frontmatter 结果，违规逐条列出
 
   U->>T: hotspot_promote my-post
-  T->>B: 再过一次闸门 → 搬到文章目录，删 sitemap: false，sources.json 一起搬
+  T->>B: 再过一次闸门 → 搬到 docs/article/，sources.json 一起搬
 ```
 
 CLI 里对应 `hotspot check` / `hotspot promote`，面板里对应「转正」按钮 —— 三处走的是同一段 `src/core/promote.js`。
@@ -155,7 +157,7 @@ flowchart TD
 
 有三件事是这版才硬起来的：
 
-- **`promote` 必须过闸**。CLI、面板「转正」、`hotspot_promote` 三处都走 `src/core/promote.js`，违规就拒绝，草稿留在 `docs/draft/`。没有 force 开关。
+- **`promote` 必须过闸**。CLI、面板「转正」、`hotspot_promote` 三处都走 `src/core/promote.js`，违规就拒绝，草稿留在草稿目录。没有 force 开关。
 - **候选定位不再靠猜**。`scaffold` 把 `candidate.id` 写进 `sources.json`；`check` 按 id 在最近 14 天的 digest 里找回它当时所在的那份，证据取自**那一天**的 raw。定位不到就判 `candidate-unresolved` —— 以前会退化成「当天全部原文都是证据」，等于没有数字闸门。
 - **中文标题不再漏闸**。老实现靠 `slugHint` 或标题反查候选，中文标题两条都匹配不上，于是走了上面那条宽松路径。现在有 `candidate.id` 就不再依赖标题。
 
@@ -350,7 +352,7 @@ POST /dsh-hotspot/api/models   # 局部更新：{"mode"?, "global"?, "writer"?, 
 | 档位 | 产物 | 判定 |
 |---|---|---|
 | `auto` | 直接进文章目录 | 一手 release 类，白名单源，版本号跨源一致 |
-| `draft` | 草稿目录，带 `sitemap:false` | 默认档 |
+| `draft` | 草稿目录（默认 `.drafts/`，在站点外） | 默认档 |
 | `manual` | 只进 digest | 传闻、冲突、黑名单命中 |
 
 `publish.autoTiers` 默认为空数组。要开自动直发就往里加源类型，不要改代码。
@@ -448,6 +450,23 @@ flowchart TB
 1. **宿主 → 薄壳是注册，不是调用**。工具和路由都是 `ctx.inject([服务名], sctx => sctx.effect(...))` 里注册进去的，`effect` 返回的 disposer 负责卸载。所以插件热重载不会留下僵尸路由。
 2. **薄壳 → core 是端口注入**。`runScan` 每次调用都现场 `createPipeline({ sources, ranker, store, clock })`，core 拿到的全是函数和对象，没有一个是 `ctx`。
 3. **core → 适配器是唯一的落盘口**。`src/core/` 里没有一处 `writeFile`，写博客目录的代码只在 `target-vitepress.js` 里。
+
+### 服务端文件分工
+
+薄壳之外，`src/` 下这几块各管一件事（2026-11 的一次纯结构重构拆出来的，行为未变）：
+
+| 文件 | 职责 |
+|---|---|
+| `plugin.js` | 装配：读配置、建 target/store、注册工具与路由、生命周期 |
+| `tools.js` | 七个工具的契约（参数、output schema、render、execute），依赖全部注入 |
+| `server/api.js` | 路由表 + 配置读写 + 换绑逻辑 |
+| `server/state.js` | `/api/state` 的状态聚合（配置 / 生效源 / 草稿 / digest / 订阅文章 / 任务） |
+| `server/deploy.js` | 执行部署命令、截留输出、记部署历史 |
+| `server/http.js` | 响应、请求体解析、loopback + 同源守卫 |
+| `server/jobs.js` | 后台写作任务的状态机 |
+| `server/prefix.js` | `/dsh-hotspot` 与旧前缀 `/hotspot` |
+
+拆分时踩到的一个坑值得记下来：**搬移代码要重新审导入**。`detectDeployPlan` 和 `readDeployHistory` 里的 `readFileSync` / `readFile` 都写在 `try/catch` 里，漏了导入不会报错，只会安静地返回空值——`yarn build` 探测变成空、部署历史变成 0 条。是测试把它们抓出来的，所以重构必须跑全量，不能只看 `node --check`。
 
 ### 配置从哪来
 
@@ -566,6 +585,14 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
    ```json
    "dsh-hotspot": "link:/Users/laijihua/Desktop/Code/hotspot"
    ```
+
+   还要让插件**启动即知道博客仓库在哪**：宿主是从进程 cwd 读工作区配置的，Desktop 下这个 cwd 是 `~/.dsh/profiles/desktop`。在那里放一份只含 `projectRoot` 的 `dsh-hotspot.config.json`：
+
+   ```json
+   { "projectRoot": "/Users/you/Code/my-blog" }
+   ```
+
+   不然每次重启 App 后都是未绑定状态（面板显示「未绑定路径」），要手工再绑一次。真正的配置（sources / publish / deploy）仍以博客仓库里那份为准——插件读到这个 `projectRoot` 后会跟随过去读它。
 
 2. **每次改完代码的重载**：用 `plugin_manager` 对 `include:dsh-hotspot` 先 `set_plugin enabled=false`、再 `enabled=true`。宿主会重新 import 插件，`src/server/api.js` 的新路由立刻生效，**不需要退出并重开 DSH**（旧结论「改路由必须重启」已被实测推翻）。
 3. **验证**：`/hotspot/` 返回 200；`/dsh-hotspot/rss.xml` 返回 200 且 `content-type: application/rss+xml`；`/dsh-hotspot/api/state` 的 `feed` 里有 `rssPath`。

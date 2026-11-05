@@ -83,10 +83,20 @@ function pad(text, target) {
   return s + ' '.repeat(Math.max(0, target - width(s)));
 }
 
+/**
+ * 配置文件只有一个来源：优先 dsh-hotspot.config.json，兼容旧的 hotspot.config.json。
+ *
+ * 以前 loadConfig 与 doctor 各挑各的（doctor 只读旧名），同一目录两份文件不一致时
+ * 两个命令会给出互相矛盾的结果 —— 草稿目录改成 .drafts/ 之后这种情况会真的发生。
+ */
+function configFileIn(dir = cwd) {
+  const p1 = path.join(dir, 'dsh-hotspot.config.json');
+  const p2 = path.join(dir, 'hotspot.config.json');
+  return existsSync(p1) ? p1 : existsSync(p2) ? p2 : null;
+}
+
 async function loadConfig() {
-  const p1 = path.join(cwd, 'dsh-hotspot.config.json');
-  const p2 = path.join(cwd, 'hotspot.config.json');
-  const file = existsSync(p1) ? p1 : existsSync(p2) ? p2 : null;
+  const file = configFileIn();
   if (!file) fail(`找不到 dsh-hotspot.config.json 或 hotspot.config.json，先跑 dsh-hotspot init`);
   const raw = JSON.parse(await readFile(file, 'utf8'));
   const targetConfig = { root: cwd, ...(raw.target ?? {}) };
@@ -106,7 +116,7 @@ async function cmdInit() {
   const profile = await target.profile();
   const configFile = path.join(cwd, 'hotspot.config.json');
   const config = {
-    target: { kind: 'vitepress', articleDir: 'docs/article', draftDir: 'docs/draft' },
+    target: { kind: 'vitepress', articleDir: 'docs/article', draftDir: '.drafts' },
     sources: [
       { id: 'sopilot-hottweets', kind: 'rss', url: 'https://sopilot.net/rss/hottweets' },
       { id: 'dsh-releases', kind: 'github-release', repo: 'deepseek-ai/deepseek-harness' },
@@ -397,18 +407,19 @@ async function cmdPublish() {
     fail('校验未通过，不能发布');
   }
 
-  const inDraft = existsSync(path.join(cwd, 'docs/draft', slug, 'index.md'));
-  if (inDraft) fail('还在 docs/draft/，先 hotspot promote ' + slug);
-
-  // 构建与部署都从配置读，不再写死在代码里 —— 面板的「部署站点」用的是同一份。
-  const { raw } = await loadConfig();
+  // 目录一律从配置/适配器取：草稿默认已搬到 <root>/.drafts/，写死 docs/draft 会永远判错
+  const { raw, target } = await loadConfig();
+  const draftFile = path.join(target.draftDir, slug, 'index.md');
+  if (existsSync(draftFile)) {
+    fail(`还在草稿目录（${path.relative(cwd, target.draftDir)}），先 hotspot promote ${slug}`);
+  }
   const buildScript = String(raw.deploy?.build ?? '').trim();
   const deployScript = String(raw.deploy?.script ?? '').trim();
   if (!deployScript) {
     fail('配置里没有 deploy.script：先在「策略与路径配置」或 dsh-hotspot.config.json 的 deploy.script 绑定部署命令');
   }
 
-  const rel = path.relative(cwd, path.join(cwd, 'docs/article', slug));
+  const rel = path.relative(cwd, path.join(target.articleDir, slug));
   const planned = [
     ...(buildScript ? [`build: ${buildScript}`] : []),
     `git add ${rel}`,
@@ -454,9 +465,9 @@ async function cmdDoctor() {
   log(`\nhotspot doctor  ${cwd}\n`);
 
   let config = null;
-  const configFile = path.join(cwd, 'hotspot.config.json');
-  if (!existsSync(configFile)) {
-    add('fail', '配置文件', '找不到 hotspot.config.json，先跑 hotspot init');
+  const configFile = configFileIn();
+  if (!configFile) {
+    add('fail', '配置文件', '找不到 dsh-hotspot.config.json 或 hotspot.config.json，先跑 hotspot init');
   } else {
     try {
       config = JSON.parse(await readFile(configFile, 'utf8'));
@@ -471,8 +482,10 @@ async function cmdDoctor() {
   } else {
     const target = createVitePressTarget({
       root: cwd,
-      articleDir: config?.target?.articleDir,
-      draftDir: config?.target?.draftDir,
+      // 顶层键是插件写的，target.* 是 CLI 自己写的；两边都认，免得同一个仓库在
+      // 面板与 CLI 里指向不同目录
+      articleDir: config?.target?.articleDir ?? config?.articleDir,
+      draftDir: config?.target?.draftDir ?? config?.draftDir,
     });
     const profile = await target.profile();
     add(
@@ -488,7 +501,13 @@ async function cmdDoctor() {
         : '没有 tag 词表，新草稿只能用空标签',
     );
     const drafts = await target.listDrafts();
-    add('ok', '草稿目录', `${path.relative(cwd, target.draftDir)}/ · ${drafts.length} 篇`);
+    // 草稿落在站点目录里 = 会被构建进站点，只能靠博客侧读 sitemap:false 兜底
+    add(
+      target.draftInsideSite ? 'warn' : 'ok',
+      '草稿目录',
+      `${path.relative(cwd, target.draftDir)}/ · ${drafts.length} 篇` +
+        (target.draftInsideSite ? ' · 在站点目录内，会被构建进站点（建议挪到 docs/ 之外）' : ''),
+    );
   }
 
   if (Array.isArray(config?.sources)) {

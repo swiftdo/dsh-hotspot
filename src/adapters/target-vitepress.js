@@ -18,7 +18,8 @@ import {
  *   URL = 目录路径，目录名即 URL 段，kebab-case
  *   frontmatter 不写 permalink
  *   description ≤ 120 字
- *   占位/草稿页用 sitemap: false，会被注入 noindex, nofollow
+ *   草稿默认在站点目录（docs/）之外的 .drafts/；只有草稿确实落在站点内时才写
+ *   sitemap: false（靠博客侧注入 noindex）—— 在站点外 VitePress 根本构建不到
  */
 
 const IGNORED_DOC_DIRS = new Set(['public', 'blog', 'book', 'result']);
@@ -92,8 +93,20 @@ export function createVitePressTarget(config) {
   const root = path.resolve(config.root);
   const docsDir = path.join(root, config.docsDir ?? 'docs');
   const articleDir = path.join(root, config.articleDir ?? 'docs/article');
-  const draftDir = path.join(root, config.draftDir ?? 'docs/draft');
+  const draftDir = path.join(root, config.draftDir ?? '.drafts');
   const aliases = { ...DEFAULT_ALIASES, ...(config.aliases ?? {}) };
+
+  /**
+   * 草稿是不是被放在了站点目录里。用相对路径判断而不是字符串前缀 ——
+   * `docs-archive` 以 `docs` 开头，但它是另一个目录，不是站点。
+   */
+  const isInside = (parent, child) => {
+    const rel = path.relative(parent, child);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+  const draftInsideSite = isInside(docsDir, draftDir);
+  const withinDraft = (full) => isInside(draftDir, full);
+  const withinRoot = (full) => isInside(root, full);
 
   async function scanArticles() {
     const out = [];
@@ -247,6 +260,8 @@ export function createVitePressTarget(config) {
     docsDir,
     articleDir,
     draftDir,
+    // 草稿在站点目录内 = 会被构建进站点，doctor 与面板据此警告
+    draftInsideSite,
     listArticles: scanArticles,
     readSupplements,
     addSupplement,
@@ -362,7 +377,10 @@ export function createVitePressTarget(config) {
     },
 
     /**
-     * 生成草稿。draft=true 时进 docs/draft/ 并带 sitemap: false。
+     * 生成草稿。draft=true 时进 draftDir（默认 .drafts/，在站点目录之外）。
+     *
+     * 草稿目录落在站点目录里时才写 sitemap: false —— 那种布局靠博客侧插件
+     * 注入 noindex 兜底；搬出去的草稿 VitePress 构建不到，不需要这个字段。
      *
      * 传 opts.body 就是「一次成型」：正文直接落盘，不留「（正文待写）」占位。
      * 不传 body 时退化成骨架 —— 只有明确要「先占位、后补写」时才该走这条路。
@@ -400,7 +418,8 @@ export function createVitePressTarget(config) {
         lines.push('tags:');
         for (const tag of tags) lines.push(`    - ${tag}`);
       }
-      if (draft) lines.push('sitemap: false');
+      // 只有草稿落在站点目录里才需要这个字段：在外面 VitePress 根本看不到它
+      if (draft && draftInsideSite) lines.push('sitemap: false');
       lines.push('---', '');
       const body = typeof opts.body === 'string' ? opts.body.trim() : '';
       if (body) {
@@ -533,8 +552,7 @@ export function createVitePressTarget(config) {
     /** 读取指定文章或草稿的 Markdown 原文 */
     async readArticle(targetFile) {
       const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
-      const normRoot = path.normalize(root);
-      if (!full.startsWith(normRoot)) {
+      if (!withinRoot(full)) {
         throw new Error('路径不合法：超出项目根目录范围');
       }
       const content = await readIfExists(full);
@@ -557,12 +575,10 @@ export function createVitePressTarget(config) {
         throw new Error('保存内容必须为字符串');
       }
       const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
-      const normRoot = path.normalize(root);
-      if (!full.startsWith(normRoot)) {
+      if (!withinRoot(full)) {
         throw new Error('路径不合法：超出项目根目录范围');
       }
-      const normDraft = path.normalize(draftDir);
-      if (!full.startsWith(normDraft)) {
+      if (!withinDraft(full)) {
         throw new Error('超出管辖范围：已发布文章受保护，插件仅支持修改草稿目录（docs/draft）下的文件');
       }
       await mkdir(path.dirname(full), { recursive: true });
@@ -609,12 +625,10 @@ export function createVitePressTarget(config) {
     /** 删除指定的草稿文件（安全防御：仅限在草稿目录 docs/draft 范围内，禁止跨界删除已发布文章） */
     async deleteArticle(targetFile) {
       const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
-      const normRoot = path.normalize(root);
-      if (!full.startsWith(normRoot)) {
+      if (!withinRoot(full)) {
         throw new Error('路径不合法：超出项目根目录范围');
       }
-      const normDraft = path.normalize(draftDir);
-      if (!full.startsWith(normDraft)) {
+      if (!withinDraft(full)) {
         throw new Error('超出管辖范围：已发布文章受保护，插件仅支持删除草稿目录（docs/draft）下的文件');
       }
       const st = await stat(full).catch(() => null);
@@ -623,7 +637,7 @@ export function createVitePressTarget(config) {
       }
       await rm(full, { force: true });
       const parentDir = path.dirname(full);
-      if (parentDir.startsWith(normDraft) && parentDir !== normDraft) {
+      if (isInside(draftDir, parentDir) && parentDir !== draftDir) {
         const remaining = await readdir(parentDir).catch(() => []);
         const onlySupplements = remaining.every((f) => f === SUPPLEMENT_FILE || f.startsWith('.'));
         if (onlySupplements) {

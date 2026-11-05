@@ -47,7 +47,7 @@ test('传正文时一次成型：正文落盘，没有占位也没有来源块',
   assert.ok(!text.includes('> 草稿，来源：'), '正文自带参考时不该再塞来源块');
   assert.ok(text.includes('title: OpenAI 买下 Pierre'), 'title 应可用参数覆盖');
   assert.ok(text.includes('description: "一笔冲着 GitHub 去的收购。"'), 'description 应可用参数覆盖');
-  assert.ok(text.includes('sitemap: false'), '草稿仍要 sitemap:false');
+  assert.ok(!text.includes('sitemap: false'), '草稿默认在站点目录外，不需要 sitemap:false');
   // 正文没有 # 标题时自动补一个，且不重复
   assert.ok(text.includes('# OpenAI 买下 Pierre\n\n第一段。'), '缺 H1 时自动补');
   assert.equal((text.match(/^# /gm) ?? []).length, 1, '只应有一个 H1');
@@ -102,4 +102,17 @@ test('listDrafts 标出字数与「正文待写」，面板卡片才有东西可
   assert.equal(bySlug['filled-draft'].bodyChars, [...'# 中文标题\n\n## 小节\n\n一百来字的正文。'].length);
   assert.equal(bySlug['filled-draft'].file, path.relative(target.root, filled.file));
   assert.equal(bySlug['skeleton-draft'].file, path.relative(target.root, skeleton.file));
+});
+
+test('草稿落在站点目录里时才写 sitemap:false（那种布局靠博客侧注入 noindex）', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'hotspot-scaffold-'));
+  mkdirSync(path.join(root, 'docs'), { recursive: true });
+  const inside = createVitePressTarget({ root, draftDir: 'docs/draft' });
+  assert.equal(inside.draftInsideSite, true, 'docs/draft 应当被判定为站点内');
+  const result = await inside.scaffold(candidate, { slug: 'inside-docs' });
+  assert.ok(readFileSync(result.file, 'utf8').includes('sitemap: false'));
+
+  const outside = createVitePressTarget({ root });
+  assert.equal(outside.draftDir, path.join(root, '.drafts'), '默认草稿目录在站点之外');
+  assert.equal(outside.draftInsideSite, false);
 });
