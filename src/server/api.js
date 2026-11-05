@@ -609,6 +609,11 @@ export function createRoutes(deps) {
             },
           });
         } catch (error) {
+          // 并发抓取会被插件里的单飞挡下：这是「稍后再试」，不是服务出错
+          if (error?.code === 'ERR_SCAN_BUSY') {
+            sendJson(res, 409, { ok: false, code: 'ERR_SCAN_BUSY', message: error.message });
+            return;
+          }
           sendJson(res, 500, { ok: false, message: error.message });
         }
       },

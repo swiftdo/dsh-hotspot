@@ -21,6 +21,7 @@ import {
 import { resolveRoute, resolveWriterSelection } from './core/writer-route.js';
 import { createRoutes, PREFIX } from './server/api.js';
 import { createJobRunner } from './server/jobs.js';
+import { createSingleFlight } from './core/lock.js';
 import { createHotspotTools } from './tools.js';
 
 /**
@@ -86,6 +87,20 @@ export function apply(ctx, config = {}) {
     return projectRoot ? store : unboundStore;
   }
 
+  /**
+   * 抓取入口包一层单飞：一次 run 会写当天的 digest 与 raw，两次并发会互相覆盖，
+   * 候选 id（h-YYYYMMDD-NN）按排序现场分配，覆盖后「#3」可能指向另一条。
+   * 面板双击、agent 连着调两次都能触发，所以挡在入口。
+   *
+   * runScan 定义在下面，这里先拿一个转发函数——updateRuntime 在启动早期就会被调用，
+   * 直接引用常量会撞上 TDZ。
+   */
+  let scanHandler = null;
+  const runScanOnce = createSingleFlight((limit) => scanHandler(limit), {
+    message: '已有一次抓取在跑，等它结束再试',
+    code: 'ERR_SCAN_BUSY',
+  });
+
   function updateRuntime(newConfig = {}) {
     if (newConfig.projectRoot) {
       const resolved = path.resolve(newConfig.projectRoot);
@@ -106,7 +121,7 @@ export function apply(ctx, config = {}) {
     });
     target = projectRoot ? createVitePressTarget({ root: projectRoot, articleDir, draftDir }) : null;
     log(`dsh-hotspot: 运行时配置已更新，projectRoot=${projectRoot || '(未配置)'}`);
-    return { projectRoot, store, target, runScan };
+    return { projectRoot, store, target, runScan: runScanOnce };
   }
 
   // 若存在工作区根目录的 dsh-hotspot.config.json 或 hotspot.config.json，尝试加载其配置
@@ -220,6 +235,9 @@ export function apply(ctx, config = {}) {
     return { ...result, persisted: bound, projectRoot };
   }
 
+  // runScan 定义完了，把单飞转发函数接上真实实现
+  scanHandler = runScan;
+
   ctx.inject(['tools'], (sctx) => {
     sctx.effect(() => {
       let disposers = [];
@@ -230,7 +248,7 @@ export function apply(ctx, config = {}) {
           getTarget: () => target,
           resolveTarget,
           readProjectConfig,
-          runScan,
+          runScan: runScanOnce,
           runCheck,
         });
         for (const tool of tools) disposers.push(sctx.tools.register(tool));
@@ -298,7 +316,7 @@ export function apply(ctx, config = {}) {
         projectRoot,
         store,
         target,
-        runScan,
+        runScan: runScanOnce,
         onConfigUpdated: updateRuntime,
         generate: writer,
         polish: polisher,

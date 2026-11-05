@@ -648,7 +648,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | GET | `/hotspot/api/state` | 一次返回 sources / config / articles / drafts / 最新 digest |
 | POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
 | POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.{build,script}（合并语义，只传 build 不会抹掉 script） |
-| POST | `/hotspot/api/run` | 触发一次抓取 |
+| POST | `/hotspot/api/run` | 触发一次抓取；已有一次在跑时回 409 `ERR_SCAN_BUSY` |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿（`slug` / `title` / `description` 可覆盖）；`generate:true` 时建完立刻在后台写正文并返回 job；slug 推导不出回 400 `ERR_SLUG_REQUIRED` |
 | GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤） |
 | POST | `/hotspot/api/jobs/cancel` | 取消正在跑的写作任务；没有在跑的回 404 `ERR_NO_RUNNING_JOB` |
@@ -671,6 +671,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
 - **`promote` 是硬闸门，没有 force**。要放行只有两条路：把正文改到证据边界内，或把真正读过的页面登记成补料。MCP/宿主级强行改文件当然绕过它——闸门防的是流程上的惯性，不是防有磁盘权限的人。
+- **同时只允许一次抓取**。两次并发 run 会互相覆盖当天的 digest 与 raw，所以入口用单飞挡掉：第二次直接回 409 `ERR_SCAN_BUSY`，不排队——排队会把「点两下」变成「跑两次」。
 - **同一天重跑 `run` 会覆盖当天 digest**（`<date>.json` 与 `latest.json`），候选 id `h-YYYYMMDD-NN` 会按新排序重新分配。草稿不受影响（它记的是 `candidate.id`，check 按 id 往回找），但**对话里的「#3」会指向新的第三条**。
 - **`hotspot_write` 不建草稿**。它只往已有草稿写正文；没有草稿就先 `hotspot_scaffold`。
 - **后台写作任务不跨宿主重启续跑**。状态文件（`<digestDir>/jobs/<slug>.json`）留着，所以失败原因还看得到；但进程没了就是没了，重开面板后要点「重试写正文」。
