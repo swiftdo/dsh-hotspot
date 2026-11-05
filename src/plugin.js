@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createPipeline } from './core/pipeline.js';
 import { resolveSources } from './core/sources.js';
@@ -18,11 +18,12 @@ import {
   createPolisher,
   createWriter,
   listCatalog,
-  readWriterSelection,
-  saveWriterSelection,
+  readWriterConfig,
+  saveWriterConfig,
 } from './server/generate.js';
-import { resolveRoute } from './core/writer-route.js';
+import { resolveRoute, resolveWriterSelection } from './core/writer-route.js';
 import { createRoutes, PREFIX } from './server/api.js';
+import { createJobRunner } from './server/jobs.js';
 
 /**
  * DSH 插件入口。
@@ -742,7 +743,18 @@ export function apply(ctx, config = {}) {
         digestDir: writerConfigDir,
         log,
       });
+      // 后台写作任务：状态落到 <digestDir>/jobs/<slug>.json，
+      // 面板刷新或宿主重启后仍能看出「上次写作失败的原因」。
+      const jobs = createJobRunner({
+        log,
+        persist: async (job) => {
+          const file = path.join(writerConfigDir(), 'jobs', `${job.slug}.json`);
+          await mkdir(path.dirname(file), { recursive: true });
+          await writeFile(file, `${JSON.stringify(job, null, 2)}\n`, 'utf8');
+        },
+      });
       for (const route of createRoutes({
+        jobs,
         projectRoot,
         store,
         target,
@@ -750,18 +762,34 @@ export function apply(ctx, config = {}) {
         onConfigUpdated: updateRuntime,
         generate: writer,
         polish: polisher,
-        // 面板的模型下拉：目录来自宿主的 llm 服务，选择存在 .hotspot/writer-config.json。
+        // 面板的模型选择：目录来自宿主的 llm 服务，选择存在 .hotspot/writer-config.json。
+        // 返回 selection（global/writer/polish 完整结构）与两个用途实际解析到的路由，
+        // 面板据此显示「这个用途到底会用哪个模型」。
         listModels: async () => {
           const llm = typeof ctx.get === 'function' ? ctx.get('llm') : null;
           const providers = await listCatalog(llm);
-          const selection = await readWriterSelection(writerConfigDir());
-          return { providers, selection, route: resolveRoute(providers, selection) };
+          const selection = await readWriterConfig(writerConfigDir());
+          return {
+            providers,
+            selection,
+            route: resolveRoute(providers, resolveWriterSelection(selection, 'writer')),
+            routes: {
+              writer: resolveRoute(providers, resolveWriterSelection(selection, 'writer')),
+              polish: resolveRoute(providers, resolveWriterSelection(selection, 'polish')),
+            },
+          };
         },
-        saveModels: async (selection) => {
-          const saved = await saveWriterSelection(writerConfigDir(), selection);
+        saveModels: async (patch) => {
+          const saved = await saveWriterConfig(writerConfigDir(), patch);
           const llm = typeof ctx.get === 'function' ? ctx.get('llm') : null;
           const providers = await listCatalog(llm);
-          return { ...saved, route: resolveRoute(providers, saved) };
+          return {
+            selection: saved,
+            routes: {
+              writer: resolveRoute(providers, resolveWriterSelection(saved, 'writer')),
+              polish: resolveRoute(providers, resolveWriterSelection(saved, 'polish')),
+            },
+          };
         },
         checkDraft: async (opts) => {
           const cfg = await readProjectConfig();

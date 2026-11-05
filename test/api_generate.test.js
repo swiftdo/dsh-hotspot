@@ -151,19 +151,47 @@ test('模型目录：没接 llm 时也回 200 与空目录，面板不报错', a
   assert.equal(out.value.selection.mode, 'agent');
 });
 
-test('模型目录：POST 保存选择并把解析出的路由回传', async () => {
+test('模型目录：POST 按用途局部保存，并回传解析后的路由', async () => {
   const seen = [];
   const routes = routesWith({
-    saveModels: async (selection) => {
-      seen.push(selection);
-      return { ...selection, route: { provider: selection.provider, model: selection.model } };
+    saveModels: async (patch) => {
+      seen.push(patch);
+      return { selection: patch, routes: { writer: { provider: 'openai', model: 'gpt-x' }, polish: null } };
     },
   });
-  const out = await callModels(routes, 'POST', { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+
+  const out = await callModels(routes, 'POST', {
+    global: { provider: 'openai', model: 'gpt-x' },
+    mode: 'direct',
+  });
   assert.equal(out.status, 200);
-  assert.equal(out.value.mode, 'direct');
-  assert.equal(out.value.route.model, 'gpt-x');
-  assert.deepEqual(seen, [{ provider: 'openai', model: 'gpt-x', mode: 'direct' }]);
+  assert.equal(out.value.routes.writer.model, 'gpt-x');
+  assert.deepEqual(seen, [{ global: { provider: 'openai', model: 'gpt-x' }, mode: 'direct' }]);
+
+  // 只改润色：不该把全局一起带上
+  const polishOnly = await callModels(routes, 'POST', { polish: { provider: 'deepseek', model: 'chat' } });
+  assert.equal(polishOnly.status, 200);
+  assert.deepEqual(seen[1], { polish: { provider: 'deepseek', model: 'chat' } });
+
+  // 清空覆盖：空字符串照实传下去，表示「跟随全局」
+  await callModels(routes, 'POST', { polish: { provider: '', model: '' } });
+  assert.deepEqual(seen[2], { polish: { provider: '', model: '' } });
+});
+
+test('模型目录：没有可保存的字段或形状不对时回 400，不写半坏配置', async () => {
+  const seen = [];
+  const routes = routesWith({
+    saveModels: async (patch) => {
+      seen.push(patch);
+      return { selection: patch, routes: {} };
+    },
+  });
+  const empty = await callModels(routes, 'POST', {});
+  assert.equal(empty.status, 400);
+
+  const bad = await callModels(routes, 'POST', { writer: 'openai/gpt-x' });
+  assert.equal(bad.status, 400);
+  assert.equal(seen.length, 0);
 });
 
 test('模型目录：不能保存时回 501，而不是假装成功', async () => {

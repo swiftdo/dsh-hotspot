@@ -445,14 +445,46 @@ export function createRoutes(deps) {
   }
 
   /** 生成/润色完立刻用同一套闸门验一遍 —— 面板直接显示违规，不必再切回终端。 */
-  async function draftChecks(slug) {
+  async function draftChecks(slug, targetArg = null, storeArg = null) {
     if (typeof deps.checkDraft !== 'function') return null;
     try {
-      const report = await deps.checkDraft({ target: currentTarget, store: currentStore, slug });
+      const report = await deps.checkDraft({
+        target: targetArg || currentTarget,
+        store: storeArg || currentStore,
+        slug,
+      });
       return { ok: report.result.ok, violations: report.result.violations };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 起一个后台写作任务：子代理在后台「搜 → 读 → 综合」，写盘后立刻复核。
+   * 三个入口（建草稿后自动写、面板重试、以后可能的定时任务）共用这一段。
+   */
+  function startWriteJob({ slug, target, store, projectRoot, message = '正在搜资料并写正文' }) {
+    if (!deps.jobs || typeof deps.generate !== 'function') return null;
+    return deps.jobs.start({
+      slug,
+      message,
+      run: async () => {
+        const value = await deps.generate({ slug, store, target, projectRoot });
+        const checks = await draftChecks(slug, target, store);
+        return { ...value, checks };
+      },
+    });
+  }
+
+  /**
+   * 把域内错误码铺平成接口响应体：面板能直接拿到 code 与 message，
+   * 不必从一句话里再猜。
+   */
+  function jobError(error) {
+    return {
+      code: error?.code || 'ERR_JOB',
+      message: error?.message || String(error),
+    };
   }
 
 /**
@@ -592,6 +624,8 @@ function sourceLabel(source) {
         status: 'draft',
       })),
       drafts: drafts || [],
+      // 后台写作任务的当前状态：面板据此给草稿卡片标「写作中 / 失败可重试」。
+      jobs: typeof deps.jobs?.list === 'function' ? deps.jobs.list() : [],
       feed,
       digest: digest
         ? {
@@ -697,6 +731,70 @@ function sourceLabel(source) {
           sendJson(res, 200, { ok: true, value: await buildState() });
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/jobs`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET', 'POST'])) return;
+        if (!deps.jobs) {
+          sendJson(res, 501, {
+            ok: false,
+            code: 'ERR_NO_JOBS',
+            message: '当前环境没有后台任务执行器',
+          });
+          return;
+        }
+
+        if (req.method === 'GET') {
+          const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+          const slug = parsedUrl.searchParams.get('slug') || '';
+          sendJson(res, 200, { ok: true, value: deps.jobs.list({ slug }) });
+          return;
+        }
+
+        // POST：失败后重试 —— 用同一个后台路径，不再走同步接口
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, message: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        const slug = String(body?.slug ?? '').trim();
+        if (!slug) {
+          sendJson(res, 400, { ok: false, message: '缺少必需字段 slug' });
+          return;
+        }
+        if (!currentTarget) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            message: '尚未配置博客项目根目录',
+          });
+          return;
+        }
+        try {
+          const job = startWriteJob({
+            slug,
+            target: currentTarget,
+            store: currentStore,
+            projectRoot: currentProjectRoot,
+            message: '正在重试写正文',
+          });
+          if (!job) {
+            sendJson(res, 501, {
+              ok: false,
+              code: 'ERR_NO_WRITER',
+              message: '当前环境没有接入写作子代理，无法重试',
+            });
+            return;
+          }
+          sendJson(res, 200, { ok: true, value: job, job });
+        } catch (error) {
+          sendJson(res, 409, { ok: false, ...jobError(error) });
         }
       },
     },
@@ -946,7 +1044,33 @@ function sourceLabel(source) {
           const existing = await effectiveTarget.exists(item);
           if (existing.exists) return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
           const result = await effectiveTarget.scaffold(item, { draft: true, slug: body.slug });
-          sendJson(res, 200, { ok: true, value: result });
+
+          // 默认只建骨架（旧面板与脚本的行为不变）；generate:true 才是「一键成稿」。
+          if (body.generate !== true) {
+            sendJson(res, 200, { ok: true, value: result });
+            return;
+          }
+
+          let job = null;
+          try {
+            job = startWriteJob({
+              slug: result.slug,
+              target: effectiveTarget,
+              store: currentStore,
+              projectRoot: targetRoot,
+            });
+          } catch (error) {
+            // 草稿已经建好了，任务起不来也要把这件事说清楚，不能回 500 让前端以为草稿没建。
+            sendJson(res, 409, { ok: false, ...jobError(error), value: result });
+            return;
+          }
+
+          sendJson(res, 200, {
+            ok: true,
+            value: result,
+            job,
+            message: job ? '草稿已建，正文在后台写' : '草稿已建，但当前环境没有接入写作子代理，正文待补',
+          });
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
         }
@@ -1203,7 +1327,18 @@ function sourceLabel(source) {
             sendJson(res, 200, {
               ok: true,
               message: '当前环境没有接入模型目录',
-              value: { providers: [], selection: { provider: '', model: '', mode: 'agent' }, route: null },
+              value: {
+                providers: [],
+                selection: {
+                  version: 2,
+                  mode: 'agent',
+                  global: { provider: '', model: '' },
+                  writer: { provider: '', model: '' },
+                  polish: { provider: '', model: '' },
+                },
+                route: null,
+                routes: { writer: null, polish: null },
+              },
             });
             return;
           }
@@ -1227,14 +1362,35 @@ function sourceLabel(source) {
           sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
           return;
         }
+        // 局部更新：只改传上来的那几段（global / writer / polish / mode），
+        // 其余沿用盘上的值。形状非法时直接拒，不要落一份半坏的配置。
+        const pairOf = (input) => {
+          if (input == null) return undefined;
+          if (typeof input !== 'object') return null;
+          return {
+            provider: input.provider == null ? '' : String(input.provider).trim(),
+            model: input.model == null ? '' : String(input.model).trim(),
+          };
+        };
+        const patch = {};
+        for (const key of ['global', 'writer', 'polish']) {
+          const pair = pairOf(body?.[key]);
+          if (pair === null) {
+            sendJson(res, 400, { ok: false, error: `${key} 必须是 { provider, model }` });
+            return;
+          }
+          if (pair) patch[key] = pair;
+        }
+        if (body?.mode === 'direct' || body?.mode === 'agent') patch.mode = body.mode;
+
+        if (Object.keys(patch).length === 0) {
+          sendJson(res, 400, { ok: false, error: '没有可保存的字段（global / writer / polish / mode）' });
+          return;
+        }
+
         try {
-          const value = await deps.saveModels({
-            provider: body?.provider ? String(body.provider) : '',
-            model: body?.model ? String(body.model) : '',
-            // 没显式传 mode 时交给已保存的选择决定，不能在这里默认成 agent。
-            mode: body?.mode === 'direct' ? 'direct' : body?.mode === 'agent' ? 'agent' : undefined,
-          });
-          sendJson(res, 200, { ok: true, message: '写作模型已保存', value });
+          const value = await deps.saveModels(patch);
+          sendJson(res, 200, { ok: true, message: '模型选择已保存', value });
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
         }
