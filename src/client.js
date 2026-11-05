@@ -10,6 +10,19 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-hotspot';
     const API_BASE = '/dsh-hotspot/api';
 
+    /**
+     * 当前真正会被抓取的源集合：服务端算好放在 state.activeSources
+     * （配置里有源用配置，一个都没写就用内置默认源）。
+     * 早期版本这里读 state.config.sources —— 那是「配置文件里的真实内容」，
+     * 可能为空，拿它当基底添加源会把默认源一起丢掉。
+     */
+    const activeSourceList = (state) => {
+      if (Array.isArray(state?.activeSources) && state.activeSources.length > 0) return state.activeSources;
+      const configured = Array.isArray(state?.config?.sources) ? state.config.sources : [];
+      if (configured.length > 0) return configured;
+      return Array.isArray(state?.builtinSources) ? state.builtinSources : [];
+    };
+
     // ── 样式体系：融合 DSH 原生主题变量与 Emil Kowalski 高质感设计工程原则 ───
     const STYLES = `
       :root {
@@ -2042,7 +2055,8 @@ window.__ModuleLoader__.load({
           showToast('请完整填写 ID 与目标', true);
           return;
         }
-        const currentSources = state?.config?.sources || [];
+        // 基数组用「有效源」：配置里没写源时内置源正在生效，用它当基底才不会把默认源挤掉。
+        const currentSources = activeSourceList(state);
         const source = { id: newId.trim(), kind: newKind };
         if (newKind === 'github-release') {
           source.repo = newTarget.trim();
@@ -2073,7 +2087,7 @@ window.__ModuleLoader__.load({
       };
 
       const handleAddPresetSource = async (preset) => {
-        const currentSources = state?.config?.sources || [];
+        const currentSources = activeSourceList(state);
         if (currentSources.some((s) => s.url === preset.url || s.id === preset.id)) {
           showToast('该订阅源已在列表中');
           return;
@@ -2097,7 +2111,7 @@ window.__ModuleLoader__.load({
       };
 
       const handleEnableBuiltins = async () => {
-        const currentSources = state?.config?.sources || [];
+        const currentSources = activeSourceList(state);
         const pending = (state?.builtinSources || []).filter(
           (preset) => !currentSources.some((s) => s.url === preset.url || s.id === preset.id)
         );
@@ -2124,7 +2138,7 @@ window.__ModuleLoader__.load({
       };
 
       const handleDeleteSource = async (id) => {
-        const currentSources = (state?.config?.sources || []).filter(s => s.id !== id);
+        const currentSources = activeSourceList(state).filter(s => s.id !== id);
         try {
           const res = await fetch(`${API_BASE}/sources`, {
             method: 'POST',
@@ -2266,7 +2280,7 @@ window.__ModuleLoader__.load({
       const rssHref = (typeof window !== 'undefined' ? window.location.origin : '') + rssPath;
       const sourceLabelOf = (id) => {
         if (!id) return '';
-        const all = [...(state?.config?.sources || []), ...(state?.builtinSources || [])];
+        const all = [...activeSourceList(state), ...(state?.builtinSources || [])];
         return all.find((source) => source.id === id)?.name || id;
       };
       const overviewStats = [
@@ -2283,7 +2297,13 @@ window.__ModuleLoader__.load({
       const builtinIds = new Set(builtinSources.map((s) => s.id));
       const configuredSources = state?.config?.sources || [];
       const configuredSourceIds = new Set(configuredSources.map((s) => s.id));
-      const missingBuiltins = builtinSources.filter((s) => !configuredSourceIds.has(s.id));
+      // 配置里一个源都没写时，内置默认源直接生效（sourcesMode='builtin'）。
+      // 这时清单里列的就是正在抓的源，但不可移除 —— 删掉也会立刻回落到默认源。
+      const builtinMode = (state?.sourcesMode || (configuredSources.length > 0 ? 'config' : 'builtin')) === 'builtin';
+      const listedSources = builtinMode ? activeSourceList(state) : configuredSources;
+      const missingBuiltins = builtinMode
+        ? []
+        : builtinSources.filter((s) => !configuredSourceIds.has(s.id));
 
       const deployConfigured = Boolean(state?.config?.deploy?.configured);
       const savedDeployScript = state?.config?.deploy?.script || '';
@@ -2454,7 +2474,7 @@ window.__ModuleLoader__.load({
             key: 'tab-s'
           }, [
             '订阅源管理',
-            h('span', { className: 'hs-tab-count' }, state?.config?.sources?.length || 0)
+            h('span', { className: 'hs-tab-count' }, activeSourceList(state).length)
           ]),
           h('button', {
             className: `hs-tab ${tab === 'drafts' || tab === 'articles' ? 'active' : ''}`,
@@ -2841,19 +2861,24 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'hs-tag-pill ai', style: { fontSize: 10 } }, `${builtinSources.length} 个 · 开箱即用`)
                   ]),
                   h('div', { className: 'hs-hero-desc' },
-                    '插件自带的推荐源不单独占一块列表：启用后就出现在下方「订阅源清单」里，并带「内置」标签。'
+                    '插件自带的推荐源不单独占一块列表：启用后就出现在下方「订阅源清单」里，并带「内置」标签；一个自定义源都没有时，内置源直接生效。'
                   )
                 ])
               ]),
-              missingBuiltins.length > 0
-                ? h('button', { className: 'hs-btn primary', onClick: handleEnableBuiltins }, [
-                    h('span', { style: { marginRight: 4 } }, '⚡'),
-                    `一键启用全部（${missingBuiltins.length}）`
-                  ])
-                : h('span', {
+              builtinMode
+                ? h('span', {
                     className: 'hs-tag-pill',
-                    style: { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.3)', padding: '5px 12px' }
-                  }, '✓ 内置源已全部启用')
+                    style: { background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', borderColor: 'rgba(245, 158, 11, 0.3)', padding: '5px 12px' }
+                  }, '默认源生效中 · 未配置自定义源')
+                : missingBuiltins.length > 0
+                  ? h('button', { className: 'hs-btn primary', onClick: handleEnableBuiltins }, [
+                      h('span', { style: { marginRight: 4 } }, '⚡'),
+                      `一键启用全部（${missingBuiltins.length}）`
+                    ])
+                  : h('span', {
+                      className: 'hs-tag-pill',
+                      style: { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.3)', padding: '5px 12px' }
+                    }, '✓ 内置源已全部启用')
             ]),
 
             // 新增源表单 Card
@@ -2917,9 +2942,13 @@ window.__ModuleLoader__.load({
               h('div', { className: 'hs-card-header' }, [
                 h('div', null, [
                   h('div', { className: 'hs-card-title' },
-                    `订阅源清单（已启用 ${configuredSources.length}${missingBuiltins.length ? ` · 内置待启用 ${missingBuiltins.length}` : ''}）`
+                    `订阅源清单（生效中 ${listedSources.length}${missingBuiltins.length ? ` · 内置待启用 ${missingBuiltins.length}` : ''}${builtinMode ? ' · 内置默认源' : ''}）`
                   ),
-                  h('div', { className: 'hs-card-subtitle' }, '聚合扫描时会并发采集所有已启用的源；带「内置」标签的来自插件自带推荐源')
+                  h('div', { className: 'hs-card-subtitle' },
+                    builtinMode
+                      ? '配置里没有自定义源，扫描直接使用内置默认源；添加任意自定义源后以配置为准'
+                      : '聚合扫描时会并发采集所有已启用的源；带「内置」标签的来自插件自带推荐源'
+                  )
                 ])
               ]),
               h('table', { className: 'hs-table' }, [
@@ -2932,7 +2961,7 @@ window.__ModuleLoader__.load({
                   ])
                 ]),
                 h('tbody', null, [
-                  configuredSources.map(s => {
+                  listedSources.map(s => {
                     let typeBadgeClass = 'hs-tag-pill';
                     if (s.kind === 'rss') typeBadgeClass = 'hs-tag-pill ai';
                     if (s.kind === 'github-release') typeBadgeClass = 'hs-tag-pill code';
@@ -2948,11 +2977,13 @@ window.__ModuleLoader__.load({
                       h('td', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontFamily: 'monospace', fontSize: 12 } },
                         s.url || s.repo || `Hacker News (minPoints: ${s.minPoints})`
                       ),
-                      h('td', { style: { textAlign: 'right' } }, h('button', {
-                        className: 'hs-btn danger',
-                        style: { padding: '3px 8px', fontSize: 11 },
-                        onClick: () => handleDeleteSource(s.id)
-                      }, '移除'))
+                      h('td', { style: { textAlign: 'right' } }, builtinMode
+                        ? h('span', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontSize: 11 } }, '默认生效')
+                        : h('button', {
+                            className: 'hs-btn danger',
+                            style: { padding: '3px 8px', fontSize: 11 },
+                            onClick: () => handleDeleteSource(s.id)
+                          }, '移除'))
                     ]);
                   }),
                   missingBuiltins.map(b => h('tr', { key: `builtin-${b.id}`, style: { opacity: 0.75 } }, [

@@ -104,9 +104,13 @@ test('API 路由：支持获取与配置博客路径及参数', async (t) => {
     sData.value.builtinSources.some((s) => s.id === 'sopilot-hottweets' && s.url === 'https://sopilot.net/rss/hottweets'),
     '应当包含内置源 sopilot-hottweets'
   );
+  // 配置里一个源都没写：config.sources 如实为空，生效源由 sourcesMode/activeSources 表达。
+  // 这两者必须是同一套判定，否则面板说有源、扫描说没源（曾经的报错来源）。
+  assert.deepEqual(sData.value.config.sources, [], '配置文件里没有源时 config.sources 应为空');
+  assert.equal(sData.value.sourcesMode, 'builtin');
   assert.ok(
-    sData.value.config.sources.some((s) => s.id === 'sopilot-hottweets'),
-    '默认配置源中应包含 sopilot-hottweets'
+    sData.value.activeSources.some((s) => s.id === 'sopilot-hottweets'),
+    '未配置源时应回落到内置默认源 sopilot-hottweets'
   );
 
   // 2. 测试 POST config - 错误目录拦截

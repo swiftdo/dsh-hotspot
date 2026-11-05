@@ -6,6 +6,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
 import { canonicalUrl } from '../core/normalize.js';
 import { buildFeedItems, buildRssXml } from '../core/rss.js';
+import { BUILTIN_SOURCES, configuredSources, resolveSources } from '../core/sources.js';
 
 /**
  * 管理界面的服务端。
@@ -26,15 +27,7 @@ const MAX_BODY = 64 * 1024;
 // 「今日订阅文章」单次最多返回这么多条：raw 一天可能上千条，面板一次全给会卡。
 const FEED_LIMIT = 300;
 
-export const BUILTIN_SOURCES = [
-  {
-    id: 'sopilot-hottweets',
-    name: 'SoPilot AI 爆款推文',
-    kind: 'rss',
-    url: 'https://sopilot.net/rss/hottweets',
-    description: '追踪 Twitter/X 今日 AI 起爆帖，自动洞察技术前沿讨论',
-  },
-];
+export { BUILTIN_SOURCES };
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
 
@@ -403,6 +396,19 @@ export function createRoutes(deps) {
     }
   }
 
+  // 换绑到另一个根时，以「目标根自己的配置」为基底。解析失败必须报错：静默当 {} 处理
+  // 会把目标根已有的 sources / publish 一起覆盖掉 —— 这正是「明明有默认源，抓取却报
+  // 没有配置任何 sources」的成因。
+  async function readConfigAt(root) {
+    const file = configFileIn(root);
+    if (!file || !existsSync(file)) return {};
+    try {
+      return JSON.parse(await readFile(file, 'utf8'));
+    } catch (error) {
+      throw new Error(`目标博客根目录里的配置文件解析失败：${file}（${error.message}）`);
+    }
+  }
+
   // 读取时跟随「绑定根」：启动根（进程 cwd / 上次绑定的目录）里的配置只负责记录
   // projectRoot；真正的配置以绑定根下的那份为准。这样「配置跟着博客项目走」，
   // 面板里改过的东西不会因为宿主换个 cwd 启动就丢。
@@ -486,9 +492,12 @@ function sourceLabel(source) {
       currentStore?.loadDigest('latest').catch(() => null),
     ]);
 
-    const activeSources = (Array.isArray(config.sources) && config.sources.length > 0)
-      ? config.sources
-      : BUILTIN_SOURCES.map(({ id, name, kind, url }) => ({ id, name, kind, url }));
+    // 有效源与扫描共用同一套判定（core/sources.js）。config.sources 只回配置文件里的
+    // 真实内容（可能为空），有效集合另给 sourcesMode / activeSources —— 以前把兜底值
+    // 写进 config.sources，面板于是认为内置源「已启用」，扫描却按真实配置报
+    // 「没有配置任何 sources」，两边说法相反。
+    const { sources: activeSources, mode: sourcesMode } = resolveSources(config);
+    const sourceList = configuredSources(config);
 
     // digest 只留聚合后的候选；raw 里才有当天每个源的全部条目。
     // 面板据此在候选之后补一段「今日订阅文章」，候选标记出来避免重复展示。
@@ -532,6 +541,9 @@ function sourceLabel(source) {
       configured: hasConfiguredRoot,
       projectRoot: activeProjectRoot,
       builtinSources: BUILTIN_SOURCES,
+      // 'config' = 抓配置里的源；'builtin' = 配置没写源，正在用内置默认源。
+      sourcesMode,
+      activeSources,
       blog: {
         configured: hasConfiguredRoot,
         projectRoot: activeProjectRoot,
@@ -544,7 +556,7 @@ function sourceLabel(source) {
         articleDir: config.articleDir || 'docs',
         draftDir: config.draftDir || 'docs/draft',
         digestDir: config.digestDir || '.hotspot',
-        sources: activeSources,
+        sources: sourceList,
         rank: {
           limit: 15,
           sinceHours: 36,
@@ -722,7 +734,23 @@ function sourceLabel(source) {
         const body = await readJson(req);
         if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
 
-        const config = await readConfig();
+        // 换绑根目录时不能拿当前根的配置整份覆盖目标根：未绑定状态下 readConfig()
+        // 就是 {}，写出去的文件只剩 {projectRoot}，目标根原有的 sources 被顶掉。
+        const requestedRoot = body.projectRoot !== undefined ? String(body.projectRoot).trim() : '';
+        const resolvedRequest = requestedRoot ? path.resolve(requestedRoot) : '';
+        const rebinding =
+          resolvedRequest !== '' &&
+          (!currentProjectRoot || resolvedRequest !== path.resolve(currentProjectRoot));
+        let config;
+        if (rebinding) {
+          try {
+            config = await readConfigAt(resolvedRequest);
+          } catch (error) {
+            return sendJson(res, 400, { ok: false, message: error.message });
+          }
+        } else {
+          config = await readConfig();
+        }
 
         // 1. 博客仓库根目录与目录配置
         if (body.projectRoot !== undefined) {

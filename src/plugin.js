@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createPipeline } from './core/pipeline.js';
+import { resolveSources } from './core/sources.js';
 import { rankClusters } from './core/rank.js';
 import { renderMarkdown } from './core/digest.js';
 import { createSources } from './adapters/source-rss.js';
@@ -120,22 +121,49 @@ export function apply(ctx, config = {}) {
     /* 忽略读取错误 */
   }
 
+  function projectConfigPath() {
+    const baseDir = projectRoot || process.cwd();
+    const p1 = path.join(baseDir, 'dsh-hotspot.config.json');
+    const p2 = path.join(baseDir, 'hotspot.config.json');
+    return existsSync(p1) ? p1 : existsSync(p2) ? p2 : p1;
+  }
+
   async function readProjectConfig() {
     try {
-      const baseDir = projectRoot || process.cwd();
-      const p1 = path.join(baseDir, 'dsh-hotspot.config.json');
-      const p2 = path.join(baseDir, 'hotspot.config.json');
-      const cfgPath = existsSync(p1) ? p1 : existsSync(p2) ? p2 : p1;
-      return JSON.parse(await readFile(cfgPath, 'utf8'));
+      return JSON.parse(await readFile(projectConfigPath(), 'utf8'));
     } catch {
       return {};
     }
   }
 
+  // 扫描专用读取：配置文件坏了必须报出来。以前的实现把 JSON 解析错误吞成 {}，
+  // 用户看到的是「没有配置任何 sources」，而真相是文件写坏了 —— 报错完全指错方向。
+  async function readProjectConfigForScan() {
+    const cfgPath = projectConfigPath();
+    if (!existsSync(cfgPath)) return { config: {}, file: cfgPath };
+    try {
+      return { config: JSON.parse(await readFile(cfgPath, 'utf8')), file: cfgPath };
+    } catch (error) {
+      throw new Error(`配置文件解析失败：${cfgPath}（${error.message}）`);
+    }
+  }
+
   async function runScan(limitOverride) {
-    const projectConfig = await readProjectConfig();
-    const sources = createSources(projectConfig.sources ?? []);
-    if (sources.length === 0) throw new Error('hotspot.config.json 里没有配置任何 sources');
+    if (!projectRoot) {
+      throw new Error(
+        '还没有绑定博客根目录：先在面板「配置」里选择博客项目（或在工作区 dsh-hotspot.config.json 写 projectRoot）再抓取',
+      );
+    }
+    const { config: projectConfig, file: cfgPath } = await readProjectConfigForScan();
+    // 与面板同一套判定：配置里有源用配置，一个都没有就用内置默认源。
+    const { sources: sourceConfigs, mode } = resolveSources(projectConfig);
+    const sources = createSources(sourceConfigs);
+    if (sources.length === 0) {
+      throw new Error(`没有可用的采集源：${cfgPath} 的 sources 为空，且内置默认源也没能创建`);
+    }
+    if (mode === 'builtin') {
+      log(`dsh-hotspot: ${cfgPath} 没有配置 sources，本次使用内置默认源`);
+    }
 
     const profile = target
       ? await target.profile()
@@ -163,7 +191,7 @@ export function apply(ctx, config = {}) {
           defineTool({
             name: 'hotspot_run',
             description:
-              '抓取 hotspot.config.json 里配置的所有源（RSS / GitHub releases / Hacker News），去重后按确定性公式排序，生成当日热点候选并落盘。返回候选表。',
+              '抓取配置文件（dsh-hotspot.config.json 或 hotspot.config.json）里配置的源（RSS / GitHub releases / Hacker News）；一个源都没配置时使用内置默认源。去重后按确定性公式排序，生成当日热点候选并落盘。返回候选表。',
             parameters: {
               limit: {
                 type: 'number',
