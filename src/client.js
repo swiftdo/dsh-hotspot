@@ -1592,6 +1592,33 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const handleEnableBuiltins = async () => {
+        const currentSources = state?.config?.sources || [];
+        const pending = (state?.builtinSources || []).filter(
+          (preset) => !currentSources.some((s) => s.url === preset.url || s.id === preset.id)
+        );
+        if (pending.length === 0) {
+          showToast('内置源已全部启用');
+          return;
+        }
+        try {
+          const res = await fetch(`${API_BASE}/sources`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sources: [...currentSources, ...pending] })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showToast(`已启用 ${pending.length} 个内置源`);
+            await loadState();
+          } else {
+            showToast(data.message || '启用内置源失败', true);
+          }
+        } catch (err) {
+          showToast(err.message, true);
+        }
+      };
+
       const handleDeleteSource = async (id) => {
         const currentSources = (state?.config?.sources || []).filter(s => s.id !== id);
         try {
@@ -1700,6 +1727,26 @@ window.__ModuleLoader__.load({
           item.summary?.toLowerCase().includes(q)
         );
       });
+
+      // 今日订阅文章：raw 里的当日条目，候选已经在上面列过，这里只补候选之外的。
+      const feedDate = state?.feed?.date || '';
+      const feedItems = (state?.feed?.items || []).filter((item) => {
+        if (item.candidate) return false;
+        if (!filter) return true;
+        const q = filter.toLowerCase();
+        return (
+          item.title?.toLowerCase().includes(q) ||
+          item.summary?.toLowerCase().includes(q) ||
+          item.source?.toLowerCase().includes(q)
+        );
+      });
+
+      // 内置源不再单开一块：并进订阅源清单，用「内置」标签区分。
+      const builtinSources = state?.builtinSources || [];
+      const builtinIds = new Set(builtinSources.map((s) => s.id));
+      const configuredSources = state?.config?.sources || [];
+      const configuredSourceIds = new Set(configuredSources.map((s) => s.id));
+      const missingBuiltins = builtinSources.filter((s) => !configuredSourceIds.has(s.id));
 
       const deployConfigured = Boolean(state?.config?.deploy?.configured);
       const savedDeployScript = state?.config?.deploy?.script || '';
@@ -2058,12 +2105,91 @@ window.__ModuleLoader__.load({
                       ])
                     ])
                   ]);
+                }),
+
+            // 今日订阅文章：候选排在前面，这里只补候选之外的当天原文条目
+            feedDate && feedItems.length > 0 && h('div', { key: 'feed-items', style: { marginTop: 24 } }, [
+              h('div', { className: 'hs-card-header', style: { padding: '0 2px', marginBottom: 10 } }, [
+                h('div', null, [
+                  h('div', { className: 'hs-card-title' }, `今日订阅文章（${feedItems.length}）`),
+                  h('div', { className: 'hs-card-subtitle' },
+                    `${feedDate} 由订阅源抓取、未进入候选的文章；候选热点已排在前面`
+                  )
+                ])
+              ]),
+              h('div', { className: 'hs-card', style: { padding: '2px 0' } },
+                feedItems.map((item, idx) => {
+                  const when = item.publishedAt ? new Date(item.publishedAt) : null;
+                  const whenText = when && !Number.isNaN(when.getTime())
+                    ? when.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : '';
+                  return h('div', {
+                    key: item.id || `${item.url}-${idx}`,
+                    style: {
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                      padding: '10px 18px',
+                      borderTop: idx === 0 ? 'none' : '1px solid var(--dsw-alias-border-l1, #2d303b)'
+                    }
+                  }, [
+                    h('div', { style: { flex: 1, minWidth: 0 } }, [
+                      h('a', {
+                        href: item.url,
+                        target: '_blank',
+                        rel: 'noreferrer',
+                        style: {
+                          color: 'inherit',
+                          fontSize: 13.5,
+                          fontWeight: 500,
+                          textDecoration: 'none',
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }
+                      }, item.title || item.url),
+                      h('div', { className: 'hs-candidate-meta', style: { marginTop: 3 } }, [
+                        item.source && h('span', {
+                          className: 'hs-tag-pill',
+                          style: { fontSize: 10 }
+                        }, item.source),
+                        whenText && h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, whenText),
+                        item.summary && h('span', {
+                          style: {
+                            fontSize: 11.5,
+                            color: 'var(--dsw-alias-label-secondary, #8c909e)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            minWidth: 0
+                          }
+                        }, item.summary)
+                      ])
+                    ]),
+                    h('button', {
+                      className: 'hs-btn ghost',
+                      style: { padding: '3px 8px', fontSize: 11, flexShrink: 0 },
+                      onClick: () => {
+                        setScaffoldTarget({
+                          title: item.title,
+                          url: item.url,
+                          summary: item.summary,
+                          sources: [{ source: item.source, title: item.title, url: item.url }]
+                        });
+                        setShowScaffoldModal(true);
+                      }
+                    }, '生成草稿')
+                  ]);
                 })
+              )
+            ])
+
           ]),
 
           // ── TAB: 订阅源管理 ──
           tab === 'sources' && h('div', { key: 'sources-panel' }, [
-            // 官方精选推荐源 Hero Banner
+            // 内置精选源 Hero：只解释「内置是什么」，不再单开一块列表
             h('div', { className: 'hs-hero-banner' }, [
               h('div', { className: 'hs-hero-left' }, [
                 h('div', { className: 'hs-hero-icon' }, [
@@ -2073,35 +2199,23 @@ window.__ModuleLoader__.load({
                 ]),
                 h('div', null, [
                   h('div', { className: 'hs-hero-title' }, [
-                    '官方内置推荐源：SoPilot AI 爆款推文',
-                    h('span', { className: 'hs-tag-pill ai', style: { fontSize: 10 } }, 'RSS 专线')
+                    '内置精选源',
+                    h('span', { className: 'hs-tag-pill ai', style: { fontSize: 10 } }, `${builtinSources.length} 个 · 开箱即用`)
                   ]),
                   h('div', { className: 'hs-hero-desc' },
-                    '自动聚合跟踪 Twitter / X 今日海外高赞、高转发的前沿 AI 讨论与技术爆款贴。'
-                  ),
-                  h('div', { style: { fontSize: 11, fontFamily: 'monospace', color: 'var(--dsw-alias-brand-primary, #4db6a0)', marginTop: 4 } },
-                    'https://sopilot.net/rss/hottweets'
+                    '插件自带的推荐源不单独占一块列表：启用后就出现在下方「订阅源清单」里，并带「内置」标签。'
                   )
                 ])
               ]),
-              h('div', null, [
-                (state?.config?.sources || []).some(
-                  (s) => s.url === 'https://sopilot.net/rss/hottweets' || s.id === 'sopilot-hottweets'
-                )
-                  ? h('span', {
-                      className: 'hs-tag-pill',
-                      style: { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.3)', padding: '5px 12px' }
-                    }, '✓ 活跃订阅中')
-                  : h('button', {
-                      className: 'hs-btn primary',
-                      onClick: () => handleAddPresetSource({
-                        id: 'sopilot-hottweets',
-                        name: 'SoPilot AI 爆款推文',
-                        kind: 'rss',
-                        url: 'https://sopilot.net/rss/hottweets'
-                      })
-                    }, '+ 一键加入订阅列表')
-              ])
+              missingBuiltins.length > 0
+                ? h('button', { className: 'hs-btn primary', onClick: handleEnableBuiltins }, [
+                    h('span', { style: { marginRight: 4 } }, '⚡'),
+                    `一键启用全部（${missingBuiltins.length}）`
+                  ])
+                : h('span', {
+                    className: 'hs-tag-pill',
+                    style: { background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.3)', padding: '5px 12px' }
+                  }, '✓ 内置源已全部启用')
             ]),
 
             // 新增源表单 Card
@@ -2160,28 +2274,38 @@ window.__ModuleLoader__.load({
               }, '+ 确认添加此订阅源')
             ]),
 
-            // 现有订阅源列表 Card
+            // 现有订阅源列表 Card：内置源并进同一张表，用「内置」标签区分
             h('div', { className: 'hs-card' }, [
               h('div', { className: 'hs-card-header' }, [
-                h('div', { className: 'hs-card-title' }, `活跃订阅源清单 (${state?.config?.sources?.length || 0})`),
-                h('div', { className: 'hs-card-subtitle' }, '聚合扫描时将并发采集以下所有数据源')
+                h('div', null, [
+                  h('div', { className: 'hs-card-title' },
+                    `订阅源清单（已启用 ${configuredSources.length}${missingBuiltins.length ? ` · 内置待启用 ${missingBuiltins.length}` : ''}）`
+                  ),
+                  h('div', { className: 'hs-card-subtitle' }, '聚合扫描时会并发采集所有已启用的源；带「内置」标签的来自插件自带推荐源')
+                ])
               ]),
               h('table', { className: 'hs-table' }, [
                 h('thead', null, [
                   h('tr', null, [
-                    h('th', { style: { width: 140 } }, 'ID 标识'),
+                    h('th', { style: { width: 170 } }, 'ID 标识'),
                     h('th', { style: { width: 120 } }, '类型'),
                     h('th', null, '抓取目标 / 规则'),
                     h('th', { style: { width: 80, textAlign: 'right' } }, '操作')
                   ])
                 ]),
                 h('tbody', null, [
-                  (state?.config?.sources || []).map(s => {
+                  configuredSources.map(s => {
                     let typeBadgeClass = 'hs-tag-pill';
                     if (s.kind === 'rss') typeBadgeClass = 'hs-tag-pill ai';
                     if (s.kind === 'github-release') typeBadgeClass = 'hs-tag-pill code';
                     return h('tr', { key: s.id }, [
-                      h('td', { style: { fontWeight: 600 } }, s.id),
+                      h('td', { style: { fontWeight: 600 } }, [
+                        s.id,
+                        builtinIds.has(s.id) && h('span', {
+                          className: 'hs-tag-pill',
+                          style: { marginLeft: 6, fontSize: 10, background: 'rgba(99, 102, 241, 0.18)', color: '#a5b4fc', borderColor: 'rgba(99, 102, 241, 0.35)' }
+                        }, '内置')
+                      ]),
                       h('td', null, h('span', { className: typeBadgeClass }, s.kind)),
                       h('td', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontFamily: 'monospace', fontSize: 12 } },
                         s.url || s.repo || `Hacker News (minPoints: ${s.minPoints})`
@@ -2192,7 +2316,25 @@ window.__ModuleLoader__.load({
                         onClick: () => handleDeleteSource(s.id)
                       }, '移除'))
                     ]);
-                  })
+                  }),
+                  missingBuiltins.map(b => h('tr', { key: `builtin-${b.id}`, style: { opacity: 0.75 } }, [
+                    h('td', { style: { fontWeight: 600 } }, [
+                      b.id,
+                      h('span', {
+                        className: 'hs-tag-pill',
+                        style: { marginLeft: 6, fontSize: 10, background: 'rgba(99, 102, 241, 0.18)', color: '#a5b4fc', borderColor: 'rgba(99, 102, 241, 0.35)' }
+                      }, '内置')
+                    ]),
+                    h('td', null, h('span', { className: 'hs-tag-pill ai' }, b.kind || 'rss')),
+                    h('td', { style: { color: 'var(--dsw-alias-label-secondary, #9da1b0)', fontFamily: 'monospace', fontSize: 12 } },
+                      b.url || b.repo || ''
+                    ),
+                    h('td', { style: { textAlign: 'right' } }, h('button', {
+                      className: 'hs-btn',
+                      style: { padding: '3px 8px', fontSize: 11 },
+                      onClick: () => handleAddPresetSource(b)
+                    }, '启用'))
+                  ]))
                 ])
               ])
             ])

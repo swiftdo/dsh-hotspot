@@ -13,13 +13,17 @@ function makeItem(title, url, source, publishedAt = '2026-11-04T21:00:00Z') {
 
 function memoryStore() {
   const saved = [];
+  const rawSaves = [];
   return {
     saved,
+    rawSaves,
     async saveDigest(digest) {
       saved.push(digest);
       return `/tmp/${digest.date}.json`;
     },
-    async saveRaw() {},
+    async saveRaw(date, items) {
+      rawSaves.push({ date, items });
+    },
     async loadDigest() {
       return saved[saved.length - 1];
     },
@@ -138,4 +142,23 @@ test('digest 带 schemaVersion 与上海时区日期', async () => {
 
 test('缺少端口时立刻抛错，而不是运行到一半', () => {
   assert.throws(() => createPipeline({ sources: [], ranker: {}, store: {}, clock: null }), /缺少端口 clock/);
+});
+
+test('saveRaw 保留来源与发布时间，供面板列「今日订阅文章」', async () => {
+  const sources = [
+    { id: 's1', fetch: async () => [makeItem('DeepSeek Harness 新版本', 'https://a.com/x', 's1')] },
+  ];
+  const store = memoryStore();
+  const { pipeline } = build(sources, store);
+  const { digest } = await pipeline.run({ profile });
+
+  assert.equal(store.rawSaves.length, 1);
+  const [{ date, items }] = store.rawSaves;
+  assert.equal(date, digest.date);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].source, 's1');
+  assert.equal(items[0].sourceKind, 'rss');
+  assert.equal(items[0].publishedAt, '2026-11-04T21:00:00Z');
+  assert.equal(items[0].summary, 's');
+  assert.equal(items[0].content, '', '没抓正文时留空串，不能是 undefined');
 });

@@ -226,9 +226,11 @@ function sourceTarget(source) {
 }
 
 function renderSources() {
+  const builtinIds = new Set((state?.builtinSources || []).map((source) => source.id));
   const rows = sources.map((source, index) => {
+    const builtin = builtinIds.has(source.id) ? ' <span class="tag">内置</span>' : '';
     return '<tr>' +
-      '<td><code>' + esc(source.id) + '</code></td>' +
+      '<td><code>' + esc(source.id) + '</code>' + builtin + '</td>' +
       '<td>' + esc(source.kind) + '</td>' +
       '<td class="muted" style="word-break:break-all">' + esc(sourceTarget(source)) + '</td>' +
       '<td><button class="ghost danger" data-del="' + index + '">删除</button></td>' +
@@ -284,6 +286,24 @@ function renderItems() {
       '<pre>' + esc(item.summary || '（无摘要）') + '</pre></details>' +
       '</div>';
   }).join('') || '<span class="muted">今天没有候选</span>';
+
+  const feed = (state.feed?.items || []).filter((item) => !item.candidate);
+  if (feed.length) {
+    const feedRows = feed.map((item) => {
+      const when = item.publishedAt ? new Date(item.publishedAt) : null;
+      const whenText = when && !Number.isNaN(when.getTime())
+        ? when.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '';
+      return '<div class="item" style="padding:10px 0">' +
+        '<div class="row"><a class="title" style="flex:1;color:inherit;text-decoration:none" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.title || item.url) + '</a></div>' +
+        '<div class="meta">' + (item.source ? '<span class="tag">' + esc(item.source) + '</span> ' : '') +
+        esc(whenText) + (item.summary ? ' · ' + esc(item.summary) : '') + '</div>' +
+        '</div>';
+    }).join('');
+    $('itemList').innerHTML +=
+      '<div style="margin-top:22px"><div class="row"><strong style="font-weight:500">今日订阅文章（' + feed.length + '）</strong>' +
+      '<span class="muted">' + esc(state.feed?.date || '') + ' · 候选之外抓到的原文</span></div>' + feedRows + '</div>';
+  }
 
   $('itemList').querySelectorAll('[data-scaffold]').forEach((button) => {
     button.onclick = async () => {

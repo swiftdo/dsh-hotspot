@@ -86,8 +86,22 @@ export function createPipeline(ports) {
 
     // 原文另存一份：digest 要瘦，但数字校验需要完整正文。
     // store 没有这个能力时静默跳过 —— 它属于可选端口。
+    // 除了正文（数字校验要用），也留下 source / publishedAt / summary ——
+    // 面板的「今日订阅文章」要按源和时间列出来，光有 url+title 拼不出来源。
     if (typeof store.saveRaw === 'function') {
-      await store.saveRaw(digest.date, raw.map((it) => ({ id: it.id, url: it.url, title: it.title, content: it.content ?? '' })));
+      await store.saveRaw(
+        digest.date,
+        raw.map((it) => ({
+          id: it.id,
+          url: it.url,
+          title: it.title,
+          content: it.content ?? '',
+          source: it.source ?? '',
+          sourceKind: it.sourceKind ?? '',
+          publishedAt: it.publishedAt ?? '',
+          summary: it.summary ?? '',
+        })),
+      );
     }
 
     const path = await store.saveDigest(digest);

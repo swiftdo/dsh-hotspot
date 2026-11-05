@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
+import { canonicalUrl } from '../core/normalize.js';
 
 /**
  * 管理界面的服务端。
@@ -21,6 +22,8 @@ const PANEL_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
 export const PREFIX = '/dsh-hotspot';
 export const LEGACY_PREFIX = '/hotspot';
 const MAX_BODY = 64 * 1024;
+// 「今日订阅文章」单次最多返回这么多条：raw 一天可能上千条，面板一次全给会卡。
+const FEED_LIMIT = 300;
 
 export const BUILTIN_SOURCES = [
   {
@@ -305,6 +308,33 @@ export function createRoutes(deps) {
       ? config.sources
       : BUILTIN_SOURCES.map(({ id, name, kind, url }) => ({ id, name, kind, url }));
 
+    // digest 只留聚合后的候选；raw 里才有当天每个源的全部条目。
+    // 面板据此在候选之后补一段「今日订阅文章」，候选标记出来避免重复展示。
+    const rawItems = digest && typeof currentStore?.loadRaw === 'function'
+      ? await currentStore.loadRaw(digest.date).catch(() => [])
+      : [];
+    const candidateUrls = new Set();
+    for (const item of digest?.items ?? []) {
+      candidateUrls.add(canonicalUrl(item.url));
+      for (const source of item.sources ?? []) candidateUrls.add(canonicalUrl(source.url));
+    }
+    const feed = {
+      date: digest?.date ?? '',
+      items: (Array.isArray(rawItems) ? rawItems : [])
+        .map((item) => ({
+          id: item.id ?? '',
+          title: item.title ?? '',
+          url: item.url ?? '',
+          source: item.source ?? '',
+          sourceKind: item.sourceKind ?? '',
+          publishedAt: item.publishedAt ?? '',
+          summary: String(item.summary ?? '').slice(0, 200),
+          candidate: candidateUrls.has(canonicalUrl(item.url)),
+        }))
+        .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))
+        .slice(0, FEED_LIMIT),
+    };
+
     return {
       configured: hasConfiguredRoot,
       projectRoot: activeProjectRoot,
@@ -353,6 +383,7 @@ export function createRoutes(deps) {
         status: 'draft',
       })),
       drafts: drafts || [],
+      feed,
       digest: digest
         ? {
             date: digest.date,
@@ -891,7 +922,8 @@ export function createRoutes(deps) {
           const value = await deps.saveModels({
             provider: body?.provider ? String(body.provider) : '',
             model: body?.model ? String(body.model) : '',
-            mode: body?.mode === 'direct' ? 'direct' : 'agent',
+            // 没显式传 mode 时交给已保存的选择决定，不能在这里默认成 agent。
+            mode: body?.mode === 'direct' ? 'direct' : body?.mode === 'agent' ? 'agent' : undefined,
           });
           sendJson(res, 200, { ok: true, message: '写作模型已保存', value });
         } catch (err) {
