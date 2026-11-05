@@ -128,7 +128,7 @@ CLI 里对应 `hotspot check` / `hotspot promote`，面板里对应「转正」�
 | `supplement` | 同一个 `sources.json` | 补料是**证据账本**，不是笔记 |
 | `promote` | `<articleDir>/<slug>/{index.md,sources.json}` | 转正后仍要答得出「这段数字从哪读来的」 |
 
-面板的「AI 写正文」是同一套落盘的另一种触发：子代理把 `{ body, sources }` 写成 `<digestDir>/writer/<slug>.json`，宿主读回后登记补料、写正文、跑校验（见「面板里一键写正文」）。
+面板的「AI 写正文」是同一套落盘的另一种触发：子代理把 `{ body, sources }` 写成 `<digestDir>/writer/<slug>.json`，宿主读回后登记补料、写正文、跑校验（见「面板里一键生成成稿」）。
 
 ### 3 校验：四道闸门
 
@@ -232,9 +232,23 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 - **`hotspot_get` 带 `registerSlug`**：把该候选的多源原文一次性登记成补料，并把 `candidate.id` 记进 `sources.json`。digest 按天滚动，隔天再写这篇草稿时 `latest` 里已经没有这个 cluster——写之前先固化一份，check 才能按 id 找回当时的证据。
 - **面板里的证据条**：打开草稿/文章的「预览与修改」后，正文上方有一条 `📎 证据 N 条`，展开可看每条补料的标题、类型、字数与正文摘要。转正后这条也还在，因为 sources.json 跟着一起搬走了。
 
-### 面板里一键写正文
+### 面板里一键生成成稿
 
-草稿列表每条右边有「AI 写正文」。点下去，插件用宿主的**子代理**跑一次「搜 → 读 → 写」，然后把结果按同样的规矩落盘：
+候选页点「生成草稿」就是一次成稿，不再是空骨架：
+
+```
+POST /api/scaffold {id, generate:true}
+  ├─ 建草稿（frontmatter + sources.json 里的 candidate.id）→ 立刻返回 job
+  └─ 后台任务：候选素材包（摘要 + tags + 一手源原文）→ 子代理联网搜 3–6 篇
+                → 综合成文 → 来源登记成补料 → 写盘 → 三道校验
+面板每 4 秒 GET /api/jobs?slug=…  → 卡片上「✍️ 写作中」→ 完成变标题，失败变「⚠️ 正文失败」+ 重试
+```
+
+为什么是后台任务：一次子代理 5 秒到几分钟，同步等会有两个问题——浏览器刷新就丢结果，面板也只能干等。任务状态落在 `<digestDir>/jobs/<slug>.json`，宿主重启后仍能看出上次失败的原因（但**不会自动续跑**）。
+
+草稿已经建好后仍可以单独重跑：草稿箱卡片上的「🔁 重试写正文」打 `POST /api/jobs`，编辑器里的「✨ 让子代理写正文」打 `POST /api/generate`（同步）。同一篇同时只允许一个任务，重复请求回 409 `ERR_JOB_BUSY`。
+
+子代理做的事没变，还是「搜 → 读 → 写」，然后按同样的规矩落盘：
 
 ```
 子代理（有搜索与抓取工具，自己决定读哪几篇）
@@ -242,7 +256,9 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
         └─ 宿主读回：来源登记成补料 → 正文写进草稿（保留 frontmatter）→ 立刻跑三道校验
 ```
 
-入口都收在草稿箱里：卡片整块可点，和「✏️ 编辑正文」进的是同一个编辑器。正文还是 scaffold 的空壳时，预览区给出一张「✨ 让子代理写正文」卡片，打 `POST /api/generate`；正文写完以后，编辑器头部的「🎨 正文润色」会展开润色面板，填不填要求都能跑，打 `POST /api/polish`。两种操作完都重新读回磁盘内容并刷新证据条，不用关掉重开。
+入口都收在草稿箱里：卡片整块可点，和「✏️ 编辑正文」进的是同一个编辑器。正文还是空壳时，预览区给出一张「✨ 让子代理写正文」卡片，打 `POST /api/generate`；正文写完以后，编辑器头部的「🎨 正文润色」会展开润色面板，填不填要求都能跑，打 `POST /api/polish`。两种操作完都重新读回磁盘内容并刷新证据条，不用关掉重开。
+
+**喂给子代理的不只是标题**。写正文前会按 `sources.json` 的 `candidate.id` 找回候选，连同当天 `raw` 里的一手源原文组成素材包（摘要、tags、每条最多 2000 字、总量 6000 字），提示词里明确写着「这是起点，不是全部，仍然要联网补 3–6 篇交叉核对」。以前只给标题和一串链接，中文标题还会直接定位不到候选——提示词里连选题是什么都没有。
 
 **润色和写正文是两条路**：
 
@@ -269,12 +285,37 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 
 ### 写作方式与模型选择
 
-面板不再放写作方式下拉：默认就是**联网搜索（子代理）**，质量最好，也最省心。选择仍然存在 `<digestDir>/writer-config.json`（`{ provider, model, mode }`），写正文与润色读的是同一份；要换模型直接调接口：
+设置页有一张「模型与写作方式」卡，三行选择 + 两个方式按钮：
 
 ```
-GET  /dsh-hotspot/api/models     # 宿主的模型目录 + 当前选择 + 实际路由
-POST /dsh-hotspot/api/models     # {"provider":"…","model":"…","mode":"agent"|"direct"}
+默认       —— 没被覆盖的用途都用它
+写正文     —— 默认「跟随默认」；子代理要长上下文 + 搜索工具
+润色       —— 默认「跟随默认」；短任务，可以挑更便宜更快的模型
+写作方式   —— 联网子代理 / 只用手头证据
 ```
+
+存盘结构 `<digestDir>/writer-config.json`：
+
+```json
+{
+  "version": 2,
+  "mode": "agent",
+  "global": { "provider": "", "model": "" },
+  "writer": { "provider": "", "model": "" },
+  "polish": { "provider": "", "model": "" }
+}
+```
+
+覆盖项必须成对出现（provider + model 都给），只给一半等于没选；清空即回到跟随默认。旧版扁平的 `{ provider, model, mode }` 读进来当成 `global`，行为不变。
+
+接口：
+
+```
+GET  /dsh-hotspot/api/models   # 模型目录 + 完整选择 + writer/polish 各自解析到的路由
+POST /dsh-hotspot/api/models   # 局部更新：{"mode"?, "global"?, "writer"?, "polish"?}
+```
+
+**面板选的模型是真的会生效的**：写正文走子代理时通过 `request.agentOptions` 传下去；宿主 provider 不支持指定模型（`capabilities.agentOptions` 为 false）时直接报错并给出两条出路，而不是悄悄回退到父代理的模型——那种静默回退最坑，人以为换了模型，实际跑的还是默认那个。
 
 两种方式的差别是**证据从哪来**：
 
@@ -458,7 +499,7 @@ flowchart TB
 
 面板是一个零依赖 HTML（`src/web/panel.html`，脚本内联），不打包、不引框架，由路由直接吐出字符串。所有数据走 `/api/*` 的 JSON 接口，所以面板坏掉时可以直接 curl 排障。
 
-`POST /api/generate` 是唯一会起子代理的接口（`{ slug, mode?, provider?, model? }` → 写正文 + 跑校验）；宿主没提供 `subagents` 服务时它回 501，其余接口不受影响。`GET/POST /api/models` 读模型目录与保存写作选择——没接 `llm` 时 GET 仍回 200 空目录，面板照常打开。
+`POST /api/generate` 与 `POST /api/jobs` 是两个会起子代理的入口（前者同步、后者后台任务）；宿主没提供 `subagents` 服务时前者回 501、后者不建任务并把草稿留在原地。`GET/POST /api/models` 读模型目录与保存按用途的模型选择——没接 `llm` 时 GET 仍回 200 空目录，面板照常打开。
 
 **刻意没做的**：不注册 `/slash` 命令、不注册定时任务。前者要猜命令 outcome 的契约；后者宿主已有「自动化任务」，让它定时调 `hotspot_run` 就行。少两处耦合，就少两处随 DSH 版本失效的地方。
 
@@ -576,7 +617,9 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
 | POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.{build,script}（合并语义，只传 build 不会抹掉 script） |
 | POST | `/hotspot/api/run` | 触发一次抓取 |
-| POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿 |
+| POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿；`generate:true` 时建完立刻在后台写正文并返回 job |
+| GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤） |
+| POST | `/hotspot/api/jobs` | 按 slug 重跑写正文（失败重试）；同篇在跑时 409 `ERR_JOB_BUSY` |
 | GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
 | POST | `/hotspot/api/article` | 保存正文 |
 | POST | `/hotspot/api/article-promote` | 草稿转正（过闸；违规回 409 `ERR_CHECK_FAILED` + 违规清单） |
@@ -597,4 +640,6 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 - **`promote` 是硬闸门，没有 force**。要放行只有两条路：把正文改到证据边界内，或把真正读过的页面登记成补料。MCP/宿主级强行改文件当然绕过它——闸门防的是流程上的惯性，不是防有磁盘权限的人。
 - **同一天重跑 `run` 会覆盖当天 digest**（`<date>.json` 与 `latest.json`），候选 id `h-YYYYMMDD-NN` 会按新排序重新分配。草稿不受影响（它记的是 `candidate.id`，check 按 id 往回找），但**对话里的「#3」会指向新的第三条**。
 - **`hotspot_write` 不建草稿**。它只往已有草稿写正文；没有草稿就先 `hotspot_scaffold`。
+- **后台写作任务不跨宿主重启续跑**。状态文件（`<digestDir>/jobs/<slug>.json`）留着，所以失败原因还看得到；但进程没了就是没了，重开面板后要点「重试写正文」。
+- **子代理 provider 未必支持指定模型**。`capabilities.agentOptions` 为 false 的 provider 会直接报错；这时要么把「写正文」改成跟随默认，要么切「只用手头证据」——后者走一次 completion，模型一定生效。
 - **digest 不进版本库**（`.hotspot/` 已 gitignore）。它是过程产物；真正要留痕的判断应该写进文章或 commit message。
