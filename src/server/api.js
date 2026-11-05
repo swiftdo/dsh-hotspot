@@ -857,29 +857,25 @@ export function createRoutes(deps) {
       kind: 'exact',
       path: `${PREFIX}/api/models`,
       handler: async (req, res) => {
-        if (!guard(req, res, ['GET'])) return;
-        if (typeof deps.listModels !== 'function') {
-          sendJson(res, 200, {
-            ok: true,
-            message: '当前环境没有接入模型目录',
-            value: { providers: [], selection: { provider: '', model: '' } },
-          });
+        if (!guard(req, res, ['GET', 'POST'])) return;
+        if (req.method === 'GET') {
+          if (typeof deps.listModels !== 'function') {
+            sendJson(res, 200, {
+              ok: true,
+              message: '当前环境没有接入模型目录',
+              value: { providers: [], selection: { provider: '', model: '', mode: 'agent' }, route: null },
+            });
+            return;
+          }
+          try {
+            const value = await deps.listModels();
+            sendJson(res, 200, { ok: true, value });
+          } catch (err) {
+            sendJson(res, 500, { ok: false, error: err.message });
+          }
           return;
         }
-        try {
-          const value = await deps.listModels();
-          sendJson(res, 200, { ok: true, value });
-        } catch (err) {
-          sendJson(res, 500, { ok: false, error: err.message });
-        }
-      },
-    },
-    {
-      method: 'POST',
-      kind: 'exact',
-      path: `${PREFIX}/api/models`,
-      handler: async (req, res) => {
-        if (!guard(req, res, ['POST'])) return;
+
         if (typeof deps.saveModels !== 'function') {
           sendJson(res, 501, { ok: false, code: 'ERR_NO_MODELS', error: '当前环境无法保存模型选择' });
           return;
@@ -895,6 +891,7 @@ export function createRoutes(deps) {
           const value = await deps.saveModels({
             provider: body?.provider ? String(body.provider) : '',
             model: body?.model ? String(body.model) : '',
+            mode: body?.mode === 'direct' ? 'direct' : 'agent',
           });
           sendJson(res, 200, { ok: true, message: '写作模型已保存', value });
         } catch (err) {

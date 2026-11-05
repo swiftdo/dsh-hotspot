@@ -10,7 +10,13 @@ import { createFsStore } from './adapters/store-fs.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
 import { registerCandidateSources } from './core/supplement.js';
 import { checkDraft } from './core/checks.js';
-import { createWriter } from './server/generate.js';
+import {
+  createWriter,
+  listCatalog,
+  readWriterSelection,
+  saveWriterSelection,
+} from './server/generate.js';
+import { resolveRoute } from './core/writer-route.js';
 import { createRoutes, PREFIX } from './server/api.js';
 
 /**
@@ -458,9 +464,13 @@ export function apply(ctx, config = {}) {
       const disposers = [];
       // 面板的「AI 生成正文」走宿主的子代理：模型能力、工具面、上下文都由宿主给，
       // 插件只负责编排与落盘。宿主没装 subagents 时 generate 会抛错，面板照常可用。
+      // 模型选择与产物都跟着博客项目走，不能落在进程 cwd（插件可能从别处启动）。
+      const writerConfigDir = () =>
+        projectRoot ? path.join(projectRoot, currentDigestDir) : path.join(process.cwd(), currentDigestDir);
       const writer = createWriter({
         getSubagents: () => (typeof ctx.get === 'function' ? ctx.get('subagents') : null),
-        digestDir: () => currentDigestDir,
+        getLlm: () => (typeof ctx.get === 'function' ? ctx.get('llm') : null),
+        digestDir: writerConfigDir,
         log,
       });
       for (const route of createRoutes({
@@ -470,6 +480,19 @@ export function apply(ctx, config = {}) {
         runScan,
         onConfigUpdated: updateRuntime,
         generate: writer,
+        // 面板的模型下拉：目录来自宿主的 llm 服务，选择存在 .hotspot/writer-config.json。
+        listModels: async () => {
+          const llm = typeof ctx.get === 'function' ? ctx.get('llm') : null;
+          const providers = await listCatalog(llm);
+          const selection = await readWriterSelection(writerConfigDir());
+          return { providers, selection, route: resolveRoute(providers, selection) };
+        },
+        saveModels: async (selection) => {
+          const saved = await saveWriterSelection(writerConfigDir(), selection);
+          const llm = typeof ctx.get === 'function' ? ctx.get('llm') : null;
+          const providers = await listCatalog(llm);
+          return { ...saved, route: resolveRoute(providers, saved) };
+        },
         checkDraft: async (opts) => {
           const cfg = await readProjectConfig();
           return checkDraft({ ...opts, allowedHosts: cfg.publish?.allowedHosts ?? [] });

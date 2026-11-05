@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
-import { createWriter, pickProvider } from '../src/server/generate.js';
+import { createWriter, pickProvider, readWriterSelection, saveWriterSelection } from '../src/server/generate.js';
 
 const CANDIDATE = {
   id: 'h-20261105-01',
@@ -122,4 +122,73 @@ test('provider 缺省优先 spawn，没有就用第一个', () => {
   assert.equal(pickProvider(['custom']), 'custom');
   assert.equal(pickProvider([]), 'spawn');
   assert.equal(pickProvider(null), 'spawn');
+});
+
+test('direct 模式：用选中的模型一次生成，只用手头证据并写进草稿', async () => {
+  const { root, target, store } = await setup();
+  const prompts = [];
+  const llm = {
+    async listProviders() {
+      return [{ provider: 'deepseek', name: 'DeepSeek' }, { provider: 'openai', name: 'OpenAI' }];
+    },
+    async listModels(provider) {
+      return provider === 'openai' ? [{ id: 'gpt-x', name: 'GPT X' }] : [{ id: 'chat', name: 'Chat' }];
+    },
+    async *stream(options) {
+      prompts.push(options);
+      yield { type: 'chunk', chunk: { type: 'text-delta', text: '# 模型自己写的一级标题\n\n' } };
+      yield { type: 'text-chunks', texts: ['这是正文。', '第二段。'] };
+    },
+  };
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+  const value = await write({
+    slug: 'demo-post',
+    store,
+    target,
+    projectRoot: root,
+    mode: 'direct',
+    provider: 'openai',
+    model: 'gpt-x',
+  });
+
+  assert.equal(value.mode, 'direct');
+  assert.equal(value.provider, 'openai');
+  assert.equal(value.model, 'gpt-x');
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].provider, 'openai');
+  assert.equal(prompts[0].model, 'gpt-x');
+  assert.match(prompts[0].messages[0].content[0].text, /只能使用下面给出的材料/);
+
+  const text = readFileSync(path.join(root, value.file), 'utf8');
+  assert.match(text, /^---/);
+  assert.match(text, /这是正文。第二段。/);
+  // 模型自带的一级标题必须被去掉，frontmatter 之后只留宿主补的那一个 H1。
+  assert.equal((text.match(/^# /gm) || []).length, 1);
+});
+
+test('direct 模式：没有可用模型路由时明确报错，不静默产出空正文', async () => {
+  const { root, target, store } = await setup();
+  const llm = {
+    async listProviders() { return []; },
+    async listModels() { return []; },
+    async *stream() { throw new Error('没有路由时不应该调用 stream'); },
+  };
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+  await assert.rejects(
+    () => write({ slug: 'demo-post', store, target, projectRoot: root, mode: 'direct' }),
+    /没有可用的模型路由/,
+  );
+});
+
+test('模型选择：存盘后下一次生成沿用，缺省是 agent 模式', async () => {
+  const { root } = await setup();
+  const dir = path.join(root, '.hotspot');
+  const saved = await saveWriterSelection(dir, { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+  assert.deepEqual(saved, { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+  assert.deepEqual(await readWriterSelection(dir), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+  assert.deepEqual(await readWriterSelection(path.join(root, 'nope')), {
+    provider: '',
+    model: '',
+    mode: 'agent',
+  });
 });

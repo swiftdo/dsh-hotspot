@@ -117,3 +117,58 @@ test('生成正文：子代理失败时把原因透出来', async () => {
   assert.equal(out.status, 500);
   assert.match(out.error, /超时/);
 });
+
+function callModels(routes, method, body) {
+  const route = routes.find((r) => r.path === '/dsh-hotspot/api/models');
+  assert.ok(route, '/dsh-hotspot/api/models 应存在');
+  const { req, res, result } = mockReqRes(method, '/dsh-hotspot/api/models', body);
+  return route.handler(req, res).then(() => {
+    const out = result();
+    return { status: out.status, ...out.json() };
+  });
+}
+
+test('模型目录：GET 回传 provider/model 与当前选择', async () => {
+  const routes = routesWith({
+    listModels: async () => ({
+      providers: [{ provider: 'deepseek', label: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }],
+      selection: { provider: 'deepseek', model: 'chat', mode: 'agent' },
+      route: { provider: 'deepseek', model: 'chat' },
+    }),
+  });
+  const out = await callModels(routes, 'GET');
+  assert.equal(out.status, 200);
+  assert.equal(out.value.providers[0].provider, 'deepseek');
+  assert.equal(out.value.selection.model, 'chat');
+  assert.deepEqual(out.value.route, { provider: 'deepseek', model: 'chat' });
+});
+
+test('模型目录：没接 llm 时也回 200 与空目录，面板不报错', async () => {
+  const routes = routesWith({});
+  const out = await callModels(routes, 'GET');
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.value.providers, []);
+  assert.equal(out.value.selection.mode, 'agent');
+});
+
+test('模型目录：POST 保存选择并把解析出的路由回传', async () => {
+  const seen = [];
+  const routes = routesWith({
+    saveModels: async (selection) => {
+      seen.push(selection);
+      return { ...selection, route: { provider: selection.provider, model: selection.model } };
+    },
+  });
+  const out = await callModels(routes, 'POST', { provider: 'openai', model: 'gpt-x', mode: 'direct' });
+  assert.equal(out.status, 200);
+  assert.equal(out.value.mode, 'direct');
+  assert.equal(out.value.route.model, 'gpt-x');
+  assert.deepEqual(seen, [{ provider: 'openai', model: 'gpt-x', mode: 'direct' }]);
+});
+
+test('模型目录：不能保存时回 501，而不是假装成功', async () => {
+  const routes = routesWith({});
+  const out = await callModels(routes, 'POST', { provider: 'openai', model: 'gpt-x' });
+  assert.equal(out.status, 501);
+  assert.equal(out.code, 'ERR_NO_MODELS');
+});
