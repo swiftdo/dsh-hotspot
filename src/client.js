@@ -788,6 +788,206 @@ window.__ModuleLoader__.load({
         line-height: 1.4;
       }
 
+      /* ── 设置页：概览条 / 分组 / 字段 / 常驻保存条 ── */
+      .hs-cfg-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+      .hs-cfg-title {
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+      .hs-cfg-subtitle {
+        font-size: 12px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        margin-top: 3px;
+      }
+      .hs-cfg-overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 1px;
+        background: var(--dsw-alias-border-l1, #282a34);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 20px;
+      }
+      .hs-cfg-stat {
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        padding: 10px 13px;
+      }
+      .hs-cfg-stat-label {
+        font-size: 10.5px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
+      .hs-cfg-stat-value {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 3px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--dsw-alias-label-primary, #ececf1);
+        min-width: 0;
+      }
+      .hs-cfg-stat-value .weak {
+        font-size: 11px;
+        font-weight: 400;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
+      .hs-cfg-stat-value .path {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        font-weight: 500;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+      }
+      .hs-cfg-section { margin-bottom: 20px; }
+      .hs-cfg-section-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin: 0 2px 9px;
+      }
+      .hs-cfg-section-title {
+        font-size: 11.5px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+      }
+      .hs-cfg-section-note {
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #7c8290);
+      }
+      .hs-cfg-field { display: flex; flex-direction: column; min-width: 0; }
+      .hs-cfg-field-label {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--dsw-alias-label-primary, #ececf1);
+        margin-bottom: 5px;
+      }
+      .hs-cfg-key {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10.5px;
+        font-weight: 500;
+        color: var(--dsw-alias-label-secondary, #7c8290);
+      }
+      .hs-cfg-input-row { display: flex; align-items: center; gap: 8px; }
+      .hs-cfg-unit {
+        flex: none;
+        font-size: 10.5px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        background: var(--dsw-alias-bg-layer-2, #21232d);
+        border: 1px solid var(--dsw-alias-border-l1, #2c2f3a);
+        border-radius: 5px;
+        padding: 1px 6px;
+        white-space: nowrap;
+      }
+      .hs-cfg-mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+      .hs-cfg-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        white-space: nowrap;
+        border: 1px solid transparent;
+      }
+      .hs-cfg-state.ok { color: #34d399; background: rgba(52, 211, 153, 0.10); border-color: rgba(52, 211, 153, 0.28); }
+      .hs-cfg-state.warn { color: #fbbf24; background: rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.28); }
+      .hs-cfg-state.idle { color: #94a3b8; background: rgba(148, 163, 184, 0.10); border-color: rgba(148, 163, 184, 0.24); }
+      .hs-cfg-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .hs-cfg-model-row {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 9px;
+      }
+      .hs-cfg-segmented {
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--dsw-alias-bg-layer-2, #1f212a);
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        border-radius: 8px;
+      }
+      .hs-cfg-segmented button {
+        font-family: inherit;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        background: transparent;
+        border: 0;
+        border-radius: 6px;
+        padding: 5px 11px;
+        cursor: pointer;
+        transition: background 140ms var(--hs-ease-out), color 140ms var(--hs-ease-out);
+      }
+      .hs-cfg-segmented button.on {
+        background: var(--dsw-alias-bg-layer-1, #23252f);
+        color: var(--dsw-alias-label-primary, #ececf1);
+        font-weight: 600;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      }
+      .hs-cfg-effective { margin-top: 12px; display: flex; flex-direction: column; gap: 3px; }
+      .hs-cfg-effective div { font-size: 11px; color: var(--dsw-alias-label-secondary, #7c8290); }
+      .hs-cfg-effective code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        color: #93c5fd;
+      }
+      .hs-cfg-timeline {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--dsw-alias-border-l1, #282a34);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
+      /* 真正的面板底栏：在滚动容器之外，不靠 sticky 与负 margin 去凑边距 */
+      .hs-cfg-savebar {
+        flex: none;
+        padding: 10px 24px;
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border-top: 1px solid var(--dsw-alias-border-l1, #282a34);
+      }
+      .hs-cfg-savebar-inner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      .hs-cfg-dirty {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11.5px;
+        color: #fbbf24;
+      }
+      .hs-cfg-dirty.clean { color: var(--dsw-alias-label-secondary, #7c8290); }
+      .hs-cfg-spacer { flex: 1; }
+
       /* ── 表格规范 ── */
       .hs-table {
         width: 100%;
@@ -1769,7 +1969,7 @@ window.__ModuleLoader__.load({
       // 博客工程与系统参数配置表单状态
       const [blogProjectRoot, setBlogProjectRoot] = useState('');
       const [blogArticleDir, setBlogArticleDir] = useState('docs');
-      const [blogDraftDir, setBlogDraftDir] = useState('docs/draft');
+      const [blogDraftDir, setBlogDraftDir] = useState('.drafts');
       const [blogDigestDir, setBlogDigestDir] = useState('.hotspot');
       const [rankLimit, setRankLimit] = useState(15);
       const [rankSinceHours, setRankSinceHours] = useState(36);
@@ -1896,7 +2096,7 @@ window.__ModuleLoader__.load({
         const b = val.blog || {};
         setBlogProjectRoot(cfg.projectRoot || b.projectRoot || '');
         setBlogArticleDir(cfg.articleDir || b.articleDir || 'docs');
-        setBlogDraftDir(cfg.draftDir || b.draftDir || 'docs/draft');
+        setBlogDraftDir(cfg.draftDir || b.draftDir || '.drafts');
         setBlogDigestDir(cfg.digestDir || b.digestDir || '.hotspot');
         if (cfg.rank) {
           if (cfg.rank.limit !== undefined) setRankLimit(cfg.rank.limit);
@@ -2513,7 +2713,7 @@ window.__ModuleLoader__.load({
           const payload = {
             projectRoot: blogProjectRoot.trim(),
             articleDir: blogArticleDir.trim() || 'docs',
-            draftDir: blogDraftDir.trim() || 'docs/draft',
+            draftDir: blogDraftDir.trim() || '.drafts',
             digestDir: blogDigestDir.trim() || '.hotspot',
             rank: {
               limit: Number(rankLimit) || 15,
@@ -2682,6 +2882,26 @@ window.__ModuleLoader__.load({
       const configFilePath = state?.config?.configFile || '';
       const deployHistory = state?.config?.deploy?.history || [];
       const lastDeploy = deployHistory[0] || null;
+
+      /** 设置页有没有未保存的改动：底部保存条与「重置」按钮都靠它判断。 */
+      const configDirtyCount = () => {
+        const savedCfg = state?.config || {};
+        const savedHosts = (Array.isArray(savedCfg.publish?.allowedHosts) ? savedCfg.publish.allowedHosts : []).join('\n');
+        return [
+          blogProjectRoot.trim() !== String(savedCfg.projectRoot || ''),
+          blogArticleDir.trim() !== String(savedCfg.articleDir || 'docs'),
+          blogDraftDir.trim() !== String(savedCfg.draftDir || '.drafts'),
+          blogDigestDir.trim() !== String(savedCfg.digestDir || '.hotspot'),
+          Number(rankLimit) !== Number(savedCfg.rank?.limit ?? 15),
+          Number(rankSinceHours) !== Number(savedCfg.rank?.sinceHours ?? 36),
+          Number(rankHalfLifeHours) !== Number(savedCfg.rank?.halfLifeHours ?? 24),
+          Number(rankClusterThreshold) !== Number(savedCfg.rank?.clusterThreshold ?? 0.6),
+          Number(publishMaxPerDay) !== Number(savedCfg.publish?.maxPerDay ?? 3),
+          publishAllowedHosts.trim() !== savedHosts.trim(),
+          deployScript.trim() !== savedDeployScript,
+          deployBuild.trim() !== savedDeployBuild
+        ].filter(Boolean).length;
+      };
       const deployCodeStyle = {
         margin: 0,
         padding: '8px 10px',
@@ -3568,413 +3788,393 @@ window.__ModuleLoader__.load({
             ]);
           })(),
 
-          // ── TAB: 策略与路径配置 ──
-          tab === 'config' && h('div', { key: 'config-panel' }, [
-            // 1. 博客仓库路径 Card
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, '博客仓库与文档目录'),
-                  h('div', { className: 'hs-card-subtitle' }, '指定外部博客项目根路径，保存后服务端热生效并自动刷新博客画像')
-                ]),
-                h('span', {
-                  className: 'hs-tag-pill',
-                  style: {
-                    background: isBlogConfigured ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                    color: isBlogConfigured ? '#34d399' : '#fbbf24',
-                    borderColor: isBlogConfigured ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'
-                  }
-                }, isBlogConfigured ? '● 已连接生效' : '○ 未绑定路径')
-              ]),
-              h('div', { style: { marginBottom: 14 } }, [
-                h('label', { className: 'hs-form-label' }, '博客项目根目录绝对路径 (projectRoot)'),
-                h('div', { style: { display: 'flex', gap: 8 } }, [
-                  h('input', {
-                    className: 'hs-input',
-                    style: { flex: 1 },
-                    placeholder: '选择或输入博客根目录绝对路径，如 /Users/you/Code/my-blog',
-                    value: blogProjectRoot,
-                    onChange: (e) => setBlogProjectRoot(e.target.value)
-                  }),
-                  h('button', {
-                    className: 'hs-btn',
-                    type: 'button',
-                    disabled: pickingDir,
-                    title: '调起系统原生文件夹选择器',
-                    onClick: async () => {
-                      const dir = await handlePickDirectory();
-                      if (dir) setBlogProjectRoot(dir);
-                    }
-                  }, [
-                    h('span', { style: { marginRight: 4 } }, '📁'),
-                    pickingDir ? '选择中...' : '选择文件夹'
-                  ])
-                ]),
-                h('div', { className: 'hs-form-hint' }, `当前生效路径: ${state?.blog?.projectRoot || '未配置'}`)
-              ]),
-              h('div', { className: 'hs-form-grid' }, [
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '正式文章目录 (articleDir)'),
-                  h('input', {
-                    className: 'hs-input',
-                    value: blogArticleDir,
-                    onChange: (e) => setBlogArticleDir(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '已发布文章相对目录（默认 docs）')
-                ]),
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '草稿输出目录 (draftDir)'),
-                  h('input', {
-                    className: 'hs-input',
-                    value: blogDraftDir,
-                    onChange: (e) => setBlogDraftDir(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '生成草稿输出目录（默认 docs/draft）')
-                ]),
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '数据缓存目录 (digestDir)'),
-                  h('input', {
-                    className: 'hs-input',
-                    value: blogDigestDir,
-                    onChange: (e) => setBlogDigestDir(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '热点扫描数据落盘目录（默认 .hotspot）')
-                ])
-              ])
-            ]),
+          // ── TAB: 设置（连接 / 生成 / 发布 / 画像，四组 + 常驻保存条） ──
+          tab === 'config' && (() => {
+            const field = (label, key, control, hint) => h('div', { className: 'hs-cfg-field' }, [
+              h('div', { className: 'hs-cfg-field-label' }, [label, key ? h('span', { className: 'hs-cfg-key' }, key) : null]),
+              control,
+              hint ? h('div', { className: 'hs-form-hint' }, hint) : null
+            ]);
 
-            // 2. 打分参数 Card
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, '热点抓取与打分算法'),
-                  h('div', { className: 'hs-card-subtitle' }, '根据跨源共现、新鲜度半衰期和聚类阈值过滤噪点')
-                ])
-              ]),
-              h('div', { className: 'hs-form-grid' }, [
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '推荐候选上限 (limit)'),
-                  h('input', {
+            const numberField = (label, key, value, onChange, unit, hint, extra) =>
+              field(
+                label,
+                key,
+                h('div', { className: 'hs-cfg-input-row' }, [
+                  h('input', Object.assign({
                     className: 'hs-input',
                     type: 'number',
-                    value: rankLimit,
-                    onChange: (e) => setRankLimit(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '单日推荐候选数量上限（默认 15）')
+                    style: { flex: 1, minWidth: 0 },
+                    value,
+                    onChange: (e) => onChange(e.target.value)
+                  }, extra || {})),
+                  unit ? h('span', { className: 'hs-cfg-unit' }, unit) : null
                 ]),
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '采集回溯时间窗 (sinceHours)'),
-                  h('input', {
-                    className: 'hs-input',
-                    type: 'number',
-                    value: rankSinceHours,
-                    onChange: (e) => setRankSinceHours(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '只采集过去多少小时内的新闻（默认 36h）')
-                ]),
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '新鲜度半衰期 (halfLifeHours)'),
-                  h('input', {
-                    className: 'hs-input',
-                    type: 'number',
-                    value: rankHalfLifeHours,
-                    onChange: (e) => setRankHalfLifeHours(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '指数衰减半衰期（默认 24h）')
-                ]),
-                h('div', { className: 'hs-form-item' }, [
-                  h('label', { className: 'hs-form-label' }, '并查集去重阈值 (clusterThreshold)'),
-                  h('input', {
-                    className: 'hs-input',
-                    type: 'number',
-                    step: '0.05',
-                    value: rankClusterThreshold,
-                    onChange: (e) => setRankClusterThreshold(e.target.value)
-                  }),
-                  h('div', { className: 'hs-form-hint' }, '相似度门槛（0.3~0.95，默认 0.6）')
-                ])
-              ])
-            ]),
+                hint
+              );
 
-            // 3. 发布合规与安全
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, '发布安全与外链合规'),
-                  h('div', { className: 'hs-card-subtitle' }, '防止过频发布或夹带未经授权的不可信外部链接')
-                ])
+            const section = (title, note, children) => h('div', { className: 'hs-cfg-section', key: `sec-${title}` }, [
+              h('div', { className: 'hs-cfg-section-head' }, [
+                h('div', { className: 'hs-cfg-section-title' }, title),
+                note ? h('div', { className: 'hs-cfg-section-note' }, note) : null
               ]),
-              h('div', { style: { marginBottom: 14 } }, [
-                h('label', { className: 'hs-form-label' }, '每日最大发布篇数 (maxPerDay)'),
-                h('input', {
-                  className: 'hs-input',
-                  type: 'number',
-                  style: { width: 140 },
-                  value: publishMaxPerDay,
-                  onChange: (e) => setPublishMaxPerDay(e.target.value)
-                }),
-                h('div', { className: 'hs-form-hint' }, '限制每天从草稿推到正式发布的上限')
-              ]),
-              h('div', { className: 'hs-form-item' }, [
-                h('label', { className: 'hs-form-label' }, '允许的外链域名白名单 (allowedHosts)'),
-                h('textarea', {
-                  className: 'hs-textarea',
-                  style: { height: 80, width: '100%' },
-                  placeholder: 'github.com\nswift.org\nnews.ycombinator.com\nsopilot.net',
-                  value: publishAllowedHosts,
-                  onChange: (e) => setPublishAllowedHosts(e.target.value)
-                }),
-                h('div', { className: 'hs-form-hint' }, '每行一个域名或以逗号分隔，文章发布前自动化检查')
-              ])
-            ]),
+              ...children
+            ]);
 
-            // 4. 站点部署 Card
-            h('div', { className: 'hs-card', key: 'deploy-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, '站点部署'),
-                  h('div', { className: 'hs-card-subtitle' }, '先构建、再执行部署脚本，两步都在博客根目录下跑；构建失败即停，不会带着旧产物上线')
-                ]),
-                h('span', {
-                  style: {
-                    fontSize: 11,
-                    padding: '3px 9px',
-                    borderRadius: 999,
-                    whiteSpace: 'nowrap',
-                    background: deployConfigured ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.15)',
-                    color: deployConfigured ? '#34d399' : '#94a3b8'
-                  }
-                }, deployConfigured ? '已绑定' : '未绑定')
-              ]),
-              (deployDetected.script || deployDetected.build) && h('div', {
-                style: {
-                  display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
-                  padding: '10px 12px', marginBottom: 12, borderRadius: 8,
-                  background: 'rgba(59, 130, 246, 0.10)',
-                  border: '1px solid rgba(59, 130, 246, 0.28)',
-                  fontSize: 12
-                }
-              }, [
-                h('span', { style: { color: '#93c5fd' } }, '在博客根目录探测到：'),
-                deployDetected.build && h('code', { style: { color: '#e2e8f0' } }, `build = ${deployDetected.build}`),
-                deployDetected.script && h('code', { style: { color: '#e2e8f0' } }, `deploy = ${deployDetected.script}`),
-                h('button', {
-                  className: 'hs-btn',
-                  type: 'button',
-                  onClick: () => {
-                    if (deployDetected.build) setDeployBuild(deployDetected.build);
-                    if (deployDetected.script) setDeployScript(deployDetected.script);
-                    showToast('已填入探测结果，点「保存策略与路径配置」后生效');
-                  }
-                }, '使用探测结果')
-              ]),
-              h('div', { className: 'hs-form-item' }, [
-                h('label', { className: 'hs-form-label' }, '构建命令 (deploy.build · 可选)'),
-                h('input', {
-                  className: 'hs-input',
-                  style: { width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
-                  placeholder: 'yarn build',
-                  value: deployBuild,
-                  onChange: (e) => setDeployBuild(e.target.value)
-                }),
-                h('div', { className: 'hs-form-hint' }, '留空则跳过构建，直接执行部署脚本。CLI 的 hotspot publish 也读这一项。')
-              ]),
-              h('div', { className: 'hs-form-item' }, [
-                h('label', { className: 'hs-form-label' }, '部署脚本 (deploy.script · 必填)'),
-                h('textarea', {
-                  className: 'hs-textarea',
-                  style: { height: 86, width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
-                  placeholder: './deploy.sh --no-git --skip-build',
-                  value: deployScript,
-                  onChange: (e) => setDeployScript(e.target.value)
-                }),
-                h('div', { className: 'hs-form-hint' }, '用你的登录 shell（zsh/bash -l）在博客根目录执行，PATH 与终端一致，nvm/yarn/ssh-agent 都能找到；单步最长 10 分钟，输出保留末尾 64KB。留空保存即解绑。')
-              ]),
-              h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } }, [
-                h('button', {
-                  className: 'hs-btn',
-                  type: 'button',
-                  disabled: deploying || !deployConfigured || !isBlogConfigured,
-                  title: !deployConfigured
-                    ? '先在下方填写并保存部署脚本'
-                    : (!isBlogConfigured ? '先在「博客仓库与文档目录」绑定博客根目录' : '用已保存的配置立即部署'),
-                  onClick: handleDeploy
-                }, deploying ? '部署中...' : '立即部署'),
-                h('span', { className: 'hs-form-hint', style: { marginTop: 0 } },
-                  deployConfigured
-                    ? `已保存：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
-                    : '尚未绑定部署脚本'),
-                configFilePath && h('span', {
-                  className: 'hs-form-hint',
-                  style: { marginTop: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' }
-                }, `配置文件：${configFilePath}`),
-                (deployScript.trim() !== savedDeployScript || deployBuild.trim() !== savedDeployBuild)
-                  && h('span', { style: { fontSize: 11, color: '#fbbf24' } }, '（表单已改动，保存后生效）')
-              ]),
-              lastDeploy && h('div', { style: { marginTop: 12 } }, [
-                h('div', { className: 'hs-form-label' }, '上次部署'),
-                h('div', {
-                  style: {
-                    display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', fontSize: 12,
-                    color: lastDeploy.success ? '#34d399' : '#f87171'
-                  }
-                }, [
-                  h('span', null, lastDeploy.success
-                    ? '✓ 成功'
-                    : `✗ 失败${lastDeploy.failedStep ? `（${lastDeploy.failedStep === 'build' ? '构建' : '部署'}阶段）` : ''}`),
-                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
-                    `${new Date(lastDeploy.at).toLocaleString()} · ${(Number(lastDeploy.durationMs || 0) / 1000).toFixed(1)}s`),
-                  h('button', {
-                    className: 'hs-btn ghost',
-                    type: 'button',
-                    style: { padding: '2px 8px', fontSize: 11 },
-                    onClick: () => setDeployResult(lastDeploy)
-                  }, '查看详情')
-                ])
-              ])
-            ]),
+            const stat = (label, value) => h('div', { className: 'hs-cfg-stat' }, [
+              h('div', { className: 'hs-cfg-stat-label' }, label),
+              h('div', { className: 'hs-cfg-stat-value' }, value)
+            ]);
 
-            // 4.5 模型与写作方式 Card
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
+            const drafts = state?.drafts || [];
+            const pendingDrafts = drafts.filter(d => d.pending).length;
+            const repoName = (state?.blog?.projectRoot || '').split('/').filter(Boolean).pop() || '未绑定';
+
+            return h('div', { key: 'config-panel' }, [
+              h('div', { className: 'hs-cfg-head' }, [
                 h('div', null, [
-                  h('div', { className: 'hs-card-title' }, '模型与写作方式'),
-                  h('div', { className: 'hs-card-subtitle' }, '写正文走联网子代理，润色只走一次 completion；两边可以各用一个模型')
+                  h('div', { className: 'hs-cfg-title' }, '设置'),
+                  h('div', { className: 'hs-cfg-subtitle' }, '连接博客仓库、调整排序与合规参数、绑定部署命令、选择写作模型 —— 保存后服务端热生效')
                 ]),
-                h('span', { className: 'hs-tag-pill' }, modelCatalog ? `${(modelCatalog.providers || []).length} 个 provider` : '未接入模型目录')
+                isBlogConfigured
+                  ? h('span', { className: 'hs-cfg-state ok' }, [h('span', { className: 'hs-cfg-dot' }), '已连接'])
+                  : h('span', { className: 'hs-cfg-state warn' }, [h('span', { className: 'hs-cfg-dot' }), '未绑定仓库'])
               ]),
-              (() => {
-                const providers = modelCatalog?.providers || [];
-                const routes = modelCatalog?.routes || {};
-                if (!modelForm) {
-                  return h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
-                    modelCatalog === null ? '正在读取模型目录…' : '当前环境没有可用的模型目录（宿主未接入 llm 服务）');
-                }
-                const SEP = '\u0000';
-                const pairOf = (pair) => (pair && pair.provider && pair.model ? `${pair.provider}${SEP}${pair.model}` : '');
-                const setPair = (key, raw) => {
-                  const [provider, model] = raw ? raw.split(SEP) : ['', ''];
-                  setModelForm(prev => (prev ? { ...prev, [key]: { provider, model } } : prev));
-                };
-                const optionsFor = (allowFollow) => {
-                  const opts = [];
-                  opts.push(h('option', {
-                    key: '__none',
-                    value: ''
-                  }, allowFollow ? '跟随默认' : '未选择（使用宿主默认）'));
-                  for (const provider of providers) {
-                    for (const model of (provider.models || [])) {
-                      opts.push(h('option', {
-                        key: `${provider.provider}${SEP}${model.id}`,
-                        value: `${provider.provider}${SEP}${model.id}`
-                      }, `${provider.label || provider.provider} · ${model.name || model.id}`));
-                    }
-                  }
-                  return opts;
-                };
-                const row = (key, label, hint, allowFollow) => h('div', { key, style: { marginBottom: 12 } }, [
-                  h('label', { className: 'hs-form-label' }, label),
-                  allowFollow && hint && h('div', {
-                    style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginBottom: 4 }
-                  }, hint),
-                  h('select', {
-                    className: 'hs-input',
-                    value: pairOf(modelForm[key]),
-                    onChange: (e) => setPair(key, e.target.value)
-                  }, optionsFor(allowFollow))
-                ]);
-                const effective = (purpose) => {
-                  const route = routes[purpose];
-                  if (route) return `${route.provider} · ${route.model}`;
-                  return '未解析到可用模型';
-                };
-                return h('div', null, [
-                  row('global', '默认模型', '', false),
-                  row('writer', '写正文用模型', '默认跟随上面；子代理 provider 不支持覆盖时会直接报错', true),
-                  row('polish', '润色用模型', '润色是短任务，可以用更便宜更快的模型', true),
-                  h('div', { style: { marginBottom: 12 } }, [
-                    h('label', { className: 'hs-form-label' }, '写作方式'),
+
+              h('div', { className: 'hs-cfg-overview' }, [
+                stat('博客仓库', h('span', { className: 'path', title: state?.blog?.projectRoot || '' }, repoName)),
+                stat('已发布文章', [
+                  h('span', null, `${state?.profile?.articleCount || 0} 篇`),
+                  h('span', { className: 'weak' }, `${(state?.profile?.tags || []).length} 个标签`)
+                ]),
+                stat('草稿', [
+                  h('span', null, `${drafts.length} 篇`),
+                  h('span', { className: 'weak' }, pendingDrafts > 0 ? `${pendingDrafts} 篇待写` : '都已成稿')
+                ]),
+                stat('生效订阅源', [
+                  h('span', null, `${(state?.activeSources || []).length} 个`),
+                  h('span', { className: 'weak' }, state?.sourcesMode === 'builtin' ? '内置默认' : '配置源')
+                ]),
+                stat('上次部署', lastDeploy
+                  ? h('span', {
+                      style: { color: lastDeploy.success ? '#34d399' : '#f87171', fontSize: 12, fontWeight: 600 }
+                    }, [
+                      `${lastDeploy.success ? '✓' : '✗'} ${(Number(lastDeploy.durationMs || 0) / 1000).toFixed(1)}s`,
+                      h('span', { className: 'weak' }, new Date(lastDeploy.at).toLocaleDateString())
+                    ])
+                  : h('span', { className: 'weak' }, '还没有记录'))
+              ]),
+
+              section('连接', '换仓库会重新扫描画像，草稿与文章都跟着新根目录走', [
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '博客仓库与文档目录'),
+                      h('div', { className: 'hs-card-subtitle' }, 'VitePress 项目根目录 · 文章与草稿的落盘位置')
+                    ]),
+                    isBlogConfigured
+                      ? h('span', { className: 'hs-cfg-state ok' }, [h('span', { className: 'hs-cfg-dot' }), '已连接'])
+                      : h('span', { className: 'hs-cfg-state warn' }, [h('span', { className: 'hs-cfg-dot' }), '未绑定'])
+                  ]),
+                  field(
+                    '项目根目录',
+                    'projectRoot',
                     h('div', { style: { display: 'flex', gap: 8 } }, [
+                      h('input', {
+                        className: 'hs-input hs-cfg-mono',
+                        style: { flex: 1, minWidth: 0 },
+                        placeholder: '/Users/you/Code/my-blog',
+                        value: blogProjectRoot,
+                        onChange: (e) => setBlogProjectRoot(e.target.value)
+                      }),
                       h('button', {
-                        className: `hs-btn sm ${modelForm.mode === 'agent' ? 'primary' : ''}`,
-                        onClick: () => setModelForm(prev => ({ ...prev, mode: 'agent' }))
-                      }, '联网子代理（质量最好，较慢）'),
-                      h('button', {
-                        className: `hs-btn sm ${modelForm.mode === 'direct' ? 'primary' : ''}`,
-                        onClick: () => setModelForm(prev => ({ ...prev, mode: 'direct' }))
-                      }, '只用手头证据（快，不联网）')
+                        className: 'hs-btn',
+                        type: 'button',
+                        disabled: pickingDir,
+                        title: '调起系统原生文件夹选择器',
+                        onClick: async () => {
+                          const dir = await handlePickDirectory();
+                          if (dir) setBlogProjectRoot(dir);
+                        }
+                      }, [h('span', { style: { marginRight: 4 } }, '📁'), pickingDir ? '选择中...' : '选择'])
+                    ]),
+                    state?.blog?.projectRoot ? `当前生效：${state.blog.projectRoot}` : '尚未绑定，草稿与发布都不可用'
+                  ),
+                  h('div', { className: 'hs-form-grid', style: { marginTop: 14 } }, [
+                    field('文章目录', 'articleDir',
+                      h('input', {
+                        className: 'hs-input hs-cfg-mono',
+                        value: blogArticleDir,
+                        onChange: (e) => setBlogArticleDir(e.target.value)
+                      }),
+                      '转正后的文章落在 <articleDir>/<slug>/'),
+                    field('草稿目录', 'draftDir',
+                      h('input', {
+                        className: 'hs-input hs-cfg-mono',
+                        value: blogDraftDir,
+                        onChange: (e) => setBlogDraftDir(e.target.value)
+                      }),
+                      '草稿带 sitemap: false，不进站点地图'),
+                    field('数据缓存目录', 'digestDir',
+                      h('input', {
+                        className: 'hs-input hs-cfg-mono',
+                        value: blogDigestDir,
+                        onChange: (e) => setBlogDigestDir(e.target.value)
+                      }),
+                      'digest / raw / 任务状态落在这里')
+                  ]),
+                  configFilePath && h('div', {
+                    className: 'hs-form-hint',
+                    style: { marginTop: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' }
+                  }, `配置文件：${configFilePath}`)
+                ])
+              ]),
+
+              section('生成', '抓多少、留多新、判多重 —— 只影响候选排序与合规闸门', [
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '抓取与打分'),
+                      h('div', { className: 'hs-card-subtitle' }, '确定性公式：3.0×跨源数 + 1.5×新鲜度 + 2.0×关键词 − 5.0×黑名单')
                     ])
                   ]),
-                  h('div', {
-                    style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginBottom: 12, lineHeight: 1.7 }
-                  }, [
-                    h('div', null, `写正文实际会问：${effective('writer')}`),
-                    h('div', null, `润色实际会问：${effective('polish')}`)
+                  h('div', { className: 'hs-form-grid' }, [
+                    numberField('候选上限', 'limit', rankLimit, setRankLimit, '条 / 天', '单日推荐候选数量（默认 15）'),
+                    numberField('回溯时间窗', 'sinceHours', rankSinceHours, setRankSinceHours, '小时', '只采集这段时间内发布的内容（默认 36）'),
+                    numberField('新鲜度半衰期', 'halfLifeHours', rankHalfLifeHours, setRankHalfLifeHours, '小时', '越过半衰期得分减半（默认 24）'),
+                    numberField('聚类阈值', 'clusterThreshold', rankClusterThreshold, setRankClusterThreshold, '0.3–0.95', '标题相似度门槛，越高合并越保守（默认 0.6）', { step: '0.05' })
+                  ])
+                ]),
+
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '发布合规'),
+                      h('div', { className: 'hs-card-subtitle' }, '过频与不可信外链都在转正前被三道闸门拦下')
+                    ])
                   ]),
-                  h('button', {
-                    className: 'hs-btn primary',
-                    disabled: savingModels,
-                    onClick: handleSaveModels
-                  }, savingModels ? '正在保存…' : '保存模型选择')
-                ]);
-              })()
-            ]),
+                  h('div', { className: 'hs-form-grid' }, [
+                    numberField('每日发布上限', 'maxPerDay', publishMaxPerDay, setPublishMaxPerDay, '篇 / 天', '只统计从草稿转正的篇数（默认 3）'),
+                    field('外链白名单', 'allowedHosts',
+                      h('textarea', {
+                        className: 'hs-textarea',
+                        style: { height: 76, width: '100%' },
+                        placeholder: 'github.com\nswift.org\nnews.ycombinator.com',
+                        value: publishAllowedHosts,
+                        onChange: (e) => setPublishAllowedHosts(e.target.value)
+                      }),
+                      '每行一个域名，也可用逗号分隔；发布前逐条比对')
+                  ])
+                ]),
 
-            // 5. 当前博客画像索引 Card
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', { className: 'hs-card-title' }, '当前博客画像索引'),
-                h('div', { className: 'hs-card-subtitle' }, '自动学习已发布博文的专栏与受众偏好')
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '模型与写作方式'),
+                      h('div', { className: 'hs-card-subtitle' }, '写正文走联网子代理，润色只走一次 completion；两边可以各用一个模型')
+                    ]),
+                    h('span', { className: 'hs-cfg-state idle' },
+                      modelCatalog ? `${(modelCatalog.providers || []).length} 个 provider` : '未接入模型目录')
+                  ]),
+                  (() => {
+                    const providers = modelCatalog?.providers || [];
+                    const routes = modelCatalog?.routes || {};
+                    if (!modelForm) {
+                      return h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                        modelCatalog === null ? '正在读取模型目录…' : '当前环境没有可用的模型目录（宿主未接入 llm 服务）');
+                    }
+                    const SEP = '\u0000';
+                    const pairOf = (pair) => (pair && pair.provider && pair.model ? `${pair.provider}${SEP}${pair.model}` : '');
+                    const setPair = (key, raw) => {
+                      const [provider, model] = raw ? raw.split(SEP) : ['', ''];
+                      setModelForm(prev => (prev ? { ...prev, [key]: { provider, model } } : prev));
+                    };
+                    const optionsFor = (allowFollow) => {
+                      const opts = [];
+                      opts.push(h('option', { key: '__none', value: '' }, allowFollow ? '跟随默认' : '未选择（使用宿主默认）'));
+                      for (const provider of providers) {
+                        for (const model of (provider.models || [])) {
+                          opts.push(h('option', {
+                            key: `${provider.provider}${SEP}${model.id}`,
+                            value: `${provider.provider}${SEP}${model.id}`
+                          }, `${provider.label || provider.provider} · ${model.name || model.id}`));
+                        }
+                      }
+                      return opts;
+                    };
+                    const modelRow = (key, label, allowFollow) => h('div', { className: 'hs-cfg-model-row', key }, [
+                      h('div', { className: 'hs-cfg-field-label', style: { margin: 0 } }, label),
+                      h('select', {
+                        className: 'hs-input',
+                        value: pairOf(modelForm[key]),
+                        onChange: (e) => setPair(key, e.target.value)
+                      }, optionsFor(allowFollow))
+                    ]);
+                    const effective = (purpose) => {
+                      const route = routes[purpose];
+                      return route ? `${route.provider} · ${route.model}` : '未解析到可用模型';
+                    };
+                    const modeButton = (mode, label) => h('button', {
+                      type: 'button',
+                      className: modelForm.mode === mode ? 'on' : '',
+                      onClick: () => setModelForm(prev => ({ ...prev, mode }))
+                    }, label);
+                    return h('div', null, [
+                      modelRow('global', '默认模型', false),
+                      modelRow('writer', '写正文', true),
+                      modelRow('polish', '润色', true),
+                      h('div', { className: 'hs-cfg-model-row', style: { marginTop: 14, alignItems: 'start' } }, [
+                        h('div', { className: 'hs-cfg-field-label', style: { margin: '6px 0 0' } }, '写作方式'),
+                        h('div', null, [
+                          h('div', { className: 'hs-cfg-segmented' }, [
+                            modeButton('agent', '联网子代理'),
+                            modeButton('direct', '只用手头证据')
+                          ]),
+                          h('div', { className: 'hs-form-hint' },
+                            modelForm.mode === 'direct'
+                              ? '一次 completion，不联网，快；只能把已有材料写顺'
+                              : '子代理自带搜索与抓取，5 秒到几分钟；能读到一手公告与多家报道')
+                        ])
+                      ]),
+                      h('div', { className: 'hs-cfg-effective' }, [
+                        h('div', null, ['写正文实际会问 ', h('code', null, effective('writer'))]),
+                        h('div', null, ['润色实际会问 ', h('code', null, effective('polish'))])
+                      ]),
+                      h('div', { style: { marginTop: 14, display: 'flex', gap: 10, alignItems: 'center' } }, [
+                        h('button', {
+                          className: 'hs-btn primary',
+                          disabled: savingModels,
+                          onClick: handleSaveModels
+                        }, savingModels ? '正在保存…' : '保存模型选择'),
+                        h('span', { className: 'hs-form-hint', style: { marginTop: 0 } }, '写正文与润色各自读一份，改动只影响下一次生成')
+                      ])
+                    ]);
+                  })()
+                ])
               ]),
-              h('div', { style: { display: 'flex', gap: 20, marginBottom: 12, fontSize: 13 } }, [
-                h('span', null, `探测到已发布文章：${state?.profile?.articleCount || 0} 篇`),
-                h('span', null, `草稿总数：${state?.drafts?.length || 0} 篇`)
-              ]),
-              (state?.profile?.tags || []).length > 0 && h('div', { style: { marginBottom: 10 } }, [
-                h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginBottom: 6 } }, '已形成标签体系 (Tags):'),
-                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-                  state.profile.tags.map(t => h('span', { key: t, className: 'hs-tag-pill' }, t))
-                )
-              ]),
-              (state?.profile?.keywords || []).length > 0 && h('div', null, [
-                h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginBottom: 6 } }, '核心关键词 (Keywords):'),
-                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-                  state.profile.keywords.map(k => h('span', { key: k, className: 'hs-tag-pill ai' }, k))
-                )
-              ])
-            ]),
 
-            // 6. 底部操作按钮栏
-            h('div', {
-              style: {
-                display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                paddingTop: 8,
-                paddingBottom: 24
-              }
-            }, [
-              h('button', {
-                className: 'hs-btn primary',
-                disabled: savingConfig,
-                onClick: handleSaveConfig
-              }, savingConfig ? '正在保存...' : '保存策略与路径配置'),
-              h('button', {
-                className: 'hs-btn',
-                onClick: () => {
-                  syncConfigForm(state);
-                  showToast('已重置表单为当前配置');
-                }
-              }, '重置更改'),
-              h('button', {
-                className: 'hs-btn',
-                onClick: () => {
-                  loadState();
-                  showToast('已重新探测博客数据');
-                }
-              }, '重新探测博客数据')
-            ])
-          ])
+              section('发布', 'build → script 顺序执行，任一步失败即停', [
+                h('div', { className: 'hs-card', key: 'deploy-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '站点部署'),
+                      h('div', { className: 'hs-card-subtitle' }, '两条命令都用你的登录 shell 跑，PATH 与终端一致')
+                    ]),
+                    deployConfigured
+                      ? h('span', { className: 'hs-cfg-state ok' }, [h('span', { className: 'hs-cfg-dot' }), '已绑定'])
+                      : h('span', { className: 'hs-cfg-state idle' }, [h('span', { className: 'hs-cfg-dot' }), '未绑定'])
+                  ]),
+                  h('div', { className: 'hs-form-grid' }, [
+                    field('构建命令', 'deploy.build',
+                      h('input', {
+                        className: 'hs-input hs-cfg-mono',
+                        placeholder: 'yarn build',
+                        value: deployBuild,
+                        onChange: (e) => setDeployBuild(e.target.value)
+                      }),
+                      '留空跳过构建（deploy.sh 自带构建时适合留空）'),
+                    field('部署脚本', 'deploy.script',
+                      h('input', {
+                        className: 'hs-input hs-cfg-mono',
+                        placeholder: './deploy.sh --no-git --skip-build',
+                        value: deployScript,
+                        onChange: (e) => setDeployScript(e.target.value)
+                      }),
+                      '必填；面板「部署站点」与 publish 读的都是它，留空保存即解绑')
+                  ]),
+                  (deployDetected.script || deployDetected.build) && h('div', {
+                    style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12, fontSize: 11.5 }
+                  }, [
+                    h('span', { style: { color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, '探测到'),
+                    deployDetected.build && h('code', { className: 'hs-cfg-unit' }, deployDetected.build),
+                    deployDetected.script && h('code', { className: 'hs-cfg-unit' }, deployDetected.script),
+                    h('button', {
+                      className: 'hs-btn ghost',
+                      type: 'button',
+                      style: { padding: '2px 8px', fontSize: 11 },
+                      onClick: () => {
+                        if (deployDetected.build) setDeployBuild(deployDetected.build);
+                        if (deployDetected.script) setDeployScript(deployDetected.script);
+                        showToast('已填入探测结果，保存后生效');
+                      }
+                    }, '使用探测结果')
+                  ]),
+                  h('div', { className: 'hs-cfg-timeline' }, lastDeploy
+                    ? [
+                        h('span', {
+                          style: { color: lastDeploy.success ? '#34d399' : '#f87171', fontWeight: 600 }
+                        }, lastDeploy.success
+                          ? '✓ 上次部署成功'
+                          : `✗ 上次失败${lastDeploy.failedStep ? `（${lastDeploy.failedStep === 'build' ? '构建' : '部署'}阶段）` : ''}`),
+                        h('span', null, `${new Date(lastDeploy.at).toLocaleString()} · ${(Number(lastDeploy.durationMs || 0) / 1000).toFixed(1)}s`),
+                        h('div', { className: 'hs-cfg-spacer' }),
+                        h('button', {
+                          className: 'hs-btn ghost',
+                          type: 'button',
+                          style: { padding: '2px 8px', fontSize: 11 },
+                          onClick: () => setDeployResult(lastDeploy)
+                        }, '查看输出')
+                      ]
+                    : [h('span', null, '还没有部署记录；绑定脚本后点右上角「部署站点」跑一次')]),
+                  h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
+                    h('button', {
+                      className: 'hs-btn',
+                      type: 'button',
+                      disabled: deploying || !deployConfigured || !isBlogConfigured,
+                      title: !deployConfigured
+                        ? '先填写并保存部署脚本'
+                        : (!isBlogConfigured ? '先绑定博客根目录' : '用已保存的配置立即部署'),
+                      onClick: handleDeploy
+                    }, deploying ? '部署中...' : '立即部署'),
+                    h('span', { className: 'hs-form-hint', style: { marginTop: 0 } },
+                      deployConfigured
+                        ? `已保存：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
+                        : '尚未绑定部署脚本'),
+                    (deployScript.trim() !== savedDeployScript || deployBuild.trim() !== savedDeployBuild)
+                      && h('span', { style: { fontSize: 11, color: '#fbbf24' } }, '（表单已改动，保存后生效）')
+                  ])
+                ])
+              ]),
+
+              section('画像', '从存量文章归纳，只读；决定候选的 tag 与关键词加权', [
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '博客画像索引'),
+                      h('div', { className: 'hs-card-subtitle' },
+                        `${state?.profile?.articleCount || 0} 篇文章 → ${(state?.profile?.tags || []).length} 个标签 · ${(state?.profile?.keywords || []).length} 个关键词`)
+                    ]),
+                    h('button', {
+                      className: 'hs-btn ghost',
+                      type: 'button',
+                      style: { padding: '2px 8px', fontSize: 11 },
+                      onClick: () => {
+                        loadState();
+                        showToast('已重新探测博客数据');
+                      }
+                    }, '重新探测')
+                  ]),
+                  (state?.profile?.tags || []).length > 0 && h('div', { style: { marginBottom: 10 } }, [
+                    h('div', { className: 'hs-form-hint', style: { marginTop: 0, marginBottom: 6 } }, '标签体系'),
+                    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                      state.profile.tags.map(t => h('span', { key: t, className: 'hs-tag-pill' }, t))
+                    )
+                  ]),
+                  (state?.profile?.keywords || []).length > 0 && h('div', null, [
+                    h('div', { className: 'hs-form-hint', style: { marginTop: 0, marginBottom: 6 } }, '核心关键词'),
+                    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                      state.profile.keywords.map(k => h('span', { key: k, className: 'hs-tag-pill ai' }, k))
+                    )
+                  ]),
+                  (!state?.profile?.tags || state.profile.tags.length === 0) && h('div', {
+                    style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' }
+                  }, '还没有归纳出画像：绑定仓库或先写几篇带 tags 的文章')
+                ])
+              ]),
+
+            ]);
+          })(),
+
         ]),
 
         // ── 站点部署结果 Modal ──
@@ -4058,6 +4258,33 @@ window.__ModuleLoader__.load({
             ])
           ])
         ]),
+
+        // ── 设置页底栏：在滚动容器之外，始终贴住面板底部 ──
+        tab === 'config' && (() => {
+          const dirty = configDirtyCount();
+          return h('footer', { className: 'hs-cfg-savebar', key: 'config-savebar' }, [
+            h('div', { className: 'hs-cfg-savebar-inner' }, [
+              h('div', { className: `hs-cfg-dirty ${dirty === 0 ? 'clean' : ''}` }, [
+                h('span', { className: 'hs-cfg-dot' }),
+                dirty === 0 ? '没有未保存的改动' : `${dirty} 项未保存`
+              ]),
+              h('div', { className: 'hs-cfg-spacer' }),
+              h('button', {
+                className: 'hs-btn',
+                disabled: dirty === 0,
+                onClick: () => {
+                  syncConfigForm(state);
+                  showToast('已重置表单为当前配置');
+                }
+              }, '重置更改'),
+              h('button', {
+                className: 'hs-btn primary',
+                disabled: savingConfig,
+                onClick: handleSaveConfig
+              }, savingConfig ? '正在保存...' : '保存设置')
+            ])
+          ]);
+        })(),
 
         // ── 生成草稿 Modal：定标题与目录名（目录名是永久 URL，必须先看一眼） ──
         scaffoldModalItem && h('div', { className: 'hs-modal-mask', key: 'scaffold-modal' }, [
