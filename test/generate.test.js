@@ -9,6 +9,7 @@ import { resolveWriterSelection } from '../src/core/writer-route.js';
 import {
   createPolisher,
   createWriter,
+  describeAgentRegistry,
   pickParentAgent,
   pickProvider,
   readWriterConfig,
@@ -469,4 +470,33 @@ test('取消信号：外部 abort 会传成子代理的 signal，真的能中断
   });
   await write({ slug: 'demo-post', store, target, projectRoot: root, signal: controller.signal });
   assert.equal(seen[0].aborted, true, '外部取消要传到子代理的 signal 上');
+});
+
+test('父代理解析：必须绑定 this 调用 —— dsh-agent 的 roots() 内部读 this.store', () => {
+  // 复刻宿主的写法：方法内部访问 this.store，一旦被取下当普通函数调用就抛
+  class Registry {
+    constructor(agents) {
+      this.store = new Map(agents.map((agent) => [agent.id, agent]));
+    }
+    currentInitiator() {
+      throw new Error('no initiator');
+    }
+    roots() {
+      return [...this.store.values()];
+    }
+    list() {
+      return [...this.store.values()];
+    }
+  }
+
+  const agent = { id: 'session-1', status: 'idle' };
+  const registry = new Registry([agent]);
+  assert.equal(pickParentAgent(registry), agent, '以前这里会抛 TypeError 被吞成「没有活代理」');
+
+  const running = [{ id: 'a', status: 'idle' }, { id: 'b', status: 'running' }];
+  assert.equal(pickParentAgent(new Registry(running)), running[1], '优先 running 的 root');
+
+  assert.equal(pickParentAgent(new Registry([])), null);
+  assert.match(describeAgentRegistry(registry), /roots=1 · list=1/);
+  assert.match(describeAgentRegistry(null), /没有提供 agents 服务/);
 });
