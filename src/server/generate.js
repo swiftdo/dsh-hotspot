@@ -11,6 +11,8 @@ import {
   resolveRoute,
 } from '../core/writer-route.js';
 import { slugify } from '../core/normalize.js';
+import { buildCandidateBrief } from '../core/brief.js';
+import { resolveCandidate } from '../core/checks.js';
 import {
   MAX_POLISH_BODY_CHARS,
   buildPolishPrompt,
@@ -190,11 +192,31 @@ export function createWriter({
     if (!clean) throw new Error('缺少 slug');
     if (!target) throw new Error('还没有绑定博客项目根目录');
 
-    const digest = store && typeof store.loadDigest === 'function' ? await store.loadDigest('latest') : null;
-    const item =
-      (digest?.items ?? []).find((it) => slugify(it.title ?? '') === clean) ?? null;
-    const title = String(item?.title ?? clean);
-    const url = String(item?.sources?.[0]?.url ?? '');
+    // 定位候选：优先读草稿里记下的 candidate.id（scaffold / registerSlug 会写），
+    // 找不到再退回 slugHint / 标题。以前只用 slugify(标题) === slug 反查，中文标题
+    // 或自定义 slug 都会 miss —— 于是提示词里连「这是哪条热点」都没有。
+    const drafts = typeof target.listDrafts === 'function' ? await target.listDrafts() : [];
+    const draft = (Array.isArray(drafts) ? drafts : []).find((entry) => entry && entry.slug === clean) ?? null;
+    const draftTitle = String(draft?.title ?? '');
+
+    let supplements = { entries: [], candidate: null };
+    if (typeof target.readSupplements === 'function') {
+      try {
+        supplements = await target.readSupplements(clean);
+      } catch {
+        supplements = { entries: [], candidate: null };
+      }
+    }
+
+    const canResolve = store && typeof store.loadDigest === 'function';
+    const resolved = canResolve
+      ? await resolveCandidate({ store, slug: clean, title: draftTitle, meta: supplements?.candidate ?? null })
+      : { digest: null, candidate: null };
+    const item = resolved.candidate ?? null;
+    const raw = resolved.digest && typeof store.loadRaw === 'function' ? await store.loadRaw(resolved.digest.date) : [];
+    const brief = buildCandidateBrief(item ?? { title: draftTitle || clean }, raw);
+    const title = brief.title || draftTitle || clean;
+    const url = brief.url || brief.sources[0]?.url || '';
 
     const stored = await readWriterSelection(absDirOf(projectRoot));
     const selection = normalizeWriterSelection({
@@ -229,6 +251,7 @@ export function createWriter({
         title,
         url,
         sources: item?.sources ?? [],
+        brief,
         artifactPath: artifact,
       });
 
@@ -283,19 +306,12 @@ export function createWriter({
       if (!resolved) throw new Error('宿主没有可用的模型路由，请先在面板里选一个模型');
       route = resolved;
 
-      let supplements = [];
-      if (typeof target.readSupplements === 'function') {
-        try {
-          supplements = (await target.readSupplements(clean)).entries ?? [];
-        } catch {
-          supplements = [];
-        }
-      }
+      // 「只用手头证据」模式直接用素材包里的原文，不再是「只有标题 + 链接」
       const prompt = buildDirectPrompt({
         title,
         url,
-        sources: item?.sources ?? [],
-        supplements,
+        sources: brief.sources,
+        supplements: supplements?.entries ?? [],
       });
 
       const controller = new AbortController();
@@ -339,6 +355,9 @@ export function createWriter({
       slug: clean,
       file: written.file,
       title: written.title,
+      candidateId: brief.id,
+      briefChars: brief.chars,
+      briefSources: brief.withContent,
       bodyChars: [...body].length,
       sources: sources.length,
       registered: registered.length,

@@ -324,3 +324,38 @@ test('润色：草稿不存在时明确报错', async () => {
     /找不到草稿/,
   );
 });
+
+test('候选按 sources.json 的 id 定位：中文标题 + 自定义 slug 也能拿到摘要与一手源原文', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'hotspot-generate-'));
+  mkdirSync(path.join(root, 'docs'), { recursive: true });
+  const target = createVitePressTarget({ root });
+  await target.scaffold(CANDIDATE, { slug: 'zh-post', title: 'OpenAI 买下 Pierre 到底图什么' });
+
+  const store = {
+    async loadDigest() {
+      return { date: '2026-11-05', items: [CANDIDATE] };
+    },
+    async loadRecent() {
+      return [{ date: '2026-11-05', items: [CANDIDATE] }];
+    },
+    async loadRaw() {
+      return [{ url: 'https://openai.com/index/demo', content: 'OpenAI 宣布收购 Pierre，金额未披露。' }];
+    },
+  };
+
+  const artifact = path.join(root, '.hotspot', 'writer', 'zh-post.json');
+  const fake = fakeSubagents(artifact, { body: '## 事实\n\n收购已宣布。', sources: [] });
+  const write = createWriter({
+    getSubagents: () => fake.service,
+    getAgents: () => fakeAgents({ roots: [liveAgent] }),
+    digestDir: '.hotspot',
+  });
+
+  const value = await write({ slug: 'zh-post', store, target, projectRoot: root });
+  assert.equal(value.candidateId, 'h-20261105-01', '必须按 candidate.id 命中，而不是 slugify(英文标题)');
+  assert.ok(value.briefChars > 0, '一手源原文应当进入素材包');
+
+  const prompt = fake.calls[0].request.prompt[0].text;
+  assert.match(prompt, /摘要：演示用候选/, '摘要要进提示词');
+  assert.match(prompt, /金额未披露/, '一手源原文要进提示词');
+});
