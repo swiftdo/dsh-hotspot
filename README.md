@@ -608,11 +608,13 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 
 ## 管理界面
 
-插件启动后会在 DSH 的 web server 上挂一组路由，打开：
+插件启动后会在 DSH 的 web server 上挂一组路由。**管理功能在 DeepSeek Harness 侧栏的 dsh-hotspot 面板里**（候选、草稿箱、写正文/润色、设置页）。同一组路由下还留着一个独立的兼容页面：
 
 ```text
 <你的 DSH 地址>/hotspot/
 ```
+
+它只做快速查看（候选、订阅源、RSS 地址），页面顶部有醒目提示；写正文、转正、模型选择这些能力只在应用内面板里。保留它的理由有两条：书签与 shell 里的 `curl` 还能用，以及面板本身坏掉时能拿来对接口。
 
 四个页签：
 

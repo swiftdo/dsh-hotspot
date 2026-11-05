@@ -39,37 +39,55 @@ export { BUILTIN_SOURCES };
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
 
+/**
+ * 调起系统原生文件夹选择器。
+ *
+ * 返回 `{ path, code, message }`：以前失败一律 resolve(null)，面板于是表现成
+ * 「点了没反应」—— 分不清是用户点了取消，还是这台机器根本没有可用的选择器
+ * （Linux 没装 zenity、无头环境、Electron 沙箱禁掉 AppleScript）。
+ *
+ * @returns {Promise<{ path: string|null, code: string, message: string }>}
+ */
 export async function pickNativeDirectory() {
   const platform = process.platform;
-  return new Promise((resolve) => {
-    if (platform === 'darwin') {
-      const script = 'POSIX path of (choose folder with prompt "请选择博客项目根目录")';
-      execFile('osascript', ['-e', script], { timeout: 60000 }, (error, stdout) => {
-        if (error) return resolve(null);
-        const dir = (stdout || '').trim();
-        resolve(dir || null);
-      });
-    } else if (platform === 'win32') {
-      const psCmd =
-        '[System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = "请选择博客项目根目录"; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){ Write-Output $f.SelectedPath }';
-      execFile('powershell', ['-NoProfile', '-Command', psCmd], { timeout: 60000 }, (error, stdout) => {
-        if (error) return resolve(null);
-        const dir = (stdout || '').trim();
-        resolve(dir || null);
-      });
-    } else {
-      execFile(
-        'zenity',
-        ['--file-selection', '--directory', '--title=请选择博客项目根目录'],
-        { timeout: 60000 },
-        (error, stdout) => {
-          if (error) return resolve(null);
-          const dir = (stdout || '').trim();
-          resolve(dir || null);
+  const cancelled = { path: null, code: 'CANCELLED', message: '已取消选择' };
+
+  const run = (cmd, args, missingHint) =>
+    new Promise((resolve) => {
+      execFile(cmd, args, { timeout: 60000 }, (error, stdout) => {
+        if (!error) {
+          const picked = (stdout || '').trim();
+          return resolve(picked ? { path: picked, code: 'OK', message: '' } : cancelled);
         }
-      );
-    }
-  });
+        // 最常见的两种失败：命令不存在（没装 zenity / powershell）与用户取消
+        if (error.code === 'ENOENT') {
+          return resolve({ path: null, code: 'NO_PICKER', message: missingHint });
+        }
+        const message = String(error.message || '');
+        if (/cancel|osascript is not allowed|User canceled|-128/i.test(message)) {
+          return resolve(cancelled);
+        }
+        resolve({ path: null, code: 'PICKER_FAILED', message: `调起选择器失败：${message}` });
+      });
+    });
+
+  if (platform === 'darwin') {
+    return run(
+      'osascript',
+      ['-e', 'POSIX path of (choose folder with prompt "请选择博客项目根目录")'],
+      '这台 Mac 上无法调起系统选择器（AppleScript 被沙箱禁用），请手动输入路径',
+    );
+  }
+  if (platform === 'win32') {
+    const psCmd =
+      '[System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = "请选择博客项目根目录"; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){ Write-Output $f.SelectedPath }';
+    return run('powershell', ['-NoProfile', '-Command', psCmd], '没有可用的 PowerShell，请手动输入路径');
+  }
+  return run(
+    'zenity',
+    ['--file-selection', '--directory', '--title=请选择博客项目根目录'],
+    '当前环境没有图形文件选择器（未安装 zenity），请手动输入路径',
+  );
 }
 
 /**
@@ -753,13 +771,23 @@ export function createRoutes(deps) {
       handler: async (req, res) => {
         if (!guard(req, res, ['GET', 'POST'])) return;
         try {
-          let picked = null;
+          let outcome;
           if (typeof deps.pickDirectory === 'function') {
-            picked = await deps.pickDirectory();
+            // 宿主自己实现了选择器（桌面应用走原生对话框），取消就是 null
+            const picked = await deps.pickDirectory();
+            outcome = picked
+              ? { path: picked, code: 'OK', message: '' }
+              : { path: null, code: 'CANCELLED', message: '' };
           } else {
-            picked = await pickNativeDirectory();
+            outcome = await pickNativeDirectory();
           }
-          sendJson(res, 200, { ok: true, path: picked });
+          sendJson(res, 200, {
+            ok: true,
+            path: outcome.path || null,
+            code: outcome.code || (outcome.path ? 'OK' : 'CANCELLED'),
+            // 面板据此区分「用户取消」与「这台机器没有选择器」
+            message: outcome.message || '',
+          });
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
         }

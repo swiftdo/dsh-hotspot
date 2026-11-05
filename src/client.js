@@ -2123,6 +2123,10 @@ window.__ModuleLoader__.load({
           if (json.ok && json.path) {
             return json.path;
           }
+          // 区分「你点了取消」与「这台机器压根没有选择器」——后者以前静默成没反应
+          if (json.ok && json.message && json.code !== 'CANCELLED') {
+            showToast(json.message, true);
+          }
           return null;
         } catch (e) {
           console.warn('[dsh-hotspot] handlePickDirectory error:', e);
