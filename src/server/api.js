@@ -12,6 +12,7 @@ import { guard, readJson, sendHtml, sendJson } from './http.js';
 import {
   DEPLOY_TIMEOUT_MS,
   appendDeployHistory,
+  createDeployTracker,
   describeDeploy,
   readDeployHistory,
   runDeployPlan,
@@ -163,6 +164,8 @@ export function createRoutes(deps) {
   let currentTarget = deps.target;
   let currentRunScan = deps.runScan;
   let deployInProgress = false;
+  // 部署的实时快照：比单次请求活得久，所以关掉弹窗、刷新页面都还能读回来
+  const deployTracker = createDeployTracker();
 
   function configFileIn(root) {
     if (!root) return '';
@@ -1503,9 +1506,13 @@ export function createRoutes(deps) {
         }
 
         deployInProgress = true;
+        const plan = { build: deploy.build, script, timeoutMs: deploy.timeoutMs };
+        deployTracker.begin({ cwd: root, plan });
         try {
-          const plan = { build: deploy.build, script, timeoutMs: deploy.timeoutMs };
-          const value = await runDeployPlan(plan, root);
+          const value = await runDeployPlan(plan, root, {
+            onStep: (event) => deployTracker.step(event),
+            onChunk: (chunk) => deployTracker.chunk(chunk),
+          });
           const last = value.steps[value.steps.length - 1] ?? {};
           const failedLabel = value.failedStep === 'build' ? '构建' : '部署';
           const message = value.success
@@ -1533,6 +1540,7 @@ export function createRoutes(deps) {
             })),
           });
 
+          deployTracker.finish(value);
           sendJson(res, 200, {
             ok: true,
             success: value.success,
@@ -1548,9 +1556,22 @@ export function createRoutes(deps) {
               cwd: root,
             },
           });
+        } catch (error) {
+          // 执行器本身出错（不是脚本失败）：把实时快照收尾，别让面板永远停在「部署中」
+          deployTracker.finish({ success: false });
+          sendJson(res, 500, { ok: false, message: error.message, error: error.message });
         } finally {
           deployInProgress = false;
         }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/deploy/status`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET'])) return;
+        // 只读：正在跑就返回当前快照，否则返回上一次（没有就是 null）
+        sendJson(res, 200, { ok: true, value: deployTracker.snapshot() });
       },
     },
   ];

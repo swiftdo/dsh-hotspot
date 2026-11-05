@@ -410,6 +410,8 @@ git push origin HEAD
 - **没配也能开始**：面板会只读探测博客根目录（`deploy.sh` / `scripts/deploy.sh` / `bin/deploy.sh`，以及 `package.json` 的 `scripts.build` 搭配 `pnpm-lock.yaml` / `yarn.lock`），在配置卡片里给出建议值，点「使用探测结果」填入表单，保存即生效。探测本身不写盘、不冒充已绑定。
 - **留空即解绑**：`deploy.script` 为空时接口返回 `ERR_NO_DEPLOY_SCRIPT`；页头按钮此时只在探测到候选脚本时显示，点了会跳到配置页。
 - 单步超时 10 分钟，stdout/stderr 各保留末尾 64KB；结果弹窗按步骤分块展示命令、退出码、耗时与输出，失败时标出是**构建**还是**部署**阶段。
+- **部署过程中能看见日志**：点按钮立刻弹窗，按步骤分块、块内 stdout/stderr 按到达顺序混排，边跑边长；面板每 1 秒读一次 `GET /api/deploy/status`（快照比单次请求活得久）。弹窗右上角「关闭」只关面板，部署照跑——页头按钮此时变成「查看部署日志」，点它随时接回；刷新页面或重开面板也会自动接回正在跑的那次。跑完同一个位置换成结果弹窗。
+- **没有「取消部署」**：`build` 跑到一半被杀会留下半截产物，比等它超时更难收拾，所以只提供关闭不提供中断。
 - 最近 10 次部署写入 `<projectRoot>/<digestDir>/deploy-history.json`，配置卡片底部显示「上次部署」并可回看详情。
 - 并发请求会被 `ERR_DEPLOY_BUSY`（409）挡住，同一时间只跑一次；根目录失效则返回 `ERR_NO_BLOG_ROOT`。
 - 路由和其他面板接口一样只接受 loopback 同源请求，不额外做命令沙箱——**谁能拿到这个面板，谁就能执行这条命令**。
@@ -707,6 +709,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/article` | 保存正文 |
 | POST | `/hotspot/api/article-promote` | 草稿转正（过闸；违规回 409 `ERR_CHECK_FAILED` + 违规清单） |
 | POST | `/hotspot/api/deploy` | 按 `deploy.build` → `deploy.script` 顺序执行（未绑定 → 400，已在跑 → 409），返回分步退出码与输出，并落一条部署历史 |
+| GET | `/hotspot/api/deploy/status` | 部署实时快照：`state` / `cwd` / 每步的 `output`（块内混排、截到 64KB）/ 退出码与耗时；没跑过返回 `null`，跑完保留上一次 |
 | GET | `/hotspot/rss.xml` | 今日候选（前）+ 今日订阅文章（后）的 RSS 2.0 订阅源，`content-type: application/rss+xml` |
 
 **为什么不做 React 客户端插件**：`dsh.client` 需要引入客户端构建链，还要绑定预发布期的客户端 UI API。这几个页面都是表格和表单，单个零依赖 HTML 足够；省下的是一整条会随 DSH 版本失效的耦合。

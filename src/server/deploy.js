@@ -42,9 +42,13 @@ export function resolveLoginShell() {
 
 /**
  * 执行单条命令，永不 reject：失败也把 stdout/stderr/退出码交回给调用方。
+ *
+ * `onChunk({ stream, text })` 会在每段输出到达时同步回调：面板的实时日志靠它，
+ * 而不是等进程退出才拿到整段 —— 那几分钟正是用户最需要看见的时候。
+ *
  * @param {string} script
  * @param {string} cwd
- * @param {{ timeoutMs?: number }} [options]
+ * @param {{ timeoutMs?: number, onChunk?: (chunk: { stream: 'stdout'|'stderr', text: string }) => void }} [options]
  * @returns {Promise<{ success: boolean, code: number|null, signal: string|null, stdout: string, stderr: string, durationMs: number, timedOut: boolean }>}
  */
 export function runDeployScript(script, cwd, options = {}) {
@@ -94,13 +98,19 @@ export function runDeployScript(script, cwd, options = {}) {
       }
     }, timeoutMs);
 
+    const onChunk = typeof options.onChunk === 'function' ? options.onChunk : null;
+
     child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
+      const text = chunk.toString('utf8');
+      stdout += text;
       if (stdout.length > DEPLOY_OUTPUT_LIMIT * 2) stdout = stdout.slice(-DEPLOY_OUTPUT_LIMIT);
+      if (onChunk) onChunk({ stream: 'stdout', text });
     });
     child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
+      const text = chunk.toString('utf8');
+      stderr += text;
       if (stderr.length > DEPLOY_OUTPUT_LIMIT * 2) stderr = stderr.slice(-DEPLOY_OUTPUT_LIMIT);
+      if (onChunk) onChunk({ stream: 'stderr', text });
     });
     child.on('error', (error) => finish(null, null, error));
     child.on('close', (code, signal) => finish(code, signal));
@@ -158,13 +168,47 @@ export function describeDeploy(config, root) {
 /**
  * 按 build → script 的顺序执行部署计划，任一步失败即停。
  * 顶层字段取「最后执行的那一步」，并额外带 steps，兼容旧的单脚本调用方。
+ *
+ * 可选 hooks（面板的实时日志用）：
+ * - `onStep({ name, script?, state, code?, durationMs?, timedOut?, startedAt? })`
+ * - `onChunk({ step, stream, text })`
+ * 两个钩子都是「尽力而为」：回调抛错不能影响部署本身。
  */
-export async function runDeployPlan(plan, cwd) {
+export async function runDeployPlan(plan, cwd, hooks = {}) {
   const startedAt = Date.now();
   const steps = [];
+  const onStep = typeof hooks.onStep === 'function' ? hooks.onStep : () => {};
+  const onChunk = typeof hooks.onChunk === 'function' ? hooks.onChunk : null;
+
+  const notify = (event) => {
+    try {
+      onStep(event);
+    } catch {
+      /* 进度是辅助信息，不能打断部署 */
+    }
+  };
 
   const runOne = async (name, script) => {
-    const result = await runDeployScript(script, cwd, { timeoutMs: plan.timeoutMs });
+    notify({ name, script, state: 'running', startedAt: new Date().toISOString() });
+    const result = await runDeployScript(script, cwd, {
+      timeoutMs: plan.timeoutMs,
+      onChunk: onChunk
+        ? (chunk) => {
+            try {
+              onChunk({ step: name, ...chunk });
+            } catch {
+              /* 同上 */
+            }
+          }
+        : undefined,
+    });
+    notify({
+      name,
+      state: result.success ? 'success' : 'failed',
+      code: result.code,
+      durationMs: result.durationMs,
+      timedOut: result.timedOut,
+    });
     steps.push({ name, script, ...result });
     return result;
   };
@@ -182,6 +226,116 @@ export async function runDeployPlan(plan, cwd) {
     failedStep: deployed.success ? null : 'deploy',
     steps,
     durationMs: Date.now() - startedAt,
+  };
+}
+
+/**
+ * 进程内的部署实时快照。
+ *
+ * 为什么不在 `runDeployPlan` 里直接攒：面板要能**在部署之外**读到进度
+ * （关掉弹窗再打开、刷新页面、重开面板），所以状态必须活在一个比单次请求更长的
+ * 地方。这里只存状态、不做 IO —— 落历史仍然是 api 那层的事。
+ *
+ * 边界：
+ * - 同一时刻只有一个 current（并发由 api 的 ERR_DEPLOY_BUSY 挡）；
+ * - 输出按「步骤内 stdout/stderr 到达顺序」拼成一段，超出上限只留末尾并标 truncated；
+ * - 结束后快照保留，面板重开还能看上次。
+ */
+export function createDeployTracker({ limit = DEPLOY_OUTPUT_LIMIT, now = () => new Date() } = {}) {
+  let current = null;
+  let last = null;
+
+  const snapshotOf = (run) => ({
+    id: run.id,
+    state: run.state,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    cwd: run.cwd,
+    plan: { ...run.plan },
+    truncated: run.truncated,
+    steps: run.steps.map((step) => ({ ...step })),
+  });
+
+  return {
+    begin({ cwd = '', plan = {} } = {}) {
+      current = {
+        id: `deploy-${now().getTime().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        state: 'running',
+        startedAt: now().toISOString(),
+        endedAt: '',
+        cwd: String(cwd ?? ''),
+        plan: { build: String(plan.build ?? ''), script: String(plan.script ?? '') },
+        truncated: false,
+        steps: [],
+      };
+      return snapshotOf(current);
+    },
+
+    step(event = {}) {
+      if (!current) return null;
+      const name = String(event.name ?? '');
+      if (!name) return null;
+      let step = current.steps.find((entry) => entry.name === name);
+      if (!step) {
+        step = {
+          name,
+          script: String(event.script ?? ''),
+          state: 'running',
+          startedAt: String(event.startedAt ?? now().toISOString()),
+          endedAt: '',
+          code: null,
+          durationMs: 0,
+          timedOut: false,
+          output: '',
+        };
+        current.steps.push(step);
+      }
+      if (event.state === 'running') {
+        step.state = 'running';
+        if (event.startedAt) step.startedAt = String(event.startedAt);
+        if (event.script) step.script = String(event.script);
+      } else if (event.state === 'success' || event.state === 'failed') {
+        step.state = event.state;
+        step.endedAt = now().toISOString();
+        if (event.code !== undefined) step.code = event.code;
+        if (event.durationMs !== undefined) step.durationMs = Number(event.durationMs) || 0;
+        if (event.timedOut !== undefined) step.timedOut = Boolean(event.timedOut);
+      }
+      return snapshotOf(current);
+    },
+
+    chunk({ step: name, text } = {}) {
+      if (!current) return null;
+      const step = current.steps.find((entry) => entry.name === String(name ?? ''));
+      if (!step) return null;
+      const next = step.output + String(text ?? '');
+      if (next.length > limit) {
+        step.output = `…（输出超过 ${limit} 字符，已保留末尾）\n${next.slice(-limit)}`;
+        current.truncated = true;
+      } else {
+        step.output = next;
+      }
+      return null;
+    },
+
+    finish(result = {}) {
+      if (!current) return last ? snapshotOf(last) : null;
+      current.state = result.success ? 'success' : 'failed';
+      current.endedAt = now().toISOString();
+      last = current;
+      current = null;
+      return snapshotOf(last);
+    },
+
+    /** 正在跑就返回当前快照，否则返回上一次（没有就是 null）。 */
+    snapshot() {
+      if (current) return snapshotOf(current);
+      return last ? snapshotOf(last) : null;
+    },
+
+    get running() {
+      return Boolean(current);
+    },
   };
 }
 

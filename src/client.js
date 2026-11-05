@@ -2075,6 +2075,14 @@ window.__ModuleLoader__.load({
       const [deployBuild, setDeployBuild] = useState('');
       const [deploying, setDeploying] = useState(false);
       const [deployResult, setDeployResult] = useState(null);
+      // 部署实时日志：快照来自 GET /api/deploy/status，弹窗可关、部署照跑
+      const [deployLive, setDeployLive] = useState(null);
+      const [deployLiveOpen, setDeployLiveOpen] = useState(false);
+      const deployPollRef = useRef(null);
+      const deployAttachedRef = useRef(false);
+      const deployLogRef = useRef(null);
+      // 日志是否自动跟随底部：用户往上滚过就暂停，footer 里给「跳到最新」
+      const [deployStick, setDeployStick] = useState(true);
       const [savingConfig, setSavingConfig] = useState(false);
       // 「高级排序参数」默认收起：半衰期与聚类阈值平时不该占视线
       const [showAdvancedRank, setShowAdvancedRank] = useState(false);
@@ -2995,9 +3003,60 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const stopDeployPolling = () => {
+        if (deployPollRef.current) {
+          clearInterval(deployPollRef.current);
+          deployPollRef.current = null;
+        }
+      };
+
+      /**
+       * 拉一次部署快照。轮询与「重开面板接回」都走这里：
+       * 部署在服务端跑，面板只是个显示器，读状态不能有任何副作用。
+       */
+      const fetchDeployStatus = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/deploy/status`);
+          const data = await res.json();
+          const value = data?.ok ? data.value : null;
+          setDeployLive(value);
+          if (value && value.state !== 'running') {
+            stopDeployPolling();
+            if (deployAttachedRef.current) {
+              // 接回来的那次部署跑完了：没有 POST 的返回值，恢复按钮即可，详情看「上次部署」
+              deployAttachedRef.current = false;
+              setDeploying(false);
+            }
+          }
+          return value;
+        } catch {
+          return null;
+        }
+      };
+
+      const startDeployPolling = () => {
+        stopDeployPolling();
+        fetchDeployStatus();
+        deployPollRef.current = setInterval(fetchDeployStatus, 1000);
+      };
+
+      /**
+       * 部署：POST 仍然同步跑完（契约不变），同时每秒拉一次实时快照喂给弹窗。
+       * 返回后关掉日志弹窗、打开结果弹窗 —— 内容与以前完全一致。
+       */
       const handleDeploy = async () => {
-        if (deploying) return;
+        if (deploying) {
+          // 部署进行中再点：不重复发请求，只把日志弹窗叫回来
+          setDeployLiveOpen(true);
+          startDeployPolling();
+          return;
+        }
         setDeploying(true);
+        deployAttachedRef.current = false;
+        setDeployLive(null);
+        setDeployLiveOpen(true);
+        setDeployStick(true);
+        startDeployPolling();
         try {
           const res = await fetch(`${API_BASE}/deploy`, {
             method: 'POST',
@@ -3011,6 +3070,7 @@ window.__ModuleLoader__.load({
           }
           const value = data.value;
           setDeployResult(value);
+          setDeployLiveOpen(false);
           const seconds = (Number(value.durationMs || 0) / 1000).toFixed(1);
           showToast(
             value.success ? `✅ 站点部署完成（${seconds}s）` : `❌ 部署失败：${data.message}（${seconds}s）`,
@@ -3019,9 +3079,44 @@ window.__ModuleLoader__.load({
         } catch (err) {
           showToast(err.message || '部署请求失败', true);
         } finally {
+          stopDeployPolling();
           setDeploying(false);
+          await fetchDeployStatus();
         }
       };
+
+      // 重开面板 / 刷新页面：后台还有部署在跑就自动接回日志弹窗
+      useEffect(() => {
+        let alive = true;
+        (async () => {
+          const value = await fetchDeployStatus();
+          if (!alive || !value || value.state !== 'running') return;
+          deployAttachedRef.current = true;
+          setDeploying(true);
+          setDeployLiveOpen(true);
+          startDeployPolling();
+        })();
+        return () => {
+          alive = false;
+          stopDeployPolling();
+        };
+      }, []);
+
+      // 日志弹窗开着时每秒走一次表：耗时不 tick 就是死的
+      const [deployNow, setDeployNow] = useState(() => Date.now());
+      useEffect(() => {
+        if (!deployLiveOpen) return undefined;
+        setDeployNow(Date.now());
+        const timer = setInterval(() => setDeployNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+      }, [deployLiveOpen]);
+
+      // 新日志到达时跟到底部（用户往上滚过就不拽他的视线）
+      useEffect(() => {
+        const box = deployLogRef.current;
+        if (!box || !deployLiveOpen || !deployStick) return;
+        box.scrollTop = box.scrollHeight;
+      }, [deployLive, deployLiveOpen, deployStick]);
 
       // 候选筛选：digest 已按得分降序，「精选」取当天前 30%（至少 3 条），
       // 不再用 score ≥ 100 这种永远为空的阈值（单源当天候选也就 4–6 分）。
@@ -3168,6 +3263,110 @@ window.__ModuleLoader__.load({
 
       // 简介字数：按码点数，和后端 [...text].length 的口径一致
       const descriptionChars = [...scaffoldDescription.trim()].length;
+
+      /**
+       * 部署实时日志弹窗：快照来自 GET /api/deploy/status（1s 轮询）。
+       *
+       * 关掉它不影响部署 —— 部署跑在服务端，这里只是个显示器；页头按钮随时能叫回来。
+       * 结束后由 handleDeploy 换成结果弹窗（带 stdout/stderr 分开与历史）。
+       */
+      const renderDeployLiveModal = () => {
+        if (!deployLiveOpen) return null;
+        const live = deployLive;
+        const running = !live || live.state === 'running';
+        const failed = live?.state === 'failed';
+        const elapsed = live?.startedAt
+          ? formatSpan((live.endedAt ? new Date(live.endedAt).getTime() : deployNow) - new Date(live.startedAt).getTime())
+          : '';
+        const steps = Array.isArray(live?.steps) ? live.steps : [];
+
+        const badgeOf = (state) => state === 'running'
+          ? { text: '进行中', color: '#60a5fa', background: 'rgba(96,165,250,.16)' }
+          : state === 'success'
+            ? { text: '成功', color: '#34d399', background: 'rgba(16,185,129,.15)' }
+            : { text: '失败', color: '#f87171', background: 'rgba(248,113,113,.15)' };
+
+        const jumpToLatest = () => {
+          setDeployStick(true);
+          const box = deployLogRef.current;
+          if (box) box.scrollTop = box.scrollHeight;
+        };
+
+        return h('div', { className: 'hs-modal-mask', key: 'deploy-live-modal', style: { zIndex: 1260 } }, [
+          h('div', { className: 'hs-modal', style: { width: 760, maxWidth: '92vw' } }, [
+            h('div', { className: 'hs-modal-header' }, [
+              h('div', { style: { minWidth: 0 } }, [
+                h('h3', { className: 'hs-modal-title' }, running
+                  ? '站点部署'
+                  : (failed ? '❌ 部署失败' : '✅ 站点部署完成')),
+                live?.cwd && h('div', {
+                  style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 2, wordBreak: 'break-all' }
+                }, live.cwd)
+              ]),
+              h('div', {
+                style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--dsw-alias-label-secondary, #9da1b0)' }
+              }, [
+                running && h('span', {
+                  style: { width: 6, height: 6, borderRadius: '50%', background: '#60a5fa', boxShadow: '0 0 0 3px rgba(96,165,250,.15)' }
+                }),
+                running ? `部署中 · 已用 ${elapsed}` : `共 ${elapsed}`,
+                h('button', { className: 'hs-btn ghost', style: { padding: '4px 8px' }, onClick: () => setDeployLiveOpen(false) }, '✕')
+              ])
+            ]),
+            h('div', {
+              ref: deployLogRef,
+              className: 'hs-modal-body',
+              style: { maxHeight: '56vh', overflowY: 'auto' },
+              onScroll: (e) => {
+                const box = e.currentTarget;
+                const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+                if (atBottom !== deployStick) setDeployStick(atBottom);
+              }
+            }, [
+              !live && h('div', { style: { fontSize: 12, color: '#8c909e' } }, '正在启动部署…'),
+              live && steps.length === 0 && h('div', { style: { fontSize: 12, color: '#8c909e' } }, '正在启动构建…'),
+              steps.map((step, index) => {
+                const badge = badgeOf(step.state);
+                return h('div', {
+                  key: `deploy-step-${step.name}-${index}`,
+                  style: {
+                    marginBottom: 14,
+                    paddingTop: index === 0 ? 0 : 12,
+                    borderTop: index === 0 ? 'none' : '1px solid var(--dsw-alias-border-l1, #2d303b)'
+                  }
+                }, [
+                  h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 12 } }, [
+                    h('span', {
+                      style: { fontSize: 11, padding: '2px 8px', borderRadius: 999, background: badge.background, color: badge.color }
+                    }, `${step.name === 'build' ? '构建' : '部署'} · ${badge.text}`),
+                    step.code !== null && step.code !== undefined && h('span', null, `退出码：${step.code}`),
+                    step.timedOut && h('span', { style: { color: '#f87171' } }, '已超时并强制结束'),
+                    step.durationMs ? h('span', null, `耗时：${(Number(step.durationMs) / 1000).toFixed(1)}s`) : null
+                  ]),
+                  step.script && h('div', { style: deployCodeStyle }, step.script),
+                  h('pre', {
+                    style: {
+                      margin: '8px 0 0', padding: '10px 12px', borderRadius: 8,
+                      background: '#101116', border: '1px solid var(--dsw-alias-border-l1, #2d303b)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      fontSize: 11.5, lineHeight: 1.65, color: '#b7bcc8',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+                    }
+                  }, step.output || (step.state === 'running' ? '…' : '（无输出）'))
+                ]);
+              })
+            ]),
+            h('div', { className: 'hs-modal-footer' }, [
+              h('div', { style: { marginRight: 'auto', fontSize: 11, color: '#6f7484' } },
+                running
+                  ? '关掉不影响部署；页头按钮会变成「查看部署日志」，点它随时接回'
+                  : '详情见「上次部署 · 查看详情」'),
+              !deployStick && running && h('button', { className: 'hs-btn', onClick: jumpToLatest }, '↓ 跳到最新'),
+              h('button', { className: 'hs-btn primary', onClick: () => setDeployLiveOpen(false) }, '关闭')
+            ])
+          ])
+        ]);
+      };
 
       /** 毫秒 → 「12s」/「1m 42s」；进度弹窗里每一步都挂一个。 */
       const formatSpan = (ms) => {
@@ -3416,12 +3615,14 @@ window.__ModuleLoader__.load({
                 }
                 handleDeploy();
               },
-              disabled: deploying || !isBlogConfigured,
-              title: !isBlogConfigured
-                ? '先在「设置」里绑定博客项目根目录'
-                : deployConfigured
-                  ? `执行部署：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
-                  : '尚未绑定部署脚本，点击前往配置'
+              disabled: !isBlogConfigured,
+              title: deploying
+                ? '部署正在进行，点开看实时日志'
+                : !isBlogConfigured
+                  ? '先在「设置」里绑定博客项目根目录'
+                  : deployConfigured
+                    ? `执行部署：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
+                    : '尚未绑定部署脚本，点击前往配置'
             }, [
               h('svg', {
                 width: 14,
@@ -3436,7 +3637,7 @@ window.__ModuleLoader__.load({
                 h('path', { d: 'm7 8 5-5 5 5' }),
                 h('path', { d: 'M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4' })
               ]),
-              deploying ? '部署中...' : '部署站点'
+              deploying ? '查看部署日志' : '部署站点'
             ]),
             h('button', {
               className: 'hs-btn primary',
@@ -4678,6 +4879,8 @@ window.__ModuleLoader__.load({
         ]),
 
         // ── 站点部署结果 Modal ──
+        renderDeployLiveModal(),
+
         deployResult && h('div', { className: 'hs-modal-mask', key: 'deploy-modal' }, [
           h('div', { className: 'hs-modal', style: { width: 760, maxWidth: '92vw' } }, [
             h('div', { className: 'hs-modal-header' }, [

@@ -314,3 +314,63 @@ test('配置：改绑博客根目录时，配置写到新根而不是旧的 curr
   assert.deepEqual(onNewRoot.deploy, { build: 'yarn build', script: './deploy.sh' });
   assert.equal(existsSync(path.join(tempDir, 'dsh-hotspot.config.json')), false);
 });
+
+test('部署实时状态：没跑过时 value 为 null，跑起来能看到步骤与输出', async (t) => {
+  const { tempDir, blogDir } = setupBlog(t);
+  const routes = createRoutes(makeDeps(tempDir));
+  await callRoute(routeOf(routes, 'config'), 'POST', {
+    projectRoot: blogDir,
+    deploy: { script: 'echo start-line; sleep 0.5; echo end-line' },
+  });
+
+  const statusRoute = routeOf(routes, 'deploy/status');
+  assert.ok(statusRoute, 'GET /api/deploy/status 应存在');
+
+  const before = await callRoute(statusRoute, 'GET');
+  assert.equal(before.status, 200);
+  assert.equal(before.json().value, null);
+
+  const running = callRoute(routeOf(routes, 'deploy'), 'POST', {});
+
+  // 登录 shell 启动本身要时间，所以轮询等输出出现，而不是固定 sleep 一个数字
+  let during = null;
+  for (let i = 0; i < 40; i += 1) {
+    during = (await callRoute(statusRoute, 'GET')).json().value;
+    if (during?.steps?.[0]?.output?.includes('start-line')) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(during.state, 'running');
+  assert.equal(during.cwd, path.resolve(blogDir));
+  assert.equal(during.steps.length, 1);
+  assert.equal(during.steps[0].name, 'deploy');
+  assert.equal(during.steps[0].state, 'running');
+  assert.ok(during.steps[0].output.includes('start-line'), '跑的过程中就该看得到输出');
+
+  await running;
+
+  const after = (await callRoute(statusRoute, 'GET')).json().value;
+  assert.equal(after.state, 'success');
+  assert.equal(after.steps[0].state, 'success');
+  assert.equal(after.steps[0].code, 0);
+  assert.ok(after.steps[0].output.includes('end-line'), '结束后快照仍保留完整输出');
+  assert.ok(after.endedAt);
+});
+
+test('部署实时状态：build 失败时快照停在失败的步骤上', async (t) => {
+  const { tempDir, blogDir } = setupBlog(t);
+  const routes = createRoutes(makeDeps(tempDir));
+  await callRoute(routeOf(routes, 'config'), 'POST', {
+    projectRoot: blogDir,
+    deploy: { build: 'echo build-broke >&2; exit 3', script: 'echo should-not-run' },
+  });
+
+  const result = await callRoute(routeOf(routes, 'deploy'), 'POST', {});
+  assert.equal(result.json().success, false);
+
+  const snap = (await callRoute(routeOf(routes, 'deploy/status'), 'GET')).json().value;
+  assert.equal(snap.state, 'failed');
+  assert.deepEqual(snap.steps.map((step) => step.name), ['build'], '构建失败就不该有部署那一步');
+  assert.equal(snap.steps[0].state, 'failed');
+  assert.equal(snap.steps[0].code, 3);
+  assert.ok(snap.steps[0].output.includes('build-broke'));
+});
