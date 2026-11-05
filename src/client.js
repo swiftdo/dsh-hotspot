@@ -1261,6 +1261,7 @@ window.__ModuleLoader__.load({
       const [showEvidence, setShowEvidence] = useState(false);
       const [isSavingArticle, setIsSavingArticle] = useState(false);
       const [isPromotingArticle, setIsPromotingArticle] = useState(false);
+      const [isDeletingArticle, setIsDeletingArticle] = useState(false);
 
       const handlePickDirectory = async () => {
         if (pickingDir) return null;
@@ -1412,6 +1413,38 @@ window.__ModuleLoader__.load({
           showToast(`转正失败: ${err.message}`, true);
         } finally {
           setIsPromotingArticle(false);
+        }
+      };
+
+      const handleDeleteArticle = async (item) => {
+        if (!item || !item.file) return;
+        const isDraft = item.draft === true || item.isDraft === true;
+        const typeLabel = isDraft ? '草稿' : '文章';
+        const titleLabel = item.title || item.slug || item.file;
+        if (!confirm(`确定要彻底删除该${typeLabel}吗？\n\n标题：${titleLabel}\n文件：${item.file}\n\n注意：此操作不可恢复！`)) {
+          return;
+        }
+        try {
+          setIsDeletingArticle(true);
+          const res = await fetch(`${API_BASE}/article-delete`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ file: item.file }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showToast(`🗑️ ${typeLabel}「${titleLabel}」已成功删除`);
+            if (editModalItem && editModalItem.file === item.file) {
+              setEditModalItem(null);
+            }
+            await loadState();
+          } else {
+            showToast(data.error || '删除失败', true);
+          }
+        } catch (err) {
+          showToast(`删除异常: ${err.message}`, true);
+        } finally {
+          setIsDeletingArticle(false);
         }
       };
 
@@ -2324,8 +2357,15 @@ window.__ModuleLoader__.load({
                             isDraft && h('button', {
                               className: 'hs-btn sm primary',
                               style: { padding: '3px 8px', fontSize: 11 },
+                              disabled: isPromotingArticle,
                               onClick: () => handlePromoteArticle(item.slug)
-                            }, '🚀 转正发布')
+                            }, '🚀 转正发布'),
+                            h('button', {
+                              className: 'hs-btn sm',
+                              style: { padding: '3px 8px', fontSize: 11, color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' },
+                              disabled: isDeletingArticle,
+                              onClick: () => handleDeleteArticle({ ...item, file: filePath, isDraft })
+                            }, '🗑️ 删除')
                           ])
                         ])
                       ]);
@@ -2675,12 +2715,18 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
                 editModalItem.isDraft && h('button', {
                   className: 'hs-btn sm primary',
-                  disabled: isPromotingArticle || isSavingArticle,
+                  disabled: isPromotingArticle || isSavingArticle || isDeletingArticle,
                   onClick: () => handlePromoteArticle(editModalItem.slug)
                 }, isPromotingArticle ? '转正中...' : '🚀 转正发布'),
                 h('button', {
+                  className: 'hs-btn sm',
+                  style: { color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' },
+                  disabled: isDeletingArticle || isSavingArticle,
+                  onClick: () => handleDeleteArticle(editModalItem)
+                }, isDeletingArticle ? '删除中...' : '🗑️ 删除'),
+                h('button', {
                   className: 'hs-btn sm primary',
-                  disabled: isSavingArticle || editContent === editOriginalContent,
+                  disabled: isSavingArticle || editContent === editOriginalContent || isDeletingArticle,
                   onClick: handleSaveArticle
                 }, isSavingArticle ? '保存中...' : (editContent !== editOriginalContent ? '💾 保存修改 *' : '✓ 已保存')),
                 h('button', {

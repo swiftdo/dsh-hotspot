@@ -698,6 +698,41 @@ export function createRoutes(deps) {
         }
       },
     },
+    {
+      method: 'POST',
+      kind: 'exact',
+      path: `${PREFIX}/api/article-delete`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        const target = currentTarget;
+        if (!target) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            error: '尚未配置博客项目根目录',
+          });
+          return;
+        }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        const { file } = body || {};
+        if (!file || typeof file !== 'string') {
+          sendJson(res, 400, { ok: false, error: '缺少必需字段 file' });
+          return;
+        }
+        try {
+          const resDelete = await target.deleteArticle(file);
+          sendJson(res, 200, { ok: true, message: '文件已成功删除', value: resDelete });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
   ];
 
   const allRoutes = [];

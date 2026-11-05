@@ -456,3 +456,41 @@ test('API 路由：补料读不到时正文照常返回', async () => {
   assert.equal(data.value.content, '# 正文');
   assert.equal(data.value.supplements.count, 0);
 });
+
+test('API 路由：支持删除草稿或文章 /dsh-hotspot/api/article-delete 与双前缀兼容', async () => {
+  let deletedFile = null;
+  const deps = {
+    projectRoot: '/mock/path',
+    store: { loadDigest: async () => null },
+    target: {
+      articleDir: 'docs/article',
+      draftDir: 'docs/draft',
+      profile: async () => ({ tagVocabulary: [], keywords: [] }),
+      listArticles: async () => [],
+      listDrafts: async () => [],
+      deleteArticle: async (file) => {
+        deletedFile = file;
+        return { ok: true, file };
+      },
+    },
+    runScan: async () => ({ digest: null, status: {} }),
+  };
+
+  const routes = createRoutes(deps);
+  const delRoute = routes.find((r) => r.path === '/dsh-hotspot/api/article-delete');
+  const legacyDelRoute = routes.find((r) => r.path === '/hotspot/api/article-delete');
+  assert.ok(delRoute, '主路由应当存在');
+  assert.ok(legacyDelRoute, '兼容路由应当存在');
+
+  // 1. 缺少 file 拦截
+  const { req: errReq, res: errRes, result: errResult } = mockReqRes('POST', '/dsh-hotspot/api/article-delete', {});
+  await delRoute.handler(errReq, errRes);
+  assert.equal(errResult().status, 400);
+
+  // 2. 正常删除
+  const { req, res, result } = mockReqRes('POST', '/dsh-hotspot/api/article-delete', { file: 'docs/draft/demo/index.md' });
+  await delRoute.handler(req, res);
+  const data = result().json();
+  assert.equal(data.ok, true);
+  assert.equal(deletedFile, 'docs/draft/demo/index.md');
+});
