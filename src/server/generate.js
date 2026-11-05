@@ -15,6 +15,7 @@ import { slugify } from '../core/normalize.js';
 import { buildCandidateBrief } from '../core/brief.js';
 import { resolveCandidate } from '../core/checks.js';
 import { buildTitlePrompt, parseTitleSuggestions } from '../core/title.js';
+import { buildDescriptionPrompt, cleanDescription } from '../core/description.js';
 import {
   MAX_POLISH_BODY_CHARS,
   buildPolishPrompt,
@@ -39,8 +40,11 @@ export const DEFAULT_WRITER_TIMEOUT_MS = 8 * 60 * 1000;
 /** 润色是短任务：3 分钟够用，超时说明模型路由卡住了。 */
 export const DEFAULT_POLISH_TIMEOUT_MS = 3 * 60 * 1000;
 
-/** 起标题是几十个 token 的小请求：45 秒还不回来说明路由或网络卡住了。 */
+/** 起标题 / 写简介都是小请求：45 秒还不回来说明路由或网络卡住了。 */
 export const DEFAULT_TITLE_TIMEOUT_MS = 45 * 1000;
+
+/** 简介与标题同量级，超时预算也一样。 */
+export const DEFAULT_DESCRIPTION_TIMEOUT_MS = DEFAULT_TITLE_TIMEOUT_MS;
 
 /** 模型目录：`listProviders()` 与 `listModels()` 的形状由宿主决定，这里只做容忍式摊平。 */
 export async function listCatalog(llm) {
@@ -306,6 +310,41 @@ export function createWriter({
 }
 
 /**
+ * 候选素材包：当天 raw + `buildCandidateBrief`。
+ * 起标题与写简介都要看同一份材料 —— 各拼一遍迟早漂成两种说法。
+ */
+async function candidateContext({ item, digest, store } = {}) {
+  const date = digest?.date || '';
+  const raw = date && store && typeof store.loadRaw === 'function' ? await store.loadRaw(date) : [];
+  return buildCandidateBrief(item ?? {}, raw);
+}
+
+/**
+ * 拿不到正文时的诊断探针：把 stream 吐出来的 chunk 形状记下来。
+ *
+ * 宿主的 chunk 嵌套层数变过（老版 `{type:'chunk',chunk:{...}}`、新版扁平
+ * `{type:'text-delta'}`），报「模型没有返回」时形状是唯一线索 ——
+ * 上次真机上就是靠它查出扁平 chunk 没被识别。
+ */
+function chunkShapeProbe() {
+  const shapes = new Set();
+  return {
+    onChunk: (chunk) => {
+      const outer = chunk && typeof chunk === 'object' ? chunk.type ?? typeof chunk : typeof chunk;
+      const inner = chunk?.chunk && typeof chunk.chunk === 'object' ? chunk.chunk.type ?? '' : '';
+      shapes.add(inner ? `${outer}/${inner}` : String(outer));
+    },
+    describe: () => [...shapes].join(', ') || '一个 chunk 都没有',
+  };
+}
+
+/** 把模型输出截一段带进错误：失败十次有九次是「模型换了输出格式」。 */
+function describeRaw(text, probe) {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return flat ? flat.slice(0, 200) : `空；chunk 形状：${probe.describe()}`;
+}
+
+/**
  * 宿主侧的「起标题」：在面板弹窗里给 3 个中文标题 + 英文 slug 建议。
  *
  * 为什么复用写正文的模型选择：用户只在设置页里选过一次「用哪个模型」，
@@ -338,9 +377,7 @@ export function createTitleSuggester({
       throw new Error('宿主没有提供 llm 服务，无法生成标题建议');
     }
 
-    const date = digest?.date || '';
-    const raw = date && store && typeof store.loadRaw === 'function' ? await store.loadRaw(date) : [];
-    const brief = buildCandidateBrief(item ?? {}, raw);
+    const brief = await candidateContext({ item, digest, store });
 
     const route = await resolveConfiguredRoute(llm, absDirOf(projectRoot), {
       provider: wantedProvider,
@@ -363,9 +400,8 @@ export function createTitleSuggester({
       timeoutMs,
     );
     const unlink = linkAbort(outerSignal, controller);
+    const probe = chunkShapeProbe();
     let text = '';
-    // 诊断用：拿不到正文时把 chunk 形状带进错误，否则只能看到一句「没有返回」
-    const shapes = new Set();
     try {
       text = await streamOnce(llm, route, {
         system: '你是中文技术博客编辑，只根据给定材料起标题，不编造事实。',
@@ -374,11 +410,7 @@ export function createTitleSuggester({
         // 给 2000 而不是几百：思考型模型会先花掉一段预算再吐正文，
         // 预算给小了会表现成「模型没有返回任何文本」（写正文用 4096，同理）。
         maxTokens: 2000,
-        onChunk: (chunk) => {
-          const outer = chunk && typeof chunk === 'object' ? chunk.type ?? typeof chunk : typeof chunk;
-          const inner = chunk?.chunk && typeof chunk.chunk === 'object' ? chunk.chunk.type ?? '' : '';
-          shapes.add(inner ? `${outer}/${inner}` : String(outer));
-        },
+        onChunk: probe.onChunk,
       });
     } finally {
       clearTimeout(timer);
@@ -387,17 +419,106 @@ export function createTitleSuggester({
 
     const suggestions = parseTitleSuggestions(text);
     if (suggestions.length === 0) {
-      // 把原始返回截一段带进错误：这类失败十次有九次是「模型换了输出格式」，
-      // 没有原文就只能看到一句「没给出可用的标题」，排查等于瞎猜。
-      throw new Error(
-        `模型没有给出可用的标题（原始返回：${String(text).replace(/\s+/g, ' ').slice(0, 200) || `空；chunk 形状：${[...shapes].join(', ') || '一个 chunk 都没有'}`}）`,
-      );
+      throw new Error(`模型没有给出可用的标题（原始返回：${describeRaw(text, probe)}）`);
     }
     log(`起标题 ${route.provider}/${route.model}：${suggestions.length} 条`);
 
     return {
       suggestions,
       sourceTitle: brief.title || String(item?.title ?? ''),
+      provider: route.provider,
+      model: route.model || '',
+    };
+  };
+}
+
+/**
+ * 宿主侧的「按定稿标题写简介」。
+ *
+ * 与起标题的分工：标题是 3 个候选让人挑，简介是单值、可编辑 —— 挑完标题再按它写，
+ * 免得「标题说 A、简介还在说 RSS 里的 B」。模型选择仍然复用写正文那一套。
+ */
+export function createDescriptionSuggester({
+  getLlm,
+  digestDir = '.hotspot',
+  timeoutMs = DEFAULT_DESCRIPTION_TIMEOUT_MS,
+  log = () => {},
+} = {}) {
+  const dirOf = () => (typeof digestDir === 'function' ? digestDir() : digestDir);
+  const absDirOf = (projectRoot) => {
+    const dir = String(dirOf() || '.hotspot');
+    return path.isAbsolute(dir) ? dir : path.join(projectRoot || '.', dir);
+  };
+
+  return async function suggestDescription({
+    item,
+    digest,
+    store,
+    projectRoot,
+    title,
+    provider: wantedProvider,
+    model: wantedModel,
+    signal: outerSignal,
+  } = {}) {
+    const finalTitle = String(title ?? '').trim();
+    if (!finalTitle) {
+      const error = new Error('缺少标题，无法生成简介');
+      error.code = 'ERR_TITLE_REQUIRED';
+      throw error;
+    }
+
+    const llm = typeof getLlm === 'function' ? getLlm() : null;
+    if (!llm || typeof llm.stream !== 'function') {
+      throw new Error('宿主没有提供 llm 服务，无法生成简介');
+    }
+
+    const brief = await candidateContext({ item, digest, store });
+    const route = await resolveConfiguredRoute(llm, absDirOf(projectRoot), {
+      provider: wantedProvider,
+      model: wantedModel,
+      purpose: 'writer',
+    });
+    if (!route) throw new Error('宿主没有可用的模型路由，请先在设置页里选一个模型');
+
+    const prompt = buildDescriptionPrompt({
+      title: finalTitle,
+      summary: brief.summary,
+      tags: brief.tags,
+      sources: brief.sources,
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`写简介超时（${Math.round(timeoutMs / 1000)}s）`)),
+      timeoutMs,
+    );
+    const unlink = linkAbort(outerSignal, controller);
+    const probe = chunkShapeProbe();
+    let text = '';
+    try {
+      text = await streamOnce(llm, route, {
+        system: '你是中文技术博客编辑，只根据给定材料写简介，不编造事实。',
+        prompt,
+        signal: controller.signal,
+        // 思考型模型会先花掉一段预算：给 1200 而不是几百（起标题那边同理）。
+        maxTokens: 1200,
+        onChunk: probe.onChunk,
+      });
+    } finally {
+      clearTimeout(timer);
+      unlink();
+    }
+
+    const description = cleanDescription(text);
+    if (!description) {
+      throw new Error(`模型没有给出可用的简介（原始返回：${describeRaw(text, probe)}）`);
+    }
+    log(`写简介 ${route.provider}/${route.model}：${[...description].length} 字`);
+
+    return {
+      description,
+      chars: [...description].length,
+      title: finalTitle,
       provider: route.provider,
       model: route.model || '',
     };

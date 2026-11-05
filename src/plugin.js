@@ -13,6 +13,7 @@ import { createVitePressTarget } from './adapters/target-vitepress.js';
 import { checkDraft } from './core/checks.js';
 import { promoteChecked } from './core/promote.js';
 import {
+  createDescriptionSuggester,
   createPolisher,
   createTitleSuggester,
   createWriter,
@@ -402,6 +403,12 @@ export function apply(ctx, config = {}) {
         digestDir: writerConfigDir,
         log,
       });
+      // 标题定稿后按它重写简介：同一个模型、同一份候选素材。
+      const descriptionSuggester = createDescriptionSuggester({
+        getLlm: () => (typeof ctx.get === 'function' ? ctx.get('llm') : null),
+        digestDir: writerConfigDir,
+        log,
+      });
       // 后台写作任务：状态落到 <digestDir>/jobs/<slug>.json，
       // 面板刷新或宿主重启后仍能看出「上次写作失败的原因」。
       const jobs = createJobRunner({
@@ -429,6 +436,7 @@ export function apply(ctx, config = {}) {
         generate: writer,
         polish: polisher,
         suggestTitles: titleSuggester,
+        suggestDescription: descriptionSuggester,
         // 面板的模型选择：目录来自宿主的 llm 服务，选择存在 .hotspot/writer-config.json。
         // 返回 selection（global/writer/polish 完整结构）与两个用途实际解析到的路由，
         // 面板据此显示「这个用途到底会用哪个模型」。

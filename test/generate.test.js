@@ -8,6 +8,7 @@ import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
 import { resolveWriterSelection } from '../src/core/writer-route.js';
 import {
   createPolisher,
+  createDescriptionSuggester,
   createTitleSuggester,
   createWriter,
   readWriterConfig,
@@ -353,5 +354,59 @@ test('起标题：宿主没有 llm 时直接抛错', async () => {
   await assert.rejects(
     () => suggest({ item: CANDIDATE, digest: { date: '2026-11-05' }, store, projectRoot: root }),
     /没有提供 llm 服务/,
+  );
+});
+
+// ── 按定稿标题写简介 ──
+
+test('写简介：定稿标题进提示词，返回清洗后的一段话', async () => {
+  const { root, store } = await setup();
+  const llm = fakeLlm({
+    texts: ['简介：“Swift 6.2 把严格并发设成默认值。\n升级前先看清这几条规则。”'],
+  });
+  const suggest = createDescriptionSuggester({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
+  const value = await suggest({
+    item: CANDIDATE,
+    digest: { date: '2026-11-05', items: [CANDIDATE] },
+    store,
+    projectRoot: root,
+    title: 'Swift 6.2 把严格并发变成了默认值',
+    provider: 'openai',
+    model: 'gpt-x',
+  });
+
+  const prompt = JSON.stringify(llm.calls[0].messages);
+  assert.match(prompt, /定稿标题：Swift 6\.2 把严格并发变成了默认值/);
+  assert.match(prompt, /OpenAI 在 11 月 4 日宣布收购/, '一手原文也要进提示词');
+  assert.equal(value.description, 'Swift 6.2 把严格并发设成默认值。 升级前先看清这几条规则。');
+  assert.equal(value.chars, [...value.description].length);
+  assert.equal(value.provider, 'openai');
+  assert.ok(llm.calls[0].maxTokens >= 1000, '思考型模型需要预算，给小了会返回空');
+});
+
+test('写简介：没有标题时直接拒绝，不猜主题', async () => {
+  const { root, store } = await setup();
+  const llm = fakeLlm();
+  const suggest = createDescriptionSuggester({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
+  await assert.rejects(
+    () => suggest({ item: CANDIDATE, digest: { date: '2026-11-05' }, store, projectRoot: root, title: '  ' }),
+    (error) => {
+      assert.equal(error.code, 'ERR_TITLE_REQUIRED');
+      return true;
+    },
+  );
+  assert.equal(llm.calls.length, 0, '没有标题就不该发请求');
+});
+
+test('写简介：模型返回空时抛错并带上 chunk 形状，便于定位', async () => {
+  const { root, store } = await setup();
+  const llm = fakeLlm({ texts: [''] });
+  const suggest = createDescriptionSuggester({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
+  await assert.rejects(
+    () => suggest({ item: CANDIDATE, digest: { date: '2026-11-05' }, store, projectRoot: root, title: '标题' }),
+    /没有给出可用的简介（原始返回：/,
   );
 });

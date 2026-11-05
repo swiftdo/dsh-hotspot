@@ -2091,6 +2091,11 @@ window.__ModuleLoader__.load({
       // AI 起标题：弹窗一打开就请求，给 3 个候选；拿不到就安静回退原文标题
       const [titleSuggestions, setTitleSuggestions] = useState([]);
       const [titleSuggestState, setTitleSuggestState] = useState('idle'); // idle | loading | done | failed
+      // 简介：按定稿标题写，可编辑；拿不到就留着候选摘要
+      const [scaffoldDescription, setScaffoldDescription] = useState('');
+      const [descriptionState, setDescriptionState] = useState('idle'); // idle | loading | done | failed
+      // 连点几个标题时，只认最后一次请求的结果
+      const descriptionToken = useRef(0);
       // 进度弹窗：按 slug 看一条后台写作任务的六步链路
       const [progressSlug, setProgressSlug] = useState(null);
 
@@ -2581,17 +2586,54 @@ window.__ModuleLoader__.load({
           // 第一个自动填入：否则「标题由模型生成」这句在默认值上就是假的
           setScaffoldTitle(list[0].title);
           if (list[0].slug) setScaffoldSlug(list[0].slug);
+          // 标题定了就按它写简介：简介跟标题说的必须是同一件事
+          suggestDescription(list[0].title);
         } catch (err) {
           setTitleSuggestions([]);
           setTitleSuggestState('failed');
         }
       };
 
-      /** 点一个候选标题：标题与 slug 一起换，之后仍可手改。 */
+      /**
+       * 按定稿标题重写简介。
+       *
+       * 连点几个标题时会有多个请求在飞：用自增 token 只认最后一次的结果，
+       * 否则会出现「第 2 个标题配第 3 段简介」这种错配。
+       */
+      const suggestDescription = async (title) => {
+        const finalTitle = String(title ?? '').trim();
+        if (!finalTitle || !scaffoldModalItem?.id) {
+          setDescriptionState('failed');
+          return;
+        }
+        descriptionToken.current += 1;
+        const token = descriptionToken.current;
+        setDescriptionState('loading');
+        try {
+          const res = await fetch(`${API_BASE}/description-suggest`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: scaffoldModalItem.id, title: finalTitle })
+          });
+          const data = await res.json();
+          if (token !== descriptionToken.current) return;
+          const description = data?.ok ? String(data.value?.description || '') : '';
+          if (!description) throw new Error(data?.message || '没有拿到简介');
+          setScaffoldDescription(description);
+          setDescriptionState('done');
+        } catch (err) {
+          if (token !== descriptionToken.current) return;
+          // 失败保留框里原有内容（初值是候选摘要），只标一行提示
+          setDescriptionState('failed');
+        }
+      };
+
+      /** 点一个候选标题：标题、slug、简介一起换，之后仍可手改。 */
       const pickTitleSuggestion = (suggestion) => {
         if (!suggestion?.title) return;
         setScaffoldTitle(suggestion.title);
         if (suggestion.slug) setScaffoldSlug(suggestion.slug);
+        suggestDescription(suggestion.title);
       };
 
       /**
@@ -2603,6 +2645,9 @@ window.__ModuleLoader__.load({
         setScaffoldTitle(String(item?.title || ''));
         setScaffoldSlug(item?.slugHint || suggestSlug(item));
         setScaffoldProjectRoot(isBlogConfigured ? '' : (blogProjectRoot || ''));
+        // 初值是候选摘要：AI 写不出来时这里仍然有内容，建草稿不会被卡住
+        setScaffoldDescription(String(item?.summary || ''));
+        setDescriptionState('idle');
         suggestTitles(item);
       };
 
@@ -2728,6 +2773,7 @@ window.__ModuleLoader__.load({
           if (opts.projectRoot) payload.projectRoot = String(opts.projectRoot).trim();
           if (opts.slug) payload.slug = String(opts.slug).trim();
           if (opts.title) payload.title = String(opts.title).trim();
+          if (opts.description) payload.description = String(opts.description).trim();
 
           const res = await fetch(`${API_BASE}/scaffold`, {
             method: 'POST',
@@ -2739,6 +2785,7 @@ window.__ModuleLoader__.load({
             setScaffoldModalItem(null);
             setTitleSuggestions([]);
             setTitleSuggestState('idle');
+            setDescriptionState('idle');
             if (data.job) {
               setJobStates(prev => ({ ...prev, [data.job.slug]: data.job }));
               // 弹窗原位换成进度面板：用户刚点的那件事就是这条六步链路
@@ -3118,6 +3165,9 @@ window.__ModuleLoader__.load({
 
       // 编辑器里的正文是否仍为空（scaffold 只写了标题与来源）
       const draftBodyEmpty = isDraftBodyEmpty(editContent);
+
+      // 简介字数：按码点数，和后端 [...text].length 的口径一致
+      const descriptionChars = [...scaffoldDescription.trim()].length;
 
       /** 毫秒 → 「12s」/「1m 42s」；进度弹窗里每一步都挂一个。 */
       const formatSpan = (ms) => {
@@ -4801,6 +4851,41 @@ window.__ModuleLoader__.load({
                       ? h('div', { style: { fontSize: 11, color: '#8c909e' } }, 'AI 起标题没成功，标题仍用原文，可手动改')
                       : null
               ]),
+              // 简介：按定稿标题写，可编辑；失败就保留候选摘要，不阻断建草稿
+              h('div', { className: 'hs-form-item' }, [
+                h('label', { className: 'hs-form-label' }, '简介（写入 frontmatter）'),
+                h('textarea', {
+                  className: 'hs-input',
+                  rows: 3,
+                  style: { resize: 'vertical', lineHeight: 1.55 },
+                  placeholder: '按标题生成，也可以自己改',
+                  value: scaffoldDescription,
+                  onChange: (e) => setScaffoldDescription(e.target.value)
+                }),
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 } }, [
+                  h('span', {
+                    style: {
+                      fontSize: 11,
+                      color: descriptionChars > 120 ? '#f87171' : '#6f7484'
+                    }
+                  }, descriptionState === 'loading'
+                    ? '正在按标题写简介…'
+                    : `${descriptionChars} 字${descriptionState === 'done' ? ' · 按标题生成' : ''}`),
+                  h('button', {
+                    className: 'hs-btn ghost',
+                    type: 'button',
+                    style: { marginLeft: 'auto', padding: '2px 6px', fontSize: 11, color: 'var(--dsw-alias-label-secondary, #9da1b0)' },
+                    disabled: descriptionState === 'loading',
+                    onClick: () => suggestDescription(scaffoldTitle)
+                  }, descriptionState === 'failed' ? '↻ 重试' : '↻ 重新生成'),
+                  descriptionChars > 120 && h('span', {
+                    style: { fontSize: 11, color: '#f87171' }
+                  }, '超过 120 字会被校验拦下')
+                ]),
+                descriptionState === 'failed' && h('div', {
+                  style: { fontSize: 11, color: '#8c909e', marginTop: 4 }
+                }, 'AI 写简介没成功，先用候选摘要，可手动改')
+              ]),
               h('div', { className: 'hs-form-item' }, [
                 h('label', { className: 'hs-form-label' }, '目录名 slug（永久 URL，只能小写字母/数字/连字符）'),
                 h('div', { style: { display: 'flex', gap: 8 } }, [
@@ -4881,6 +4966,7 @@ window.__ModuleLoader__.load({
                   executeScaffold(scaffoldModalItem, {
                     slug,
                     title: scaffoldTitle.trim(),
+                    description: scaffoldDescription.trim(),
                     projectRoot: isBlogConfigured ? '' : scaffoldProjectRoot.trim()
                   });
                 }

@@ -937,6 +937,65 @@ export function createRoutes(deps) {
     },
     {
       kind: 'exact',
+      path: `${PREFIX}/api/description-suggest`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (typeof deps.suggestDescription !== 'function') {
+          sendJson(res, 501, {
+            ok: false,
+            code: 'ERR_NO_DESCRIPTION_SUGGESTER',
+            message: '当前环境没有接入 llm 服务，无法生成简介',
+          });
+          return;
+        }
+        const body = await readJson(req);
+        if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
+
+        // 简介是「按定稿标题写」的，标题为空就没有主题可写 —— 直接拒，不猜
+        const title = String(body.title ?? '').trim();
+        if (!title) {
+          sendJson(res, 400, { ok: false, code: 'ERR_TITLE_REQUIRED', message: '缺少标题，无法生成简介' });
+          return;
+        }
+
+        const digest = await currentStore.loadDigest('latest');
+        if (!digest) {
+          sendJson(res, 400, { ok: false, code: 'ERR_NO_DIGEST', message: '还没有 digest，先跑一次抓取' });
+          return;
+        }
+        const item = findCandidateItem(digest, body.id);
+        if (!item) {
+          sendJson(res, 404, { ok: false, code: 'ERR_CANDIDATE_NOT_FOUND', message: `没有候选 ${body.id}` });
+          return;
+        }
+
+        try {
+          const value = await deps.suggestDescription({
+            item,
+            digest,
+            title,
+            store: currentStore,
+            projectRoot: currentProjectRoot,
+            provider: body.provider ? String(body.provider) : undefined,
+            model: body.model ? String(body.model) : undefined,
+          });
+          sendJson(res, 200, { ok: true, value });
+        } catch (error) {
+          // 与起标题一致：简介是建议不是前置条件，面板会回退候选摘要
+          await noteFailure('description-suggest', `写简介失败：${error?.message ?? error}`, {
+            code: error?.code || 'ERR_DESCRIPTION_SUGGEST',
+            context: { id: item?.id, title },
+          });
+          sendJson(res, 500, {
+            ok: false,
+            code: error?.code || 'ERR_DESCRIPTION_SUGGEST',
+            message: error?.message || String(error),
+          });
+        }
+      },
+    },
+    {
+      kind: 'exact',
       path: `${PREFIX}/api/pick-dir`,
       handler: async (req, res) => {
         if (!guard(req, res, ['GET', 'POST'])) return;

@@ -645,9 +645,13 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | 内容 | 草稿与已发布文章列表，可预览、在线编辑、转正 |
 | 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单、构建与部署命令；画像 tag 与关键词只读展示 |
 
-### 生成草稿：AI 起标题 + 六步进度
+### 生成草稿：AI 起标题与简介 + 六步进度
 
 「生成草稿」弹窗里的标题**不再默认复制原文**：打开即请求 `POST /api/title-suggest`，模型给 3 个中文标题、每个各带一个英文 slug；第一个自动填入，点其他候选会连 slug 一起换，之后仍可手改。拿不到标题（没接 llm / 超时 / 输出认不出来）时**不阻断**：标题回退原文，弹窗里只多一行灰字提示——标题是建议，不是建草稿的前置条件。
+
+标题定下来后，**简介按这个标题重写**（`POST /api/description-suggest`）：弹窗里多一个可编辑的多行框，初值是候选摘要，选完标题就换成模型写的 60–110 字（一句事实 + 一句为什么值得读）。换标题会连带换 slug 与简介；手改标题不自动重发，改完点「↻ 重新生成」。写不出来就保留候选摘要 + 一行提示，同样不阻断。
+
+> 连点几个标题时会有多个请求在飞，面板用自增 token 只认最后一次的结果——否则会出现「第 2 个标题配第 3 段简介」这种错配。
 
 确认后弹窗原位换成进度面板，把这条链路按 6 步摊开：
 
@@ -693,6 +697,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/run` | 触发一次抓取；已有一次在跑时回 409 `ERR_SCAN_BUSY` |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿（`slug` / `title` / `description` 可覆盖）；`generate:true` 时建完立刻在后台写正文并返回 job；slug 推导不出回 400 `ERR_SLUG_REQUIRED` |
 | POST | `/hotspot/api/title-suggest` | 按候选 id 让模型起 3 个中文标题 + 英文 slug（复用写正文的模型选择）；失败回 500 `ERR_TITLE_SUGGEST`，面板据此回退原文标题 |
+| POST | `/hotspot/api/description-suggest` | 按候选 id + **定稿标题**写一段 60–110 字简介（`title` 必填，空了回 400 `ERR_TITLE_REQUIRED`）；失败回 500 `ERR_DESCRIPTION_SUGGEST`，面板回退候选摘要 |
 | GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤）；每条任务带 `steps` 六步进度 |
 | POST | `/hotspot/api/jobs/cancel` | 取消正在跑的写作任务；没有在跑的回 404 `ERR_NO_RUNNING_JOB` |
 | GET | `/hotspot/api/errors` | 当天的错误日志（`?date=` / `?limit=`），附现有日志文件列表 |
