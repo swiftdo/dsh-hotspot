@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createPipeline } from './core/pipeline.js';
 import { rankClusters } from './core/rank.js';
@@ -55,15 +56,44 @@ export function apply(ctx, config = {}) {
     );
     projectRoot = process.cwd();
   }
-  const store = createFsStore({ dir: path.join(projectRoot, config.digestDir ?? '.hotspot') });
-  const target = createVitePressTarget({
+  let store = createFsStore({ dir: path.join(projectRoot, config.digestDir ?? '.hotspot') });
+  let target = createVitePressTarget({
     root: projectRoot,
     articleDir: config.articleDir,
     draftDir: config.draftDir,
   });
 
+  function updateRuntime(newConfig = {}) {
+    if (newConfig.projectRoot && existsSync(newConfig.projectRoot)) {
+      projectRoot = path.resolve(newConfig.projectRoot);
+    }
+    const digestDir = newConfig.digestDir || config.digestDir || '.hotspot';
+    const articleDir = newConfig.articleDir || config.articleDir || 'docs';
+    const draftDir = newConfig.draftDir || config.draftDir || 'docs/draft';
+    store = createFsStore({ dir: path.join(projectRoot, digestDir) });
+    target = createVitePressTarget({
+      root: projectRoot,
+      articleDir,
+      draftDir,
+    });
+    log(`hotspot: 运行时配置已更新，projectRoot=${projectRoot}, articleDir=${articleDir}, draftDir=${draftDir}`);
+    return { projectRoot, store, target, runScan };
+  }
+
+  // 若 hotspot.config.json 里已配置 projectRoot/dirs，启动时同步生效
+  try {
+    const localCfgPath = path.join(projectRoot, 'hotspot.config.json');
+    if (existsSync(localCfgPath)) {
+      const localCfg = JSON.parse(readFileSync(localCfgPath, 'utf8'));
+      if (localCfg.projectRoot || localCfg.articleDir || localCfg.draftDir || localCfg.digestDir) {
+        updateRuntime(localCfg);
+      }
+    }
+  } catch {
+    /* 忽略读取错误 */
+  }
+
   async function readProjectConfig() {
-    const { readFile } = await import('node:fs/promises');
     try {
       return JSON.parse(await readFile(path.join(projectRoot, 'hotspot.config.json'), 'utf8'));
     } catch {
@@ -264,7 +294,13 @@ export function apply(ctx, config = {}) {
   ctx.inject(['webServer'], (sctx) => {
     sctx.effect(() => {
       const disposers = [];
-      for (const route of createRoutes({ projectRoot, store, target, runScan })) {
+      for (const route of createRoutes({
+        projectRoot,
+        store,
+        target,
+        runScan,
+        onConfigUpdated: updateRuntime,
+      })) {
         try {
           disposers.push(sctx.webServer.register(route));
         } catch (error) {

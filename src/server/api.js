@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -123,45 +124,72 @@ function validateSource(input) {
  * @param {{ projectRoot: string, store: any, target: any, runScan: () => Promise<any> }} deps
  */
 export function createRoutes(deps) {
-  const { projectRoot, store, target, runScan } = deps;
-  const configFile = path.join(projectRoot, 'hotspot.config.json');
+  let currentProjectRoot = deps.projectRoot;
+  let currentStore = deps.store;
+  let currentTarget = deps.target;
+  let currentRunScan = deps.runScan;
+
+  function getConfigFile() {
+    return path.join(currentProjectRoot, 'hotspot.config.json');
+  }
 
   async function readConfig() {
     try {
-      return JSON.parse(await readFile(configFile, 'utf8'));
+      return JSON.parse(await readFile(getConfigFile(), 'utf8'));
     } catch {
       return {};
     }
   }
 
   async function writeConfig(config) {
-    await writeFile(configFile, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    await writeFile(getConfigFile(), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
   }
 
   async function buildState() {
-    const [config, profile, drafts, digest] = await Promise.all([
-      readConfig(),
-      target.profile(),
-      target.listDrafts(),
-      store.loadDigest('latest').catch(() => null),
+    const config = await readConfig();
+    const [profile, drafts, digest] = await Promise.all([
+      currentTarget?.profile().catch(() => ({ tagVocabulary: [], keywords: [], articles: [] })),
+      currentTarget?.listDrafts().catch(() => []),
+      currentStore?.loadDigest('latest').catch(() => null),
     ]);
 
     return {
-      projectRoot,
+      projectRoot: currentProjectRoot,
+      blog: {
+        projectRoot: config.projectRoot || currentProjectRoot,
+        articleDir: config.articleDir || (currentTarget?.articleDir || 'docs'),
+        draftDir: config.draftDir || (currentTarget?.draftDir || 'docs/draft'),
+        digestDir: config.digestDir || '.hotspot',
+      },
       config: {
+        projectRoot: config.projectRoot || '',
+        articleDir: config.articleDir || 'docs',
+        draftDir: config.draftDir || 'docs/draft',
+        digestDir: config.digestDir || '.hotspot',
         sources: config.sources ?? [],
-        rank: config.rank ?? {},
-        publish: config.publish ?? {},
+        rank: {
+          limit: 15,
+          sinceHours: 36,
+          halfLifeHours: 24,
+          clusterThreshold: 0.6,
+          ...(config.rank ?? {}),
+        },
+        publish: {
+          maxPerDay: 3,
+          allowedHosts: [],
+          autoTiers: ['tier-1', 'tier-2'],
+          ...(config.publish ?? {}),
+        },
       },
       profile: {
-        tags: profile.tagVocabulary.slice(0, 30),
-        keywords: profile.keywords.slice(0, 30).map((k) => k.term),
-        articleCount: profile.articles.length,
+        tags: (profile?.tagVocabulary || []).slice(0, 30),
+        keywords: (profile?.keywords || []).slice(0, 30).map((k) => k.term),
+        articleCount: (profile?.articles || []).length,
       },
-      articles: profile.articles
+      articles: (profile?.articles || [])
         .map((a) => ({ slug: a.slug, title: a.title, tags: a.tags }))
         .sort((a, b) => a.slug.localeCompare(b.slug)),
-      drafts,
+      drafts: drafts || [],
       digest: digest
         ? {
             date: digest.date,
@@ -254,7 +282,32 @@ export function createRoutes(deps) {
         if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
 
         const config = await readConfig();
-        if (body.rank) {
+
+        // 1. 博客仓库根目录与目录配置
+        if (body.projectRoot !== undefined) {
+          const raw = String(body.projectRoot).trim();
+          if (raw) {
+            const resolved = path.resolve(raw);
+            if (!existsSync(resolved)) {
+              return sendJson(res, 400, { ok: false, message: `指定博客根目录不存在: ${resolved}` });
+            }
+            config.projectRoot = resolved;
+          } else {
+            delete config.projectRoot;
+          }
+        }
+        if (body.articleDir !== undefined) {
+          config.articleDir = String(body.articleDir).trim() || 'docs';
+        }
+        if (body.draftDir !== undefined) {
+          config.draftDir = String(body.draftDir).trim() || 'docs/draft';
+        }
+        if (body.digestDir !== undefined) {
+          config.digestDir = String(body.digestDir).trim() || '.hotspot';
+        }
+
+        // 2. 排序与打分参数
+        if (body.rank && typeof body.rank === 'object') {
           const rank = { ...(config.rank ?? {}) };
           for (const key of ['halfLifeHours', 'limit', 'sinceHours', 'clusterThreshold']) {
             const value = Number(body.rank[key]);
@@ -265,7 +318,9 @@ export function createRoutes(deps) {
           }
           config.rank = rank;
         }
-        if (body.publish) {
+
+        // 3. 发布合规与安全规则
+        if (body.publish && typeof body.publish === 'object') {
           const publish = { ...(config.publish ?? {}) };
           if (Number.isFinite(Number(body.publish.maxPerDay))) {
             publish.maxPerDay = Math.max(0, Math.floor(Number(body.publish.maxPerDay)));
@@ -280,8 +335,33 @@ export function createRoutes(deps) {
           }
           config.publish = publish;
         }
+
         await writeConfig(config);
-        sendJson(res, 200, { ok: true, value: { rank: config.rank ?? {}, publish: config.publish ?? {} } });
+
+        // 4. 触发运行时刷新
+        if (typeof deps.onConfigUpdated === 'function') {
+          try {
+            const updated = await deps.onConfigUpdated(config);
+            if (updated?.projectRoot) currentProjectRoot = updated.projectRoot;
+            if (updated?.store) currentStore = updated.store;
+            if (updated?.target) currentTarget = updated.target;
+            if (updated?.runScan) currentRunScan = updated.runScan;
+          } catch (err) {
+            console.warn(`[hotspot] onConfigUpdated 触发失败: ${err.message}`);
+          }
+        }
+
+        sendJson(res, 200, {
+          ok: true,
+          value: {
+            projectRoot: config.projectRoot || currentProjectRoot,
+            articleDir: config.articleDir || 'docs',
+            draftDir: config.draftDir || 'docs/draft',
+            digestDir: config.digestDir || '.hotspot',
+            rank: config.rank ?? {},
+            publish: config.publish ?? {},
+          },
+        });
       },
     },
     {
@@ -290,7 +370,7 @@ export function createRoutes(deps) {
       handler: async (req, res) => {
         if (!guard(req, res, ['POST'])) return;
         try {
-          const { digest, status } = await runScan();
+          const { digest, status } = await currentRunScan();
           sendJson(res, 200, {
             ok: true,
             value: {
@@ -313,7 +393,7 @@ export function createRoutes(deps) {
         const body = await readJson(req);
         if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
 
-        const digest = await store.loadDigest('latest');
+        const digest = await currentStore.loadDigest('latest');
         if (!digest) return sendJson(res, 400, { ok: false, message: '还没有 digest，先跑一次抓取' });
 
         const key = String(body.id ?? '').replace(/^#/, '');
@@ -323,9 +403,9 @@ export function createRoutes(deps) {
         if (!item) return sendJson(res, 404, { ok: false, message: `没有候选 ${body.id}` });
 
         try {
-          const existing = await target.exists(item);
+          const existing = await currentTarget.exists(item);
           if (existing.exists) return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
-          const result = await target.scaffold(item, { draft: true, slug: body.slug });
+          const result = await currentTarget.scaffold(item, { draft: true, slug: body.slug });
           sendJson(res, 200, { ok: true, value: result });
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });

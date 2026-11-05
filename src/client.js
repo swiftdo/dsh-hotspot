@@ -214,6 +214,35 @@ window.__ModuleLoader__.load({
       .hs-input:focus {
         border-color: var(--dsw-alias-brand-primary, #4db6a0);
       }
+      .hs-textarea {
+        font: inherit;
+        color: var(--dsw-alias-label-primary, #e8e8ea);
+        background: var(--dsw-alias-bg-layer-2, #22232a);
+        border: 1px solid var(--dsw-alias-border-l1, #2e3038);
+        border-radius: 6px;
+        padding: 8px 10px;
+        outline: none;
+        resize: vertical;
+        line-height: 1.5;
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+      .hs-textarea:focus {
+        border-color: var(--dsw-alias-brand-primary, #4db6a0);
+      }
+      .hs-form-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--dsw-alias-label-secondary, #9b9ca6);
+        margin-bottom: 6px;
+      }
+      .hs-form-hint {
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #9b9ca6);
+        margin-top: 4px;
+        line-height: 1.4;
+      }
       .hs-table {
         width: 100%;
         border-collapse: collapse;
@@ -301,6 +330,41 @@ window.__ModuleLoader__.load({
       const [newTarget, setNewTarget] = useState('');
       const [newPoints, setNewPoints] = useState(100);
 
+      // 博客工程与系统参数配置表单状态
+      const [blogProjectRoot, setBlogProjectRoot] = useState('');
+      const [blogArticleDir, setBlogArticleDir] = useState('docs');
+      const [blogDraftDir, setBlogDraftDir] = useState('docs/draft');
+      const [blogDigestDir, setBlogDigestDir] = useState('.hotspot');
+      const [rankLimit, setRankLimit] = useState(15);
+      const [rankSinceHours, setRankSinceHours] = useState(36);
+      const [rankHalfLifeHours, setRankHalfLifeHours] = useState(24);
+      const [rankClusterThreshold, setRankClusterThreshold] = useState(0.6);
+      const [publishMaxPerDay, setPublishMaxPerDay] = useState(3);
+      const [publishAllowedHosts, setPublishAllowedHosts] = useState('');
+      const [savingConfig, setSavingConfig] = useState(false);
+
+      const syncConfigForm = (val) => {
+        if (!val) return;
+        const cfg = val.config || {};
+        const b = val.blog || {};
+        setBlogProjectRoot(cfg.projectRoot || b.projectRoot || '');
+        setBlogArticleDir(cfg.articleDir || b.articleDir || 'docs');
+        setBlogDraftDir(cfg.draftDir || b.draftDir || 'docs/draft');
+        setBlogDigestDir(cfg.digestDir || b.digestDir || '.hotspot');
+        if (cfg.rank) {
+          if (cfg.rank.limit !== undefined) setRankLimit(cfg.rank.limit);
+          if (cfg.rank.sinceHours !== undefined) setRankSinceHours(cfg.rank.sinceHours);
+          if (cfg.rank.halfLifeHours !== undefined) setRankHalfLifeHours(cfg.rank.halfLifeHours);
+          if (cfg.rank.clusterThreshold !== undefined) setRankClusterThreshold(cfg.rank.clusterThreshold);
+        }
+        if (cfg.publish) {
+          if (cfg.publish.maxPerDay !== undefined) setPublishMaxPerDay(cfg.publish.maxPerDay);
+          if (Array.isArray(cfg.publish.allowedHosts)) {
+            setPublishAllowedHosts(cfg.publish.allowedHosts.join('\n'));
+          }
+        }
+      };
+
       // 抓取并加载状态
       const loadState = useCallback(async () => {
         try {
@@ -309,6 +373,7 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.ok) {
             setState(data.value);
+            syncConfigForm(data.value);
           } else {
             showToast(data.message || '加载状态失败', true);
           }
@@ -417,6 +482,50 @@ window.__ModuleLoader__.load({
           }
         } catch (err) {
           showToast(err.message, true);
+        }
+      };
+
+      const handleSaveConfig = async () => {
+        try {
+          setSavingConfig(true);
+          const allowedList = publishAllowedHosts
+            .split(/[\n,]/)
+            .map(s => s.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
+            .filter(Boolean);
+
+          const payload = {
+            projectRoot: blogProjectRoot.trim(),
+            articleDir: blogArticleDir.trim() || 'docs',
+            draftDir: blogDraftDir.trim() || 'docs/draft',
+            digestDir: blogDigestDir.trim() || '.hotspot',
+            rank: {
+              limit: Number(rankLimit) || 15,
+              sinceHours: Number(rankSinceHours) || 36,
+              halfLifeHours: Number(rankHalfLifeHours) || 24,
+              clusterThreshold: Math.min(0.95, Math.max(0.3, Number(rankClusterThreshold) || 0.6))
+            },
+            publish: {
+              maxPerDay: Number(publishMaxPerDay) || 3,
+              allowedHosts: allowedList
+            }
+          };
+
+          const res = await fetch(`${API_BASE}/config`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showToast('博客与系统配置已成功保存并动态生效！');
+            await loadState();
+          } else {
+            showToast(data.message || '保存配置失败', true);
+          }
+        } catch (err) {
+          showToast(err.message || '网络连接异常', true);
+        } finally {
+          setSavingConfig(false);
         }
       };
 
@@ -653,30 +762,184 @@ window.__ModuleLoader__.load({
 
           // ── TAB: 配置 ──
           tab === 'config' && h('div', { key: 'config-panel' }, [
+            // 1. 博客仓库与目录配置
             h('div', { className: 'hs-card' }, [
-              h('div', { style: { fontWeight: 500, marginBottom: 12 } }, '排序与打分参数'),
-              h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 } }, [
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } }, [
                 h('div', null, [
-                  h('label', { style: { display: 'block', fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 } }, '半衰期 (小时)'),
-                  h('input', { className: 'hs-input', type: 'number', readOnly: true, value: state?.config?.rank?.halfLifeHours || 24 })
+                  h('div', { style: { fontWeight: 500, fontSize: 14 } }, '博客仓库与目录配置'),
+                  h('div', { className: 'hs-form-hint' }, '配置本地 VitePress 博客仓库绝对路径及文档目录，保存后立即切换生效')
+                ]),
+                h('span', { className: 'hs-badge', style: { background: 'rgba(77, 182, 160, 0.15)', color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, '实时生效')
+              ]),
+              h('div', { style: { marginBottom: 14 } }, [
+                h('label', { className: 'hs-form-label' }, '博客根目录 (projectRoot)'),
+                h('input', {
+                  className: 'hs-input',
+                  style: { width: '100%', boxSizing: 'border-box' },
+                  placeholder: '输入博客根目录绝对路径（如 /Users/username/my-blog，留空表示当前工作区）',
+                  value: blogProjectRoot,
+                  onChange: (e) => setBlogProjectRoot(e.target.value)
+                }),
+                h('div', { className: 'hs-form-hint' }, `当前服务端生效路径: ${state?.blog?.projectRoot || state?.projectRoot || '当前工作区'}`)
+              ]),
+              h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 } }, [
+                h('div', null, [
+                  h('label', { className: 'hs-form-label' }, '博文目录 (articleDir)'),
+                  h('input', {
+                    className: 'hs-input',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    placeholder: 'docs',
+                    value: blogArticleDir,
+                    onChange: (e) => setBlogArticleDir(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '已发布文章相对目录')
                 ]),
                 h('div', null, [
-                  h('label', { style: { display: 'block', fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 } }, '共现聚类阈值'),
-                  h('input', { className: 'hs-input', type: 'number', readOnly: true, value: state?.config?.rank?.clusterThreshold || 0.6 })
+                  h('label', { className: 'hs-form-label' }, '草稿输出目录 (draftDir)'),
+                  h('input', {
+                    className: 'hs-input',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    placeholder: 'docs/draft',
+                    value: blogDraftDir,
+                    onChange: (e) => setBlogDraftDir(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '生成的草稿相对目录')
                 ]),
                 h('div', null, [
-                  h('label', { style: { display: 'block', fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 } }, '每日最大发布数'),
-                  h('input', { className: 'hs-input', type: 'number', readOnly: true, value: state?.config?.publish?.maxPerDay || 3 })
+                  h('label', { className: 'hs-form-label' }, '数据缓存目录 (digestDir)'),
+                  h('input', {
+                    className: 'hs-input',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    placeholder: '.hotspot',
+                    value: blogDigestDir,
+                    onChange: (e) => setBlogDigestDir(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '存储每日扫描摘要与缓存')
                 ])
               ])
             ]),
+
+            // 2. 排序与打分参数
             h('div', { className: 'hs-card' }, [
-              h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '博客环境信息'),
-              h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: 1.6 } }, [
-                h('div', null, `博客仓库根目录: ${state?.projectRoot || '未配置'}`),
-                h('div', null, `词汇表 Tag 数量: ${state?.profile?.tags?.length || 0} 个`),
-                h('div', null, `博文索引篇数: ${state?.profile?.articleCount || 0} 篇`)
+              h('div', { style: { fontWeight: 500, fontSize: 14, marginBottom: 12 } }, '热点抓取与打分参数'),
+              h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 } }, [
+                h('div', null, [
+                  h('label', { className: 'hs-form-label' }, '候选数量上限 (limit)'),
+                  h('input', {
+                    className: 'hs-input',
+                    type: 'number',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    value: rankLimit,
+                    onChange: (e) => setRankLimit(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '单日推荐候选上限（默认 15）')
+                ]),
+                h('div', null, [
+                  h('label', { className: 'hs-form-label' }, '抓取回溯窗口 (sinceHours)'),
+                  h('input', {
+                    className: 'hs-input',
+                    type: 'number',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    value: rankSinceHours,
+                    onChange: (e) => setRankSinceHours(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '采集过去多少小时内的新闻')
+                ]),
+                h('div', null, [
+                  h('label', { className: 'hs-form-label' }, '新鲜度半衰期 (halfLifeHours)'),
+                  h('input', {
+                    className: 'hs-input',
+                    type: 'number',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    value: rankHalfLifeHours,
+                    onChange: (e) => setRankHalfLifeHours(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '衰减衰退周期（默认 24h）')
+                ]),
+                h('div', null, [
+                  h('label', { className: 'hs-form-label' }, '聚类相似度阈值 (threshold)'),
+                  h('input', {
+                    className: 'hs-input',
+                    type: 'number',
+                    step: '0.05',
+                    style: { width: '100%', boxSizing: 'border-box' },
+                    value: rankClusterThreshold,
+                    onChange: (e) => setRankClusterThreshold(e.target.value)
+                  }),
+                  h('div', { className: 'hs-form-hint' }, '并查集去重门槛 (0.3~0.95)')
+                ])
               ])
+            ]),
+
+            // 3. 发布合规与安全规则
+            h('div', { className: 'hs-card' }, [
+              h('div', { style: { fontWeight: 500, fontSize: 14, marginBottom: 12 } }, '发布安全与外链合规'),
+              h('div', { style: { marginBottom: 12 } }, [
+                h('label', { className: 'hs-form-label' }, '每日最大发布篇数 (maxPerDay)'),
+                h('input', {
+                  className: 'hs-input',
+                  type: 'number',
+                  style: { width: 160 },
+                  value: publishMaxPerDay,
+                  onChange: (e) => setPublishMaxPerDay(e.target.value)
+                }),
+                h('div', { className: 'hs-form-hint' }, '限制每天从草稿推到正式发布的上限')
+              ]),
+              h('div', null, [
+                h('label', { className: 'hs-form-label' }, '允许的外链域名白名单 (allowedHosts)'),
+                h('textarea', {
+                  className: 'hs-textarea',
+                  style: { width: '100%', height: 70 },
+                  placeholder: '输入允许的外链域名，每行一个或逗号分隔，如：\ngithub.com\nswift.org\nnews.ycombinator.com',
+                  value: publishAllowedHosts,
+                  onChange: (e) => setPublishAllowedHosts(e.target.value)
+                }),
+                h('div', { className: 'hs-form-hint' }, '用于文章发布前自动化检查，拦截未经授权的不可信外链')
+              ])
+            ]),
+
+            // 4. 当前博客画像
+            h('div', { className: 'hs-card' }, [
+              h('div', { style: { fontWeight: 500, fontSize: 14, marginBottom: 8 } }, '当前博客画像索引'),
+              h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: 1.6, marginBottom: 10 } }, [
+                h('div', null, `已探测博文篇数: ${state?.profile?.articleCount || 0} 篇`),
+                h('div', null, `草稿总数: ${state?.drafts?.length || 0} 篇`)
+              ]),
+              (state?.profile?.tags || []).length > 0 && h('div', { style: { marginBottom: 8 } }, [
+                h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 } }, '标签体系 (Tags):'),
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                  state.profile.tags.map(t => h('span', { key: t, className: 'hs-tag' }, t))
+                )
+              ]),
+              (state?.profile?.keywords || []).length > 0 && h('div', null, [
+                h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 } }, '重点关键词 (Keywords):'),
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                  state.profile.keywords.map(k => h('span', { key: k, className: 'hs-tag', style: { borderColor: 'rgba(77, 182, 160, 0.4)' } }, k))
+                )
+              ])
+            ]),
+
+            // 5. 底部操作按钮栏
+            h('div', { style: { display: 'flex', gap: 10, justifyContent: 'flex-start', alignItems: 'center', marginTop: 14, marginBottom: 20 } }, [
+              h('button', {
+                className: 'hs-btn primary',
+                disabled: savingConfig,
+                onClick: handleSaveConfig
+              }, savingConfig ? '正在保存...' : '保存博客与系统配置'),
+              h('button', {
+                className: 'hs-btn',
+                onClick: () => {
+                  syncConfigForm(state);
+                  showToast('已重置表单为当前配置');
+                }
+              }, '重置更改'),
+              h('button', {
+                className: 'hs-btn',
+                onClick: () => {
+                  loadState();
+                  showToast('已刷新博客数据');
+                }
+              }, '重新探测博客数据')
             ])
           ])
         ]),
