@@ -310,6 +310,75 @@ export function apply(ctx, config = {}) {
             },
           }),
         ),
+
+        sctx.tools.register(
+          defineTool({
+            name: 'hotspot_supplement',
+            description:
+              '登记写正文时联网补到的证据（URL + 原文）。登记后 hotspot check 会把它的原文并入数字比对（版本号、日期不再被判成编造），并把它的域名加入外链白名单。边搜边登记，不要等 check 报错再补。',
+            parameters: {
+              slug: { type: 'string', description: '草稿 slug（必填）' },
+              url: { type: 'string', description: '页面地址（必填，http/https）' },
+              title: { type: 'string', description: '页面标题，缺省用域名' },
+              content: { type: 'string', description: '页面正文或关键段落，建议 1000-3000 字；超过 4000 字会被截断' },
+              kind: { type: 'string', description: 'official / blog / issue / docs / other' },
+              projectRoot: { type: 'string', description: '可选：博客项目根目录（未配置全局路径时必须提供）' },
+            },
+            output: {
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  ok: { type: 'boolean' },
+                  url: { type: 'string' },
+                  count: { type: 'number' },
+                  file: { type: 'string' },
+                  message: { type: 'string' },
+                },
+              },
+              render(_args, value) {
+                return textBlocks(
+                  value.ok
+                    ? `补料已登记：${value.url}\n共 ${value.count} 条 · ${value.file}`
+                    : value.message,
+                );
+              },
+            },
+            async execute(args) {
+              let effectiveTarget = target;
+              if (args?.projectRoot) {
+                const pr = path.resolve(args.projectRoot);
+                if (!existsSync(pr)) {
+                  return { ok: false, message: `指定博客根目录不存在：${pr}` };
+                }
+                effectiveTarget = createVitePressTarget({
+                  root: pr,
+                  articleDir: config.articleDir || 'docs',
+                  draftDir: config.draftDir || 'docs/draft',
+                });
+              }
+              if (!effectiveTarget) {
+                return {
+                  ok: false,
+                  message: '尚未配置博客项目根目录。请在控制面板填写博客路径，或在参数中指定 projectRoot。',
+                };
+              }
+              if (!args?.url) return { ok: false, message: '缺 url' };
+
+              try {
+                const result = await effectiveTarget.addSupplement(String(args.slug ?? ''), {
+                  url: String(args.url),
+                  title: args.title,
+                  kind: args.kind,
+                  content: args.content,
+                });
+                return { ok: true, url: result.entry.url, count: result.entries.length, file: result.file };
+              } catch (error) {
+                return { ok: false, message: error instanceof Error ? error.message : String(error) };
+              }
+            },
+          }),
+        ),
         ];
       } catch (error) {
         // Cordis 会把 inject 回调里的异常静默掉，这里必须自己喊出来，
@@ -319,7 +388,7 @@ export function apply(ctx, config = {}) {
         return () => {};
       }
 
-      log(`已注册 ${disposers.length} 个工具：hotspot_run / hotspot_get / hotspot_scaffold`);
+      log(`已注册 ${disposers.length} 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement`);
 
       return () => {
         for (const dispose of disposers) {

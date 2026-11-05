@@ -45,6 +45,7 @@ node src/cli.js init --root ~/Desktop/Code/blog/swiftdo.github.io
 node src/cli.js run --dry-run          # 只看不落盘
 node src/cli.js run                    # 落 .hotspot/digest/YYYY-MM-DD.{json,md}
 node src/cli.js scaffold '#3'          # 生成 docs/draft/<slug>/index.md
+node src/cli.js supplement <slug> --url <页面> --file <正文>  # 联网补到的证据，登记后 check 才认
 node src/cli.js check <slug>           # 三道机械校验
 node src/cli.js promote <slug>         # 转到 docs/article/，去掉 sitemap:false
 node src/cli.js publish <slug> --yes   # 校验 → 构建 → 提交 → 推送 → 上传
@@ -66,11 +67,28 @@ node src/cli.js doctor --online        # 自检：配置 / 目标项目 / 每个
 ```text
 [hotspot] hotspot: 插件已加载
 [hotspot] tools 服务就绪=true
-[hotspot] 已注册 3 个工具：hotspot_run / hotspot_get / hotspot_scaffold
+[hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
 [hotspot] 已注册 7 条路由，管理页 /hotspot/
 ```
 
 四行缺哪一行，问题就在哪一层：第一行缺失 = 模块没被加载（看 `did not activate` 列表）；第二行 false = tools 服务没起来；第三行缺失 = 注册抛异常了（异常被 Cordis 吞掉，插件里的 try/catch 会打出来）；第四行缺失 = webServer 没就绪。
+
+## 写正文：先补料，再去 AI 味
+
+骨架是确定性生成的，正文不是。正文要有信息量，就得离开候选源去查官方 release notes、作者博客、issue/PR——那些页面里的版本号和日期，一手源里没有，`check` 会把它们判成编造。
+
+补料（supplement）是这条缝的解法：把"实际读过什么"登记成证据，让闸门知道**证据边界在扩**，而不是用 `--allow` 把闸门关掉。
+
+```bash
+node src/cli.js supplement <slug> --url https://swift.org/blog/x/ --file /tmp/x.txt --kind official
+node src/cli.js supplement <slug> --list     # 看已登记的补料
+```
+
+登记后 `check` 做三件事：补料原文并入数字比对、补料 URL 与域名并入外链白名单、配置里的 `publish.allowedHosts` 继续生效。文件落在 `docs/draft/<slug>/sources.json`，`promote` 时一起搬到文章目录——转正之后仍答得出"这段数字是从哪读来的"。
+
+顺序是硬的：**写 → 去 AI 味 → check**。去味会改数字写法（`6.1.2` → `v6.1.2`）和删链接，先 check 等于白跑一遍。
+
+DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报错再回头补。
 
 ## 三道机械校验
 
@@ -78,9 +96,9 @@ node src/cli.js doctor --online        # 自检：配置 / 目标项目 / 每个
 
 | 检查 | 拦什么 | 实现 |
 |---|---|---|
-| 数字字面比对 | 把 `24.9` 写成 `24.10`、把版本号记错 | 文章里的 `\d+(\.\d+)+` 必须在一手源原文里出现过 |
+| 数字字面比对 | 把 `24.9` 写成 `24.10`、把版本号记错 | 文章里的 `\d+(\.\d+)+` 必须出现在一手源或已登记的补料原文里 |
 | 站内链接集合 | 死链 | 扫 `docs/**/index.md` 建 URL 集合，逐个命中 |
-| 外链白名单 | 编造来源 | 必须来自候选源，或配置里登记的域名 |
+| 外链白名单 | 编造来源 | 必须来自候选源、已登记的补料域名，或配置里登记的域名 |
 
 外加 frontmatter 规则：description ≤ 120 字、不写 `permalink`、date 格式、tag 必须来自受控词表（词表从存量文章归纳，同一 tag 的多种写法按小写归并）。
 
@@ -164,7 +182,7 @@ dsh plugin --profile desktop add /Users/laijihua/Desktop/Code/hotspot
 ```text
 [hotspot] hotspot: 插件已加载，projectRoot=...
 [hotspot] tools 服务就绪=true
-[hotspot] 已注册 3 个工具：hotspot_run / hotspot_get / hotspot_scaffold
+[hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
 ```
 
 ## 管理界面

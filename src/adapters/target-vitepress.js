@@ -2,6 +2,9 @@ import { mkdir, readdir, readFile, writeFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path';
 import { parseFrontmatter } from '../core/validate.js';
 import { titleKey, slugify, dateLabel } from '../core/normalize.js';
+import {
+  SUPPLEMENT_VERSION, normalizeSupplementFile, normalizeSupplementEntry, upsertSupplement,
+} from '../core/supplement.js';
 
 /**
  * VitePress 目标适配器。这是唯一知道"这个站点长什么样"的地方 ——
@@ -15,6 +18,12 @@ import { titleKey, slugify, dateLabel } from '../core/normalize.js';
  */
 
 const IGNORED_DOC_DIRS = new Set(['public', 'blog', 'book', 'result']);
+
+/**
+ * 补料文件名。跟 index.md 同目录，promote 时一起搬 —— 文章转正后
+ * "这段数字是从哪读来的"仍然查得到，而不是随着草稿目录被删掉。
+ */
+const SUPPLEMENT_FILE = 'sources.json';
 
 const DEFAULT_ALIASES = {
   'ai': ['ai', 'agent', 'llm', 'gpt', 'claude', 'deepseek'],
@@ -137,12 +146,61 @@ export function createVitePressTarget(config) {
     });
   }
 
+  /**
+   * 补料的读写。草稿优先，其次已发布文章 —— promote 会把文件搬过去，
+   * 所以"读"必须两个目录都看，否则转正后补料就"消失"了。
+   */
+  async function readSupplements(slug) {
+    const draftFile = path.join(draftDir, slug, SUPPLEMENT_FILE);
+    const articleFile = path.join(articleDir, slug, SUPPLEMENT_FILE);
+    let file = draftFile;
+    let text = await readIfExists(file);
+    if (text === null) {
+      file = articleFile;
+      text = await readIfExists(file);
+    }
+    if (text === null) {
+      return { version: SUPPLEMENT_VERSION, slug, file: path.relative(root, draftFile), entries: [], invalid: [] };
+    }
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      // 坏 JSON 不吞：吞了就会表现为"登记过补料却仍报数字违规"
+      throw new Error(`补料文件不是合法 JSON：${path.relative(root, file)}`);
+    }
+    const { entries, invalid } = normalizeSupplementFile(raw);
+    return { version: SUPPLEMENT_VERSION, slug, file: path.relative(root, file), entries, invalid };
+  }
+
+  async function addSupplement(slug, input) {
+    const clean = String(slug ?? '').trim();
+    if (!/^[a-z0-9-]+$/.test(clean)) throw new Error(`slug 不合法：${slug}`);
+    const inDraft = (await readIfExists(path.join(draftDir, clean, 'index.md'))) !== null;
+    const base = inDraft ? draftDir : articleDir;
+    if ((await readIfExists(path.join(base, clean, 'index.md'))) === null) {
+      throw new Error(`找不到草稿或文章：${clean}`);
+    }
+
+    const entry = normalizeSupplementEntry(input);
+    const current = await readSupplements(clean);
+    const { entries, added } = upsertSupplement(current.entries, entry);
+
+    const file = path.join(base, clean, SUPPLEMENT_FILE);
+    await mkdir(path.dirname(file), { recursive: true });
+    const payload = { version: SUPPLEMENT_VERSION, slug: clean, updatedAt: new Date().toISOString(), entries };
+    await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    return { file: path.relative(root, file), entry, entries, added };
+  }
+
   return {
     root,
     docsDir,
     articleDir,
     draftDir,
     listArticles: scanArticles,
+    readSupplements,
+    addSupplement,
 
     /**
      * 从项目本身归纳画像：article 的 tags 决定权重，docs 一级目录决定关键词。
@@ -315,10 +373,20 @@ export function createVitePressTarget(config) {
       if (!text) throw new Error(`草稿不存在：${path.relative(root, fromFile)}`);
 
       const promoted = text.replace(/^sitemap:\s*false\s*$/m, '').replace(/\n{3,}/g, '\n\n');
+      // 补料跟着搬走：转正后仍要能回答"这段数字是从哪读来的"
+      const supplementText = await readIfExists(path.join(from, SUPPLEMENT_FILE));
       await mkdir(to, { recursive: true });
       await writeFile(path.join(to, 'index.md'), promoted, 'utf8');
+      if (supplementText !== null) {
+        await writeFile(path.join(to, SUPPLEMENT_FILE), supplementText, 'utf8');
+      }
       await rm(from, { recursive: true, force: true });
-      return { from, to, file: path.join(to, 'index.md') };
+      return {
+        from,
+        to,
+        file: path.join(to, 'index.md'),
+        supplement: supplementText !== null ? path.join(to, SUPPLEMENT_FILE) : null,
+      };
     },
 
     async hasDraft(slug) {
@@ -388,6 +456,33 @@ export function createVitePressTarget(config) {
         fullPath: full,
         data,
         body,
+      };
+    },
+
+    /** 删除指定的草稿或文章文件（安全防御：仅限在 projectRoot 范围内） */
+    async deleteArticle(targetFile) {
+      const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
+      const normRoot = path.normalize(root);
+      if (!full.startsWith(normRoot)) {
+        throw new Error('路径不合法：超出项目根目录范围');
+      }
+      const st = await stat(full).catch(() => null);
+      if (!st || !st.isFile()) {
+        throw new Error(`文件不存在或不是普通文件：${path.relative(root, full)}`);
+      }
+      await rm(full, { force: true });
+      const parentDir = path.dirname(full);
+      const isDraftOrArticleSubdir = parentDir.startsWith(path.normalize(draftDir)) || parentDir.startsWith(path.normalize(articleDir));
+      if (isDraftOrArticleSubdir && parentDir !== path.normalize(draftDir) && parentDir !== path.normalize(articleDir)) {
+        const remaining = await readdir(parentDir).catch(() => []);
+        const onlySupplements = remaining.every((f) => f === SUPPLEMENT_FILE || f.startsWith('.'));
+        if (onlySupplements) {
+          await rm(parentDir, { recursive: true, force: true }).catch(() => {});
+        }
+      }
+      return {
+        ok: true,
+        file: path.relative(root, full),
       };
     },
   };

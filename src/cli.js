@@ -9,6 +9,7 @@ import { createPipeline } from './core/pipeline.js';
 import { rankClusters } from './core/rank.js';
 import { renderMarkdown } from './core/digest.js';
 import { validateArticle, parseFrontmatter } from './core/validate.js';
+import { collectSupplementEvidence } from './core/supplement.js';
 import { dateLabel } from './core/normalize.js';
 import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
@@ -21,6 +22,7 @@ hotspot —— 热点采集 → 去重 → 确定性排序 → 草稿落地
   hotspot run [--dry-run]                 抓取并生成 digest
   hotspot show [<date>|latest]            打印已有 digest
   hotspot scaffold <id|#3> [--slug x]     按候选生成草稿到 docs/draft/
+  hotspot supplement <slug> --url <url>  登记写正文时联网补到的证据（--file 存正文 / --list 查看）
   hotspot check <slug>                    草稿发布前三道机械校验
   hotspot promote <slug>                  草稿转正到 docs/article/
   hotspot publish <slug> [--yes]          校验 → 构建 → 提交 → 推送 → 上传
@@ -28,6 +30,10 @@ hotspot —— 热点采集 → 去重 → 确定性排序 → 草稿落地
 
   --root <dir>   目标项目根目录，默认当前目录
   --online       doctor 时真的去连每个源（会发网络请求）
+
+写作顺序（顺序错了会白跑一遍）：
+  抓题 hotspot run → 落骨架 hotspot scaffold → 查原文 hotspot get（CLI: hotspot show）
+  → 联网补料 hotspot supplement → 写正文 → 去 AI 味 → hotspot check → hotspot promote
 `;
 
 function parseArgs(argv) {
@@ -243,7 +249,9 @@ async function cmdScaffold() {
   const result = await target.scaffold(candidate, { draft: true, slug: flags.get('slug') });
   log(`✓ 草稿：${path.relative(cwd, result.file)}`);
   log(`  slug: ${result.slug}`);
-  log('  写完正文后：hotspot check ' + result.slug + ' → hotspot promote ' + result.slug);
+  log(`  写正文前先 hotspot show / 读 digest 取多源原文；联网读到新页面就登记：`);
+  log(`    hotspot supplement ${result.slug} --url <页面地址> --file <保存下来的正文>`);
+  log(`  写完去 AI 味，再 hotspot check ${result.slug} → hotspot promote ${result.slug}`);
 }
 
 async function runChecks(slug) {
@@ -277,30 +285,105 @@ async function runChecks(slug) {
 
   const profile = await target.profile();
   const siteUrls = await target.siteUrls();
+
+  // 补料并入证据边界：登记过的页面，其原文参与数字比对，其 URL 与域名进入白名单。
+  // 这不是放宽闸门 —— 是让"读过什么"成为可审计的输入，而不是靠 --allow 手工放行。
+  const supplements = await target.readSupplements(slug);
+  const evidence = collectSupplementEvidence(supplements.entries, { allowedHosts: publish.allowedHosts ?? [] });
+  sourceTexts.push(...evidence.sourceTexts);
+  for (const url of evidence.allowedUrls) allowedUrls.add(url);
+
   const result = validateArticle({
     markdown,
     sourceTexts,
     siteUrls,
     tagVocabulary: profile.tagVocabulary,
     allowedUrls,
-    allowedHosts: publish.allowedHosts ?? [],
+    allowedHosts: evidence.allowedHosts,
     allowNumbers: String(flags.get('allow') ?? '').split(',').filter(Boolean),
   });
 
-  return { result, file, candidate };
+  return { result, file, candidate, supplements };
 }
 
 async function cmdCheck() {
   const slug = positional[1];
   if (!slug) fail('用法：hotspot check <slug>');
-  const { result, file } = await runChecks(slug);
+  const { result, file, supplements } = await runChecks(slug);
   log(`校验 ${path.relative(cwd, file)}`);
+  if (supplements.entries.length > 0) {
+    const hosts = [...new Set(supplements.entries.map((e) => e.host).filter(Boolean))];
+    log(`  证据边界：候选源 + ${supplements.entries.length} 条补料（${hosts.join('、') || '无域名'}）`);
+  }
+  for (const item of supplements.invalid) {
+    log(`! 补料条目被跳过：${item.url || '(无 URL)'} —— ${item.reason}`);
+  }
   if (result.ok) {
     log('✓ 三道检查全过');
+    log(`  下一步：hotspot promote ${slug}`);
     return;
   }
   for (const v of result.violations) log(`✖ [${v.code}] ${v.message}`);
+
+  const codes = new Set(result.violations.map((v) => v.code));
+  if (codes.has('number-not-in-source')) {
+    log('');
+    log('  数字对不上：先把读过的那页登记成补料，再重跑 check ——');
+    log(`    hotspot supplement ${slug} --url <页面地址> --file <保存下来的正文>`);
+  }
+  if (codes.has('external-link-untrusted')) {
+    log('');
+    log('  外链不在白名单：登记该来源即可连带放行它的域名 ——');
+    log(`    hotspot supplement ${slug} --url <页面地址>`);
+  }
+  log('');
+  log('  顺序提醒：写 → 去 AI 味 → check。先去味再校验，否则改完措辞还要再跑一遍。');
   process.exitCode = 1;
+}
+
+/**
+ * 登记补料。正文写完再登记就晚了 —— 数字违规会先冒出来，
+ * 那时人容易顺手 --allow 放行，闸门就这么被绕过去了。
+ */
+async function cmdSupplement() {
+  const slug = positional[1];
+  if (!slug) fail('用法：hotspot supplement <slug> --url <url> [--title t] [--file path] [--text 文本] [--list]');
+  const { target } = await loadConfig();
+
+  if (flags.get('list')) {
+    const { entries, file } = await target.readSupplements(slug);
+    log(`补料 ${slug}（${file}）`);
+    if (entries.length === 0) {
+      log('  （空）—— 联网读到新页面时用 --url 登记，它的原文会并入数字比对');
+      return;
+    }
+    for (const entry of entries) {
+      const size = [...entry.content].length;
+      log(`  - ${entry.url}`);
+      log(`    ${entry.title} · ${entry.kind} · ${size} 字${entry.truncated ? '（已截断）' : ''}`);
+    }
+    return;
+  }
+
+  const url = flags.get('url');
+  if (!url || url === true) fail('缺 --url <页面地址>');
+
+  let content = '';
+  const file = flags.get('file');
+  if (typeof file === 'string') content = await readFile(path.resolve(cwd, file), 'utf8');
+  else if (typeof flags.get('text') === 'string') content = String(flags.get('text'));
+
+  const result = await target.addSupplement(slug, {
+    url: String(url),
+    title: typeof flags.get('title') === 'string' ? String(flags.get('title')) : '',
+    kind: typeof flags.get('kind') === 'string' ? String(flags.get('kind')) : '',
+    content,
+  });
+
+  log(`✓ 补料${result.added ? '已登记' : '已更新'}：${result.entry.url}`);
+  log(`  ${result.entry.title} · 共 ${result.entries.length} 条 · ${result.file}`);
+  if (!content) log('  （只登记了 URL，没有正文：数字比对用不上，外链白名单会放行）');
+  log('  check 时它会并入证据边界，不需要再 --allow');
 }
 
 async function cmdPromote() {
@@ -528,6 +611,7 @@ async function main() {
     case 'run': return cmdRun();
     case 'show': return cmdShow();
     case 'scaffold': return cmdScaffold();
+    case 'supplement': return cmdSupplement();
     case 'check': return cmdCheck();
     case 'promote': return cmdPromote();
     case 'publish': return cmdPublish();
