@@ -6,6 +6,7 @@ window.__ModuleLoader__.load({
     const useState = React.useState;
     const useEffect = React.useEffect;
     const useCallback = React.useCallback;
+    const useRef = React.useRef;
 
     const PANEL_ID = 'dsh-hotspot';
     const API_BASE = '/dsh-hotspot/api';
@@ -1835,6 +1836,58 @@ window.__ModuleLoader__.load({
 
       const isBlogConfigured = Boolean(state?.blog?.configured && state?.blog?.projectRoot);
 
+      // ── 模型与写作方式：默认一个，写正文 / 润色可各自覆盖 ──
+      const [modelCatalog, setModelCatalog] = useState(null);
+      const [modelForm, setModelForm] = useState(null);
+      const [savingModels, setSavingModels] = useState(false);
+
+      const loadModels = useCallback(async () => {
+        try {
+          const res = await fetch(`${API_BASE}/models`);
+          const data = await res.json();
+          if (data.ok && data.value) {
+            setModelCatalog(data.value);
+            setModelForm(data.value.selection || null);
+          }
+        } catch (err) {
+          // 模型目录只是附加信息：拿不到不该让整个面板报错
+          console.warn('[dsh-hotspot] 读取模型目录失败:', err);
+        }
+      }, []);
+
+      useEffect(() => {
+        loadModels();
+      }, [loadModels]);
+
+      const handleSaveModels = async () => {
+        if (!modelForm) return;
+        try {
+          setSavingModels(true);
+          const res = await fetch(`${API_BASE}/models`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              mode: modelForm.mode,
+              global: modelForm.global,
+              writer: modelForm.writer,
+              polish: modelForm.polish
+            })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            setModelCatalog(prev => ({ ...(prev || {}), ...data.value }));
+            setModelForm(data.value.selection);
+            showToast('模型选择已保存，下一次写正文 / 润色生效');
+          } else {
+            showToast(data.error || data.message || '保存模型失败', true);
+          }
+        } catch (err) {
+          showToast(err.message || String(err), true);
+        } finally {
+          setSavingModels(false);
+        }
+      };
+
       const syncConfigForm = (val) => {
         if (!val) return;
         const cfg = val.config || {};
@@ -2154,10 +2207,92 @@ window.__ModuleLoader__.load({
         executeScaffold(item);
       };
 
+      // 后台写作任务的实时状态：slug -> job。生成草稿后在这里推进度。
+      const [jobStates, setJobStates] = useState({});
+      const [jobStarting, setJobStarting] = useState({});
+      const watchedSlugs = useRef(new Set());
+
+      /**
+       * 盯一个后台写作任务：生成草稿是「搜 → 读 → 综合」，几分钟是常态，
+       * 所以接口立刻返回 job，这里每 4 秒问一次，结束后刷新草稿箱并给结论。
+       */
+      const watchJob = async (slug) => {
+        if (!slug || watchedSlugs.current.has(slug)) return;
+        watchedSlugs.current.add(slug);
+        try {
+          for (let i = 0; i < 200; i += 1) {
+            await new Promise(resolve => setTimeout(resolve, 4000));
+            let job = null;
+            try {
+              const res = await fetch(`${API_BASE}/jobs?slug=${encodeURIComponent(slug)}`);
+              const data = await res.json();
+              job = Array.isArray(data.value) ? data.value[0] : null;
+            } catch (err) {
+              return;
+            }
+            if (!job) return;
+            setJobStates(prev => ({ ...prev, [slug]: job }));
+            if (job.state === 'running') continue;
+
+            await loadState();
+            const chars = job.result?.bodyChars ?? 0;
+            const badChecks = job.result?.checks && job.result.checks.ok === false;
+            if (job.state === 'done') {
+              showToast(
+                badChecks
+                  ? `《${slug}》正文已写入 ${chars} 字，但校验还有问题，去草稿里看一眼`
+                  : `✅《${slug}》正文已写入 ${chars} 字，校验通过`
+              );
+            } else {
+              showToast(`《${slug}》写正文失败：${job.error || '未知原因'}（可在草稿箱重试）`, true);
+            }
+            return;
+          }
+        } finally {
+          watchedSlugs.current.delete(slug);
+        }
+      };
+
+      /** 失败后重试：走同一个后台路径，不占着编辑器转圈。 */
+      const retryWrite = async (slug) => {
+        if (!slug || jobStarting[slug]) return;
+        try {
+          setJobStarting(prev => ({ ...prev, [slug]: true }));
+          const res = await fetch(`${API_BASE}/jobs`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ slug })
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showToast(data.message || '重试失败', true);
+            return;
+          }
+          setJobStates(prev => ({ ...prev, [slug]: data.job }));
+          showToast('已重新开始写正文');
+          await loadState();
+          watchJob(slug);
+        } catch (err) {
+          showToast(err.message || String(err), true);
+        } finally {
+          setJobStarting(prev => ({ ...prev, [slug]: false }));
+        }
+      };
+
+      // 面板重新打开时，把还在跑的任务接回来继续盯
+      useEffect(() => {
+        const running = (state?.jobs || []).filter(job => job && job.state === 'running');
+        for (const job of running) {
+          setJobStates(prev => ({ ...prev, [job.slug]: job }));
+          watchJob(job.slug);
+        }
+      }, [state?.jobs]);
+
       const executeScaffold = async (item, customRoot) => {
         try {
           setScaffolding(true);
-          const payload = { id: item.id };
+          // generate:true = 建完草稿直接在后台写正文（核心信息 → 联网 → 综合）
+          const payload = { id: item.id, generate: true };
           if (customRoot) payload.projectRoot = customRoot.trim();
 
           const res = await fetch(`${API_BASE}/scaffold`, {
@@ -2167,8 +2302,14 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.ok) {
-            showToast(`草稿生成成功：${data.value.file || data.value.slug}`);
             setScaffoldModalItem(null);
+            if (data.job) {
+              setJobStates(prev => ({ ...prev, [data.job.slug]: data.job }));
+              showToast(`草稿已建：${data.value?.slug || data.job.slug}，正文在后台写，写完会提示`);
+              watchJob(data.job.slug);
+            } else {
+              showToast(data.message || `草稿生成成功：${data.value?.file || data.value?.slug}`);
+            }
             await loadState();
           } else {
             showToast(data.message || '生成草稿失败', true);
@@ -3273,6 +3414,11 @@ window.__ModuleLoader__.load({
                     ])
                   : h('div', { className: 'hs-drafts-list' }, filteredDrafts.map(item => {
                       const tags = Array.isArray(item.tags) ? item.tags : [];
+                      const job = jobStates[item.slug]
+                        || (state?.jobs || []).find(j => j && j.slug === item.slug)
+                        || null;
+                      const writing = job && job.state === 'running';
+                      const failed = job && job.state === 'failed';
                       return h('div', {
                         key: `draft-${item.slug}`,
                         className: 'hs-article-card hs-draft-card',
@@ -3281,6 +3427,17 @@ window.__ModuleLoader__.load({
                       }, [
                         h('div', { className: 'hs-article-title-row' }, [
                           h('span', { className: 'hs-article-title', style: { wordBreak: 'break-word' } }, item.title || item.slug),
+                          writing && h('span', {
+                            key: 'job-running',
+                            className: 'hs-tag-pill',
+                            style: { background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', borderColor: 'rgba(59, 130, 246, 0.3)' }
+                          }, '✍️ 写作中'),
+                          failed && h('span', {
+                            key: 'job-failed',
+                            className: 'hs-tag-pill',
+                            title: job.error || '写正文失败',
+                            style: { background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }
+                          }, '⚠️ 正文失败'),
                           item.date && h('span', { className: 'hs-draft-date' }, item.date)
                         ]),
                         item.description && h('div', { className: 'hs-article-desc hs-draft-desc' }, item.description),
@@ -3303,10 +3460,21 @@ window.__ModuleLoader__.load({
                                 openEditor(item);
                               }
                             }, '✏️ 编辑正文'),
+                            (writing || failed) && h('button', {
+                              key: 'job-retry',
+                              className: 'hs-btn sm',
+                              style: { padding: '3px 8px', fontSize: 11 },
+                              disabled: writing || Boolean(jobStarting[item.slug]),
+                              title: failed ? (job.error || '重试写正文') : '正在写',
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                retryWrite(item.slug);
+                              }
+                            }, writing ? '✍️ 写正文中…' : '🔁 重试写正文'),
                             h('button', {
                               className: 'hs-btn sm primary',
                               style: { padding: '3px 8px', fontSize: 11 },
-                              disabled: isPromotingArticle,
+                              disabled: isPromotingArticle || writing,
                               onClick: (e) => {
                                 e.stopPropagation();
                                 handlePromoteArticle(item.slug);
@@ -3593,6 +3761,92 @@ window.__ModuleLoader__.load({
                   }, '查看详情')
                 ])
               ])
+            ]),
+
+            // 4.5 模型与写作方式 Card
+            h('div', { className: 'hs-card' }, [
+              h('div', { className: 'hs-card-header' }, [
+                h('div', null, [
+                  h('div', { className: 'hs-card-title' }, '模型与写作方式'),
+                  h('div', { className: 'hs-card-subtitle' }, '写正文走联网子代理，润色只走一次 completion；两边可以各用一个模型')
+                ]),
+                h('span', { className: 'hs-tag-pill' }, modelCatalog ? `${(modelCatalog.providers || []).length} 个 provider` : '未接入模型目录')
+              ]),
+              (() => {
+                const providers = modelCatalog?.providers || [];
+                const routes = modelCatalog?.routes || {};
+                if (!modelForm) {
+                  return h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                    modelCatalog === null ? '正在读取模型目录…' : '当前环境没有可用的模型目录（宿主未接入 llm 服务）');
+                }
+                const SEP = '\u0000';
+                const pairOf = (pair) => (pair && pair.provider && pair.model ? `${pair.provider}${SEP}${pair.model}` : '');
+                const setPair = (key, raw) => {
+                  const [provider, model] = raw ? raw.split(SEP) : ['', ''];
+                  setModelForm(prev => (prev ? { ...prev, [key]: { provider, model } } : prev));
+                };
+                const optionsFor = (allowFollow) => {
+                  const opts = [];
+                  opts.push(h('option', {
+                    key: '__none',
+                    value: ''
+                  }, allowFollow ? '跟随默认' : '未选择（使用宿主默认）'));
+                  for (const provider of providers) {
+                    for (const model of (provider.models || [])) {
+                      opts.push(h('option', {
+                        key: `${provider.provider}${SEP}${model.id}`,
+                        value: `${provider.provider}${SEP}${model.id}`
+                      }, `${provider.label || provider.provider} · ${model.name || model.id}`));
+                    }
+                  }
+                  return opts;
+                };
+                const row = (key, label, hint, allowFollow) => h('div', { key, style: { marginBottom: 12 } }, [
+                  h('label', { className: 'hs-form-label' }, label),
+                  allowFollow && hint && h('div', {
+                    style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginBottom: 4 }
+                  }, hint),
+                  h('select', {
+                    className: 'hs-input',
+                    value: pairOf(modelForm[key]),
+                    onChange: (e) => setPair(key, e.target.value)
+                  }, optionsFor(allowFollow))
+                ]);
+                const effective = (purpose) => {
+                  const route = routes[purpose];
+                  if (route) return `${route.provider} · ${route.model}`;
+                  return '未解析到可用模型';
+                };
+                return h('div', null, [
+                  row('global', '默认模型', '', false),
+                  row('writer', '写正文用模型', '默认跟随上面；子代理 provider 不支持覆盖时会直接报错', true),
+                  row('polish', '润色用模型', '润色是短任务，可以用更便宜更快的模型', true),
+                  h('div', { style: { marginBottom: 12 } }, [
+                    h('label', { className: 'hs-form-label' }, '写作方式'),
+                    h('div', { style: { display: 'flex', gap: 8 } }, [
+                      h('button', {
+                        className: `hs-btn sm ${modelForm.mode === 'agent' ? 'primary' : ''}`,
+                        onClick: () => setModelForm(prev => ({ ...prev, mode: 'agent' }))
+                      }, '联网子代理（质量最好，较慢）'),
+                      h('button', {
+                        className: `hs-btn sm ${modelForm.mode === 'direct' ? 'primary' : ''}`,
+                        onClick: () => setModelForm(prev => ({ ...prev, mode: 'direct' }))
+                      }, '只用手头证据（快，不联网）')
+                    ])
+                  ]),
+                  h('div', {
+                    style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginBottom: 12, lineHeight: 1.7 }
+                  }, [
+                    h('div', null, `写正文实际会问：${effective('writer')}`),
+                    h('div', null, `润色实际会问：${effective('polish')}`)
+                  ]),
+                  h('button', {
+                    className: 'hs-btn primary',
+                    disabled: savingModels,
+                    onClick: handleSaveModels
+                  }, savingModels ? '正在保存…' : '保存模型选择')
+                ]);
+              })()
             ]),
 
             // 5. 当前博客画像索引 Card

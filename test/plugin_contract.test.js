@@ -56,3 +56,20 @@ test('带 projectRoot 的工具用运行时目录，而不是启动时的配置'
   assert.ok(source.includes('createVitePressTarget({ root: pr, articleDir, draftDir })'));
   assert.ok(!source.includes("articleDir: config.articleDir || 'docs'"));
 });
+
+test('模型能力接线：agent 模式能问 provider 并带上 agentOptions', () => {
+  const generate = readFileSync('src/server/generate.js', 'utf8');
+  assert.ok(generate.includes('getProvider'), '要能问 provider 是否支持覆盖模型');
+  assert.ok(generate.includes('agentOptions'), '选中模型要通过 agentOptions 传给子代理');
+  assert.ok(generate.includes('不支持指定模型'), '不支持时明确报错，不静默回退');
+  assert.ok(source.includes('routes: {'), 'listModels/saveModels 要回两个用途解析后的路由');
+});
+
+test('面板契约：生成草稿带 generate:true 并轮询 /api/jobs', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(client.includes('generate: true'), '生成草稿要一次跑完');
+  assert.ok(client.includes('/jobs?slug='), '写正文期间要轮询任务状态');
+  assert.ok(client.includes('重试写正文'), '失败后要能从草稿箱重试');
+  assert.ok(client.includes('模型与写作方式'), '设置页要有模型选择卡');
+  assert.ok(client.includes('/models`'), '模型卡要用 /api/models 读写');
+});
