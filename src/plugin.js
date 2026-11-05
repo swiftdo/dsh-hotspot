@@ -33,7 +33,7 @@ function textBlocks(text) {
 export function apply(ctx, config = {}) {
   // 同一个 ctx 上 apply 可能被调多次（boot 重入），重复注册会撞进注册表
   if (appliedContexts.has(ctx)) {
-    ctx.logger?.warn?.('hotspot: apply() 已在当前 ctx 执行过，跳过重复注册');
+    ctx.logger?.warn?.('dsh-hotspot: apply() 已在当前 ctx 执行过，跳过重复注册');
     return;
   }
   appliedContexts.add(ctx);
@@ -41,9 +41,9 @@ export function apply(ctx, config = {}) {
   const log = (...args) => {
     ctx.logger?.info?.(...args);
     // 宿主的 info 级日志默认不进 stdout，排查加载问题时用 verbose 打开
-    if (config.verbose) console.log('[hotspot]', ...args);
+    if (config.verbose) console.log('[dsh-hotspot]', ...args);
   };
-  const warn = ctx.logger?.warn?.bind(ctx.logger) ?? ((...args) => console.warn('[hotspot]', ...args));
+  const warn = ctx.logger?.warn?.bind(ctx.logger) ?? ((...args) => console.warn('[dsh-hotspot]', ...args));
 
   // 默认不提供写死目录。未配置有效 projectRoot 时进入未绑定状态，不可执行草稿落地。
   const configuredRoot = config.projectRoot ? path.resolve(config.projectRoot) : '';
@@ -57,7 +57,7 @@ export function apply(ctx, config = {}) {
       draftDir: config.draftDir,
     });
   } else if (configuredRoot) {
-    ctx.logger?.warn?.(`hotspot: projectRoot 不存在（${configuredRoot}），进入未配置状态`);
+    ctx.logger?.warn?.(`dsh-hotspot: projectRoot 不存在（${configuredRoot}），进入未配置状态`);
   }
 
   const baseDigestDir = config.digestDir ?? '.hotspot';
@@ -89,14 +89,16 @@ export function apply(ctx, config = {}) {
           draftDir,
         })
       : null;
-    log(`hotspot: 运行时配置已更新，projectRoot=${projectRoot || '(未配置)'}`);
+    log(`dsh-hotspot: 运行时配置已更新，projectRoot=${projectRoot || '(未配置)'}`);
     return { projectRoot, store, target, runScan };
   }
 
-  // 若存在工作区根目录的 hotspot.config.json，尝试加载其配置
+  // 若存在工作区根目录的 dsh-hotspot.config.json 或 hotspot.config.json，尝试加载其配置
   try {
-    const localCfgPath = path.join(process.cwd(), 'hotspot.config.json');
-    if (existsSync(localCfgPath)) {
+    const p1 = path.join(process.cwd(), 'dsh-hotspot.config.json');
+    const p2 = path.join(process.cwd(), 'hotspot.config.json');
+    const localCfgPath = existsSync(p1) ? p1 : existsSync(p2) ? p2 : null;
+    if (localCfgPath) {
       const localCfg = JSON.parse(readFileSync(localCfgPath, 'utf8'));
       if (localCfg.projectRoot) {
         updateRuntime(localCfg);
@@ -108,9 +110,10 @@ export function apply(ctx, config = {}) {
 
   async function readProjectConfig() {
     try {
-      const cfgPath = projectRoot
-        ? path.join(projectRoot, 'hotspot.config.json')
-        : path.join(process.cwd(), 'hotspot.config.json');
+      const baseDir = projectRoot || process.cwd();
+      const p1 = path.join(baseDir, 'dsh-hotspot.config.json');
+      const p2 = path.join(baseDir, 'hotspot.config.json');
+      const cfgPath = existsSync(p1) ? p1 : existsSync(p2) ? p2 : p1;
       return JSON.parse(await readFile(cfgPath, 'utf8'));
     } catch {
       return {};
@@ -311,7 +314,7 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         // Cordis 会把 inject 回调里的异常静默掉，这里必须自己喊出来，
         // 否则表现就是"插件加载了但工具不存在"，最难查
-        console.warn(`[hotspot] 工具注册失败：${error?.message ?? error}`);
+        console.warn(`[dsh-hotspot] 工具注册失败：${error?.message ?? error}`);
         console.warn(error?.stack ?? '');
         return () => {};
       }
@@ -323,7 +326,7 @@ export function apply(ctx, config = {}) {
           try {
             dispose?.();
           } catch (error) {
-            warn(`hotspot: 卸载工具失败 ${error?.message ?? error}`);
+            warn(`dsh-hotspot: 卸载工具失败 ${error?.message ?? error}`);
           }
         }
       };
@@ -344,7 +347,7 @@ export function apply(ctx, config = {}) {
         try {
           disposers.push(sctx.webServer.register(route));
         } catch (error) {
-          console.warn(`[hotspot] 路由 ${route.path} 注册失败：${error?.message ?? error}`);
+          console.warn(`[dsh-hotspot] 路由 ${route.path} 注册失败：${error?.message ?? error}`);
         }
       }
       log(`已注册 ${disposers.length} 条路由，管理页 ${PREFIX}/`);
@@ -360,7 +363,7 @@ export function apply(ctx, config = {}) {
     });
   });
 
-  log(`hotspot: 插件已加载，projectRoot=${projectRoot}`);
+  log(`dsh-hotspot: 插件已加载，projectRoot=${projectRoot}`);
 
   if (config.verbose) {
     let probe = 'n/a';
@@ -369,6 +372,6 @@ export function apply(ctx, config = {}) {
     } catch (error) {
       probe = `err:${error?.message ?? error}`;
     }
-    console.log(`[hotspot] tools 服务就绪=${probe}`);
+    console.log(`[dsh-hotspot] tools 服务就绪=${probe}`);
   }
 }

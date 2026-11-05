@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
     const useCallback = React.useCallback;
 
     const PANEL_ID = 'dsh-hotspot';
-    const API_BASE = '/hotspot/api';
+    const API_BASE = '/dsh-hotspot/api';
 
     // ── 样式定义（与 DSH 原生主题变量对齐） ─────────────────────────
     const STYLES = `
@@ -340,10 +340,10 @@ window.__ModuleLoader__.load({
 
     function ensureStyles() {
       if (typeof document === 'undefined') return;
-      let el = document.getElementById('hotspot-plugin-styles');
+      let el = document.getElementById('dsh-hotspot-plugin-styles');
       if (!el) {
         el = document.createElement('style');
-        el.id = 'hotspot-plugin-styles';
+        el.id = 'dsh-hotspot-plugin-styles';
         el.textContent = STYLES;
         document.head.appendChild(el);
       }

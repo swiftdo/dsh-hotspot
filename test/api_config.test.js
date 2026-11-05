@@ -77,11 +77,18 @@ test('API 路由：支持获取与配置博客路径及参数', async (t) => {
   };
 
   const routes = createRoutes(deps);
-  const stateRoute = routes.find((r) => r.path === '/hotspot/api/state');
-  const configRoute = routes.find((r) => r.path === '/hotspot/api/config');
+  const dshStateRoute = routes.find((r) => r.path === '/dsh-hotspot/api/state');
+  const legacyStateRoute = routes.find((r) => r.path === '/hotspot/api/state');
+  const dshConfigRoute = routes.find((r) => r.path === '/dsh-hotspot/api/config');
+  const legacyConfigRoute = routes.find((r) => r.path === '/hotspot/api/config');
 
-  assert.ok(stateRoute, '/hotspot/api/state 路由应存在');
-  assert.ok(configRoute, '/hotspot/api/config 路由应存在');
+  assert.ok(dshStateRoute, '/dsh-hotspot/api/state 主路由应存在');
+  assert.ok(legacyStateRoute, '/hotspot/api/state 兼容路由应存在');
+  assert.ok(dshConfigRoute, '/dsh-hotspot/api/config 主路由应存在');
+  assert.ok(legacyConfigRoute, '/hotspot/api/config 兼容路由应存在');
+
+  const stateRoute = dshStateRoute;
+  const configRoute = dshConfigRoute;
 
   // 1. 测试 GET state
   const { req: sReq, res: sRes, result: sResult } = mockReqRes('GET', '/hotspot/api/state');

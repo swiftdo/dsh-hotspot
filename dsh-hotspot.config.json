@@ -1,0 +1,41 @@
+{
+  "projectRoot": "",
+  "articleDir": "docs",
+  "draftDir": "docs/draft",
+  "digestDir": ".hotspot",
+  "sources": [
+    {
+      "id": "swift-org",
+      "kind": "rss",
+      "url": "https://www.swift.org/atom.xml"
+    },
+    {
+      "id": "apple-swift-releases",
+      "kind": "github-release",
+      "repo": "apple/swift"
+    },
+    {
+      "id": "hn-popular",
+      "kind": "hn",
+      "minPoints": 100
+    }
+  ],
+  "rank": {
+    "limit": 15,
+    "sinceHours": 36,
+    "halfLifeHours": 24,
+    "clusterThreshold": 0.6
+  },
+  "publish": {
+    "maxPerDay": 3,
+    "allowedHosts": [
+      "github.com",
+      "swift.org",
+      "news.ycombinator.com"
+    ],
+    "autoTiers": [
+      "tier-1",
+      "tier-2"
+    ]
+  }
+}

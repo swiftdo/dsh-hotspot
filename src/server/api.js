@@ -17,7 +17,8 @@ import { createVitePressTarget } from '../adapters/target-vitepress.js';
  */
 
 const PANEL_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web', 'panel.html');
-export const PREFIX = '/hotspot';
+export const PREFIX = '/dsh-hotspot';
+export const LEGACY_PREFIX = '/hotspot';
 const MAX_BODY = 64 * 1024;
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
@@ -131,19 +132,37 @@ export function createRoutes(deps) {
   let currentRunScan = deps.runScan;
 
   function getConfigFile() {
-    return path.join(currentProjectRoot, 'hotspot.config.json');
+    if (!currentProjectRoot) return '';
+    const dshCfg = path.join(currentProjectRoot, 'dsh-hotspot.config.json');
+    if (existsSync(dshCfg)) return dshCfg;
+    const legacyCfg = path.join(currentProjectRoot, 'hotspot.config.json');
+    if (existsSync(legacyCfg)) return legacyCfg;
+    return dshCfg;
   }
 
   async function readConfig() {
     try {
-      return JSON.parse(await readFile(getConfigFile(), 'utf8'));
+      const file = getConfigFile();
+      if (!file) return {};
+      return JSON.parse(await readFile(file, 'utf8'));
     } catch {
       return {};
     }
   }
 
   async function writeConfig(config) {
-    await writeFile(getConfigFile(), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    if (!currentProjectRoot) return;
+    const primary = path.join(currentProjectRoot, 'dsh-hotspot.config.json');
+    const legacy = path.join(currentProjectRoot, 'hotspot.config.json');
+    const payload = `${JSON.stringify(config, null, 2)}\n`;
+    await writeFile(primary, payload, 'utf8');
+    if (existsSync(legacy)) {
+      try {
+        await writeFile(legacy, payload, 'utf8');
+      } catch {
+        /* 忽略兼容写错误 */
+      }
+    }
   }
 
   async function buildState() {
@@ -223,7 +242,7 @@ export function createRoutes(deps) {
     };
   }
 
-  return [
+  const baseRoutes = [
     {
       kind: 'exact',
       path: PREFIX,
@@ -467,4 +486,16 @@ export function createRoutes(deps) {
       },
     },
   ];
+
+  const allRoutes = [];
+  for (const r of baseRoutes) {
+    allRoutes.push(r);
+    if (r.path.startsWith(PREFIX)) {
+      allRoutes.push({
+        ...r,
+        path: r.path.replace(PREFIX, LEGACY_PREFIX),
+      });
+    }
+  }
+  return allRoutes;
 }

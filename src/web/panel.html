@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hotspot 管理</title>
+<title>dsh-hotspot 管理</title>
 <style>
   :root {
     --bg: #15161a;
@@ -79,7 +79,7 @@
 </head>
 <body>
 <header>
-  <h1>hotspot</h1>
+  <h1>dsh-hotspot</h1>
   <span class="path" id="projectPath"></span>
   <button class="ghost" id="reload">刷新</button>
   <button class="primary" id="run">立即抓取</button>
@@ -167,7 +167,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const API = '/hotspot/api';
+const API = '/dsh-hotspot/api';
 let state = null;
 let sources = [];
 

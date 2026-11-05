@@ -1,4 +1,4 @@
-# hotspot — 把 RSS / release 热点变成博客草稿
+# dsh-hotspot — 把 RSS / release 热点变成博客草稿
 #
 # 这个文件由 dsh 在 profile 组装时作为一层 patch 应用（见 package.json 的 dsh.bundle.patch）。
 # config 就是插件的配置面：改这里，不需要改代码。

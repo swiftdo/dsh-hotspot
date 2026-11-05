@@ -74,8 +74,10 @@ function pad(text, target) {
 }
 
 async function loadConfig() {
-  const file = path.join(cwd, 'hotspot.config.json');
-  if (!existsSync(file)) fail(`找不到 ${file}，先跑 hotspot init`);
+  const p1 = path.join(cwd, 'dsh-hotspot.config.json');
+  const p2 = path.join(cwd, 'hotspot.config.json');
+  const file = existsSync(p1) ? p1 : existsSync(p2) ? p2 : null;
+  if (!file) fail(`找不到 dsh-hotspot.config.json 或 hotspot.config.json，先跑 dsh-hotspot init`);
   const raw = JSON.parse(await readFile(file, 'utf8'));
   const targetConfig = { root: cwd, ...(raw.target ?? {}) };
   return {
@@ -488,8 +490,11 @@ async function cmdDoctor() {
       try {
         const pkg = JSON.parse(await readFile(path.join(profilesDir, name, 'package.json'), 'utf8'));
         const bundles = pkg?.dsh?.profile?.bundles ?? [];
-        if (!bundles.includes('hotspot')) continue;
-        const resolvable = existsSync(path.join(profilesDir, name, 'node_modules', 'hotspot'));
+        const isInstalled = bundles.includes('dsh-hotspot') || bundles.includes('hotspot');
+        if (!isInstalled) continue;
+        const resolvable =
+          existsSync(path.join(profilesDir, name, 'node_modules', 'dsh-hotspot')) ||
+          existsSync(path.join(profilesDir, name, 'node_modules', 'hotspot'));
         installed.push(`${name}${resolvable ? '' : '（bundles 里有，但 node_modules 解析不到）'}`);
       } catch {
         /* 没有 package.json 的 profile 跳过 */
@@ -513,7 +518,7 @@ async function cmdDoctor() {
   } else {
     log('✓ 全部通过');
   }
-  log('  装进 DSH 后，还要打开 <DSH 地址>/hotspot/ 看管理页才能确认运行时可用\n');
+  log('  装进 DSH 后，还要打开 <DSH 地址>/dsh-hotspot/ 看管理页才能确认运行时可用\n');
 }
 
 async function main() {

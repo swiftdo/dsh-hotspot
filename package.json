@@ -3,8 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "热点采集、去重、确定性排序与草稿落地；同时是 DeepSeek Harness 插件",
-  "repository": "git@github.com:swiftdo/dsh-hotspot.git",
+  "description": "热点采集、去重、确定性打分与草稿落地；DeepSeek Harness 插件",
+  "license": "MIT",
+  "homepage": "https://github.com/swiftdo/dsh-hotspot#readme",
+  "bugs": {
+    "url": "https://github.com/swiftdo/dsh-hotspot/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis-plugin",
+    "cordis",
+    "dsh-hotspot",
+    "hotspot",
+    "rss",
+    "vitepress"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:swiftdo/dsh-hotspot.git"
+  },
   "main": "./src/plugin.js",
   "exports": {
     ".": "./src/plugin.js",
