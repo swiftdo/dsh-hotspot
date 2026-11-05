@@ -256,3 +256,47 @@ test('API 路由：支持文件夹选择器 pick-dir 路由与双前缀兼容', 
   assert.equal(cResult().json().ok, true);
   assert.equal(cResult().json().path, null);
 });
+
+test('API 路由：支持获取所有文章列表 /dsh-hotspot/api/articles 与双前缀兼容', async (t) => {
+  const mockArticles = [
+    { slug: 'swift-6', title: 'Swift 6 发布', date: '2026-11-01', tags: ['swift'] },
+    { slug: 'rust-2024', title: 'Rust 2024 路线图', date: '2026-10-28', tags: ['rust'] },
+  ];
+
+  const deps = {
+    projectRoot: '/mock/path',
+    store: { loadDigest: async () => null },
+    target: {
+      articleDir: 'docs/article',
+      draftDir: 'docs/draft',
+      profile: async () => ({ tagVocabulary: ['swift', 'rust'], keywords: [], articles: mockArticles }),
+      listArticles: async () => mockArticles,
+      listDrafts: async () => [{ slug: 'draft-1', title: '草稿1' }],
+    },
+    runScan: async () => ({ digest: null, status: {} }),
+  };
+
+  const routes = createRoutes(deps);
+  const dshArticlesRoute = routes.find((r) => r.path === '/dsh-hotspot/api/articles');
+  const legacyArticlesRoute = routes.find((r) => r.path === '/hotspot/api/articles');
+
+  assert.ok(dshArticlesRoute, '/dsh-hotspot/api/articles 主路由应存在');
+  assert.ok(legacyArticlesRoute, '/hotspot/api/articles 兼容路由应存在');
+
+  const { req, res, result } = mockReqRes('GET', '/dsh-hotspot/api/articles');
+  await dshArticlesRoute.handler(req, res);
+  assert.equal(result().status, 200);
+  const data = result().json();
+  assert.equal(data.ok, true);
+  assert.equal(data.value.length, 2);
+  assert.equal(data.value[0].slug, 'swift-6');
+
+  // 同时验证 state 中包含了 articles 列表
+  const stateRoute = routes.find((r) => r.path === '/dsh-hotspot/api/state');
+  const { req: sReq, res: sRes, result: sResult } = mockReqRes('GET', '/dsh-hotspot/api/state');
+  await stateRoute.handler(sReq, sRes);
+  const sData = sResult().json();
+  assert.equal(sData.ok, true);
+  assert.equal(sData.value.articles.length, 2);
+  assert.equal(sData.value.articles[0].title, 'Swift 6 发布');
+});

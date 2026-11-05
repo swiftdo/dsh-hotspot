@@ -667,6 +667,64 @@ window.__ModuleLoader__.load({
         border-left-color: #ef4444;
       }
 
+      /* ── 所有文章卡片与列表规范 ── */
+      .hs-article-card {
+        background: var(--dsw-alias-bg-layer-2, #1b1c24);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+        transition: border-color 160ms var(--hs-ease-out), transform 160ms var(--hs-ease-out);
+      }
+      .hs-article-card:hover {
+        border-color: rgba(77, 182, 160, 0.4);
+      }
+      .hs-article-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .hs-article-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--dsw-alias-label-primary, #ececf1);
+        line-height: 1.4;
+      }
+      .hs-article-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      .hs-article-desc {
+        font-size: 12px;
+        color: var(--dsw-alias-label-secondary, #a0a4b4);
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      .hs-article-file {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        color: #7b8092;
+        background: rgba(255, 255, 255, 0.04);
+        padding: 2px 6px;
+        border-radius: 4px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        user-select: text;
+        transition: background 140ms ease, color 140ms ease;
+      }
+      .hs-article-file:hover {
+        color: var(--dsw-alias-label-primary, #ececf1);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
       /* ── 动画关键帧（遵守 Emil 规范：入场 scale 从 0.96 开始，退出迅捷） ── */
       @keyframes hs-fade-mask {
         from { opacity: 0; }
@@ -734,6 +792,11 @@ window.__ModuleLoader__.load({
       const [filter, setFilter] = useState('');
       const [filterTag, setFilterTag] = useState('all');
       const [toast, setToast] = useState(null);
+
+      // 文章列表搜索与过滤状态
+      const [articleSearch, setArticleSearch] = useState('');
+      const [articleTabFilter, setArticleTabFilter] = useState('all'); // 'all' | 'published' | 'draft'
+      const [articleTagFilter, setArticleTagFilter] = useState('all');
 
       // 新增源表单
       const [newId, setNewId] = useState('');
@@ -1172,8 +1235,8 @@ window.__ModuleLoader__.load({
             onClick: () => setTab('articles'),
             key: 'tab-a'
           }, [
-            '博文与草稿',
-            h('span', { className: 'hs-tab-count' }, (state?.drafts?.length || 0) + (state?.articles?.length || 0))
+            '所有文章',
+            h('span', { className: 'hs-tab-count' }, (state?.articles?.length || 0) + (state?.drafts?.length || 0))
           ]),
           h('button', {
             className: `hs-tab ${tab === 'config' ? 'active' : ''}`,
@@ -1515,79 +1578,236 @@ window.__ModuleLoader__.load({
             ])
           ]),
 
-          // ── TAB: 博文与草稿 ──
-          tab === 'articles' && h('div', { key: 'articles-panel' }, [
-            // 概览指标
-            h('div', { className: 'hs-stat-grid' }, [
-              h('div', { className: 'hs-stat-box' }, [
-                h('div', { className: 'hs-stat-value', style: { color: '#f59e0b' } }, state?.drafts?.length || 0),
-                h('div', { className: 'hs-stat-title' }, '待发布草稿')
-              ]),
-              h('div', { className: 'hs-stat-box' }, [
-                h('div', { className: 'hs-stat-value', style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, state?.articles?.length || 0),
-                h('div', { className: 'hs-stat-title' }, '已发布博文')
-              ]),
-              h('div', { className: 'hs-stat-box' }, [
-                h('div', { className: 'hs-stat-value', style: { color: '#38bdf8' } }, state?.profile?.tags?.length || 0),
-                h('div', { className: 'hs-stat-title' }, '博客体系标签')
-              ])
-            ]),
+          // ── TAB: 所有文章列表 ──
+          tab === 'articles' && (() => {
+            const rawArticles = (state?.articles || []).map(a => ({ ...a, isDraft: false }));
+            const rawDrafts = (state?.drafts || []).map(d => ({
+              ...d,
+              isDraft: true,
+              file: d.file || d.path || `docs/draft/${d.slug}/index.md`
+            }));
+            const allItems = [...rawDrafts, ...rawArticles];
 
-            // 草稿列表
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', { className: 'hs-card-title' }, `待完善的草稿文件 (${state?.drafts?.length || 0})`),
-                h('div', { className: 'hs-card-subtitle' }, '通过 hotspot_scaffold 落地，默认自带 sitemap:false')
-              ]),
-              (state?.drafts || []).length === 0
-                ? h('div', { style: { padding: '24px 0', textAlign: 'center', color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
-                    '暂无未发布的草稿文件，可在候选列表中点击「生成草稿」'
-                  )
-                : (state?.drafts || []).map(d => h('div', {
-                    key: d.slug,
-                    style: {
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 0',
-                      borderBottom: '1px solid var(--dsw-alias-border-l1, #282a34)'
-                    }
-                  }, [
-                    h('div', null, [
-                      h('div', { style: { fontWeight: 600 } }, d.title || d.slug),
-                      h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', fontFamily: 'monospace', marginTop: 2 } },
-                        d.path || d.slug
-                      )
-                    ]),
-                    h('span', { className: 'hs-tag-pill' }, 'Draft')
-                  ]))
-            ]),
+            // 搜索过滤与分类过滤
+            const filteredArticles = allItems.filter(item => {
+              if (articleTabFilter === 'published' && item.isDraft) return false;
+              if (articleTabFilter === 'draft' && !item.isDraft) return false;
+              if (articleTagFilter !== 'all') {
+                if (!Array.isArray(item.tags) || !item.tags.includes(articleTagFilter)) return false;
+              }
+              if (articleSearch.trim()) {
+                const q = articleSearch.trim().toLowerCase();
+                const titleMatch = (item.title || '').toLowerCase().includes(q);
+                const slugMatch = (item.slug || '').toLowerCase().includes(q);
+                const tagMatch = Array.isArray(item.tags) && item.tags.some(t => String(t).toLowerCase().includes(q));
+                const fileMatch = (item.file || item.path || '').toLowerCase().includes(q);
+                const descMatch = (item.description || '').toLowerCase().includes(q);
+                if (!titleMatch && !slugMatch && !tagMatch && !fileMatch && !descMatch) return false;
+              }
+              return true;
+            });
 
-            // 已发布博文
-            h('div', { className: 'hs-card' }, [
-              h('div', { className: 'hs-card-header' }, [
-                h('div', { className: 'hs-card-title' }, `已发布博文库 (${state?.articles?.length || 0})`),
-                h('div', { className: 'hs-card-subtitle' }, '已存在于 docs 中的有效文章')
+            const availableTags = (state?.profile?.tags || []).slice(0, 15);
+
+            const handleCopyPath = (filePath) => {
+              if (!filePath) return;
+              try {
+                if (navigator?.clipboard?.writeText) {
+                  navigator.clipboard.writeText(filePath);
+                  showToast(`已复制文件路径: ${filePath}`);
+                } else {
+                  showToast(filePath);
+                }
+              } catch {
+                showToast(filePath);
+              }
+            };
+
+            return h('div', { key: 'articles-panel' }, [
+              // 概览指标卡片
+              h('div', { className: 'hs-stat-grid' }, [
+                h('div', { className: 'hs-stat-box' }, [
+                  h('div', { className: 'hs-stat-value', style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, allItems.length),
+                  h('div', { className: 'hs-stat-title' }, '文章与草稿总计')
+                ]),
+                h('div', { className: 'hs-stat-box' }, [
+                  h('div', { className: 'hs-stat-value', style: { color: '#34d399' } }, rawArticles.length),
+                  h('div', { className: 'hs-stat-title' }, '已发布博文库')
+                ]),
+                h('div', { className: 'hs-stat-box' }, [
+                  h('div', { className: 'hs-stat-value', style: { color: '#f59e0b' } }, rawDrafts.length),
+                  h('div', { className: 'hs-stat-title' }, '待完善草稿')
+                ]),
+                h('div', { className: 'hs-stat-box' }, [
+                  h('div', { className: 'hs-stat-value', style: { color: '#38bdf8' } }, state?.profile?.tags?.length || 0),
+                  h('div', { className: 'hs-stat-title' }, '博客体系标签')
+                ])
               ]),
-              h('div', { style: { maxHeight: 380, overflowY: 'auto' } }, [
-                (state?.articles || []).length === 0
-                  ? h('div', { style: { padding: '20px 0', textAlign: 'center', color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, '未探测到已发布的博文')
-                  : (state?.articles || []).map(a => h('div', {
-                      key: a.slug,
-                      style: {
-                        padding: '10px 0',
-                        borderBottom: '1px solid var(--dsw-alias-border-l1, #282a34)'
-                      }
+
+              // 搜索与过滤工具栏
+              h('div', { className: 'hs-card', style: { padding: '14px 18px' } }, [
+                h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 } }, [
+                  // 搜索框
+                  h('div', { className: 'hs-search-box', style: { flex: '1 1 240px' } }, [
+                    h('svg', {
+                      className: 'hs-search-icon',
+                      width: 14,
+                      height: 14,
+                      viewBox: '0 0 24 24',
+                      fill: 'none',
+                      stroke: 'currentColor',
+                      strokeWidth: 2
                     }, [
-                      h('div', { style: { fontWeight: 500 } }, a.title || a.slug),
-                      h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 2 } }, [
-                        h('span', { style: { fontFamily: 'monospace', marginRight: 8 } }, `slug: ${a.slug}`),
-                        (a.tags || []).length > 0 && h('span', null, `标签: ${a.tags.join(', ')}`)
-                      ])
-                    ]))
+                      h('circle', { cx: 11, cy: 11, r: 8 }),
+                      h('line', { x1: 21, y1: 21, x2: 16.65, y2: 16.65 })
+                    ]),
+                    h('input', {
+                      className: 'hs-input hs-search-input',
+                      placeholder: '搜索所有文章标题、slug、标签或路径...',
+                      value: articleSearch,
+                      onChange: (e) => setArticleSearch(e.target.value)
+                    })
+                  ]),
+
+                  // 分类筛选 Pills
+                  h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, [
+                    h('button', {
+                      className: `hs-btn sm ${articleTabFilter === 'all' ? 'primary' : ''}`,
+                      onClick: () => setArticleTabFilter('all')
+                    }, `全部 (${allItems.length})`),
+                    h('button', {
+                      className: `hs-btn sm ${articleTabFilter === 'published' ? 'primary' : ''}`,
+                      onClick: () => setArticleTabFilter('published')
+                    }, `已发布 (${rawArticles.length})`),
+                    h('button', {
+                      className: `hs-btn sm ${articleTabFilter === 'draft' ? 'primary' : ''}`,
+                      onClick: () => setArticleTabFilter('draft')
+                    }, `草稿 (${rawDrafts.length})`)
+                  ])
+                ]),
+
+                // 热门标签快捷过滤
+                availableTags.length > 0 && h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid var(--dsw-alias-border-l1, #282a34)' } }, [
+                  h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginRight: 4 } }, '标签过滤:'),
+                  h('span', {
+                    className: `hs-filter-tag ${articleTagFilter === 'all' ? 'active' : ''}`,
+                    style: { cursor: 'pointer' },
+                    onClick: () => setArticleTagFilter('all')
+                  }, '全部标签'),
+                  ...availableTags.map(tag => h('span', {
+                    key: tag,
+                    className: `hs-filter-tag ${articleTagFilter === tag ? 'active' : ''}`,
+                    style: { cursor: 'pointer' },
+                    onClick: () => setArticleTagFilter(articleTagFilter === tag ? 'all' : tag)
+                  }, `#${tag}`))
+                ])
+              ]),
+
+              // 文章卡片列表
+              h('div', { className: 'hs-card' }, [
+                h('div', { className: 'hs-card-header' }, [
+                  h('div', null, [
+                    h('div', { className: 'hs-card-title' }, `所有文章明细 (${filteredArticles.length} / ${allItems.length})`),
+                    h('div', { className: 'hs-card-subtitle' },
+                      isBlogConfigured
+                        ? `源自博客仓库：${state?.blog?.projectRoot || ''}`
+                        : '未绑定博客根目录，请在上方或设置中指定'
+                    )
+                  ]),
+                  (articleSearch || articleTabFilter !== 'all' || articleTagFilter !== 'all') && h('button', {
+                    className: 'hs-btn sm',
+                    onClick: () => {
+                      setArticleSearch('');
+                      setArticleTabFilter('all');
+                      setArticleTagFilter('all');
+                    }
+                  }, '重置筛选')
+                ]),
+
+                filteredArticles.length === 0
+                  ? h('div', { style: { padding: '36px 0', textAlign: 'center', color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, [
+                      h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📄'),
+                      h('div', { style: { fontWeight: 500 } }, '没有找到匹配的文章'),
+                      h('div', { style: { fontSize: 12, marginTop: 4 } }, '可尝试清空搜索词或切换筛选分类')
+                    ])
+                  : h('div', null, filteredArticles.map(item => {
+                      const isDraft = Boolean(item.isDraft);
+                      const filePath = item.file || item.path || (isDraft ? `docs/draft/${item.slug}/index.md` : `docs/article/${item.slug}/index.md`);
+                      return h('div', {
+                        key: `${isDraft ? 'draft' : 'article'}-${item.slug}`,
+                        className: 'hs-article-card'
+                      }, [
+                        // 标题行与状态
+                        h('div', { className: 'hs-article-title-row' }, [
+                          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 } }, [
+                            h('span', {
+                              className: 'hs-tag-pill',
+                              style: {
+                                background: isDraft ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                                color: isDraft ? '#fbbf24' : '#34d399',
+                                borderColor: isDraft ? 'rgba(245, 158, 11, 0.3)' : 'rgba(16, 185, 129, 0.3)',
+                                fontSize: 11
+                              }
+                            }, isDraft ? '草稿 (sitemap:false)' : '已发布'),
+                            h('span', { className: 'hs-article-title', style: { wordBreak: 'break-word' } }, item.title || item.slug)
+                          ]),
+                          item.date && h('span', {
+                            style: {
+                              fontSize: 11,
+                              color: 'var(--dsw-alias-label-secondary, #8c909e)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              flexShrink: 0
+                            }
+                          }, [
+                            h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
+                              h('rect', { x: 3, y: 4, width: 18, height: 18, rx: 2, ry: 2 }),
+                              h('line', { x1: 16, y1: 2, x2: 16, y2: 6 }),
+                              h('line', { x1: 8, y1: 2, x2: 8, y2: 6 }),
+                              h('line', { x1: 3, y1: 10, x2: 21, y2: 10 })
+                            ]),
+                            item.date
+                          ])
+                        ]),
+
+                        // 描述（如有）
+                        item.description && h('div', { className: 'hs-article-desc' }, item.description),
+
+                        // 底部元数据与操作
+                        h('div', { className: 'hs-article-meta' }, [
+                          // 文件路径胶囊
+                          h('span', {
+                            className: 'hs-article-file',
+                            title: '点击复制文件路径',
+                            onClick: () => handleCopyPath(filePath)
+                          }, [
+                            h('svg', { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
+                              h('path', { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }),
+                              h('polyline', { points: '14 2 14 8 20 8' })
+                            ]),
+                            filePath,
+                            h('span', { style: { fontSize: 10, color: 'var(--dsw-alias-brand-primary, #4db6a0)', marginLeft: 2 } }, '📋')
+                          ]),
+
+                          // slug
+                          h('span', { style: { fontFamily: 'monospace', color: '#6e7382' } }, `slug: ${item.slug}`),
+
+                          // 标签
+                          (item.tags || []).length > 0 && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 'auto' } },
+                            item.tags.map(t => h('span', {
+                              key: t,
+                              className: 'hs-tag-pill',
+                              style: { cursor: 'pointer' },
+                              onClick: () => setArticleTagFilter(t)
+                            }, `#${t}`))
+                          )
+                        ])
+                      ]);
+                    }))
               ])
-            ])
-          ]),
+            ]);
+          })(),
 
           // ── TAB: 策略与路径配置 ──
           tab === 'config' && h('div', { key: 'config-panel' }, [

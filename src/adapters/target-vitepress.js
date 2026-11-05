@@ -83,21 +83,58 @@ export function createVitePressTarget(config) {
   const aliases = { ...DEFAULT_ALIASES, ...(config.aliases ?? {}) };
 
   async function scanArticles() {
-    const slugs = await listDirs(articleDir);
     const out = [];
-    for (const slug of slugs) {
-      const file = path.join(articleDir, slug, 'index.md');
-      const text = await readIfExists(file);
-      if (!text) continue;
+    const seenFiles = new Set();
+
+    async function processMdFile(fullPath, fallbackSlug) {
+      if (seenFiles.has(fullPath)) return;
+      seenFiles.add(fullPath);
+      const text = await readIfExists(fullPath);
+      if (!text) return;
       const { data } = parseFrontmatter(text);
+      let fileStat = null;
+      try {
+        fileStat = await stat(fullPath);
+      } catch {}
+
       out.push({
-        slug,
-        title: String(data.title ?? ''),
-        key: titleKey(data.title ?? slug),
+        slug: fallbackSlug,
+        title: String(data.title ?? fallbackSlug),
+        key: titleKey(data.title ?? fallbackSlug),
+        date: String(data.date ?? (fileStat ? new Date(fileStat.mtimeMs).toISOString().slice(0, 10) : '')),
         tags: Array.isArray(data.tags) ? data.tags : [],
+        description: String(data.description ?? ''),
+        file: path.relative(root, fullPath),
+        mtime: fileStat ? fileStat.mtimeMs : 0,
       });
     }
-    return out;
+
+    // 1. 标准子目录形式：articleDir/<slug>/index.md
+    const slugs = await listDirs(articleDir);
+    for (const slug of slugs) {
+      if (slug.startsWith('.') || slug === 'draft' || slug === 'node_modules') continue;
+      const indexFile = path.join(articleDir, slug, 'index.md');
+      await processMdFile(indexFile, slug);
+    }
+
+    // 2. 单文件形式：articleDir/<slug>.md
+    try {
+      const files = await readdir(articleDir, { withFileTypes: true });
+      for (const f of files) {
+        if (f.isFile() && f.name.endsWith('.md') && f.name !== 'index.md' && !f.name.startsWith('.')) {
+          const slug = f.name.slice(0, -3);
+          const fullPath = path.join(articleDir, f.name);
+          await processMdFile(fullPath, slug);
+        }
+      }
+    } catch {}
+
+    // 按日期倒序，其次按 mtime 倒序
+    return out.sort((a, b) => {
+      if (a.date && b.date && a.date !== b.date) return b.date.localeCompare(a.date);
+      if (b.mtime !== a.mtime) return b.mtime - a.mtime;
+      return a.slug.localeCompare(b.slug);
+    });
   }
 
   return {
@@ -105,6 +142,7 @@ export function createVitePressTarget(config) {
     docsDir,
     articleDir,
     draftDir,
+    listArticles: scanArticles,
 
     /**
      * 从项目本身归纳画像：article 的 tags 决定权重，docs 一级目录决定关键词。

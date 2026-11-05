@@ -266,8 +266,20 @@ export function createRoutes(deps) {
         articleCount: (profile?.articles || []).length,
       },
       articles: (profile?.articles || [])
-        .map((a) => ({ slug: a.slug, title: a.title, tags: a.tags }))
-        .sort((a, b) => a.slug.localeCompare(b.slug)),
+        .map((a) => ({
+          slug: a.slug,
+          title: a.title,
+          tags: a.tags || [],
+          date: a.date || '',
+          description: a.description || '',
+          file: a.file || '',
+          mtime: a.mtime || 0,
+        }))
+        .sort((a, b) => {
+          if (a.date && b.date && a.date !== b.date) return b.date.localeCompare(a.date);
+          if (b.mtime !== a.mtime) return b.mtime - a.mtime;
+          return a.slug.localeCompare(b.slug);
+        }),
       drafts: drafts || [],
       digest: digest
         ? {
@@ -550,6 +562,22 @@ export function createRoutes(deps) {
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
         }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/articles`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET'])) return;
+        const state = await buildState();
+        sendJson(res, 200, {
+          ok: true,
+          value: state.articles,
+          articles: state.articles,
+          drafts: state.drafts,
+          total: state.articles.length,
+          draftTotal: state.drafts.length,
+        });
       },
     },
   ];
