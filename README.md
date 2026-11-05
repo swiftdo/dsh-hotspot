@@ -480,6 +480,20 @@ dsh plugin --profile <profile> add <本仓库路径>
 
 `cordis.patch.yml` 会作为一层 patch 自动应用（见 `package.json` 的 `dsh.bundle.patch`），里面的 `config` 就是配置面，改它不用改代码。
 
+### 装进 DeepSeek Harness Desktop
+
+Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile desktop add ...` 会直接报 `profile "desktop" is managed exclusively by the Electron application`。Desktop 内改走应用自己的插件管理：
+
+1. **一次性接入**：profile 的 `dependencies` 用 link 指回本仓库，并把 `dsh-hotspot` 写进 `dsh.profile.bundles`（`~/.dsh/profiles/desktop/package.json`）：
+
+   ```json
+   "dsh-hotspot": "link:/Users/laijihua/Desktop/Code/hotspot"
+   ```
+
+2. **每次改完代码的重载**：用 `plugin_manager` 对 `include:dsh-hotspot` 先 `set_plugin enabled=false`、再 `enabled=true`。宿主会重新 import 插件，`src/server/api.js` 的新路由立刻生效，**不需要退出并重开 DSH**（旧结论「改路由必须重启」已被实测推翻）。
+3. **验证**：`/hotspot/` 返回 200；`/dsh-hotspot/rss.xml` 返回 200 且 `content-type: application/rss+xml`；`/dsh-hotspot/api/state` 的 `feed` 里有 `rssPath`。
+4. **改哪一层要重载**：`src/web/panel.html` 每次请求读盘，改完刷新页面即可；`src/client.js` 属浏览器侧客户端插件，刷新页面生效；`src/plugin.js`、`src/server/*`、`src/core/*` 走上面的 disable→enable。
+
 验证加载是否成功：`cordis.patch.yml` 里把 `verbose` 设为 `true`，启动后应看到
 
 ```text
