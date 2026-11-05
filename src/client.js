@@ -649,31 +649,120 @@ window.__ModuleLoader__.load({
         background: rgba(255, 255, 255, 0.02);
       }
 
-      /* ── 统计数值概览小卡片 ── */
-      .hs-stat-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 12px;
-        margin-bottom: 16px;
-      }
-      .hs-stat-box {
-        background: var(--dsw-alias-bg-layer-1, #181920);
-        border: 1px solid var(--dsw-alias-border-l1, #282a34);
-        border-radius: 10px;
-        padding: 14px 16px;
+      /* ── 草稿箱：工具行 / 标签筛选 / 可点击卡片 ── */
+      .hs-drafts-toolbar {
         display: flex;
-        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
       }
-      .hs-stat-value {
-        font-size: 22px;
-        font-weight: 700;
-        color: var(--dsw-alias-label-primary, #ffffff);
-        font-variant-numeric: tabular-nums;
+      .hs-search-box {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1 1 240px;
+        min-width: 180px;
+        padding: 0 10px;
+        background: var(--dsw-alias-bg-layer-2, #1f212a);
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        border-radius: 8px;
+        transition: border-color 160ms var(--hs-ease-out);
       }
-      .hs-stat-title {
+      .hs-search-box:focus-within {
+        border-color: var(--dsw-alias-brand-primary, #4db6a0);
+      }
+      .hs-search-icon {
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        flex-shrink: 0;
+      }
+      .hs-search-input {
+        flex: 1;
+        padding: 7px 0;
+        background: transparent;
+        border: none;
+        color: var(--dsw-alias-label-primary, #ececf1);
+        font-family: inherit;
+        font-size: 12.5px;
+        outline: none;
+      }
+      .hs-search-input:focus {
+        box-shadow: none;
+      }
+      .hs-drafts-count {
         font-size: 12px;
         color: var(--dsw-alias-label-secondary, #8c909e);
-        margin-top: 4px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .hs-drafts-tags {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--dsw-alias-border-l1, #282a34);
+      }
+      .hs-drafts-tags-label {
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        margin-right: 2px;
+      }
+      .hs-filter-tag {
+        font-size: 11px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        background: transparent;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+        cursor: pointer;
+        transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      .hs-filter-tag:hover {
+        color: var(--dsw-alias-label-primary, #ececf1);
+        border-color: var(--dsw-alias-border-hover, #424756);
+      }
+      .hs-filter-tag.active {
+        color: var(--dsw-alias-brand-primary, #4db6a0);
+        border-color: rgba(77, 182, 160, 0.4);
+        background: rgba(77, 182, 160, 0.1);
+      }
+      .hs-drafts-list {
+        margin-top: 14px;
+      }
+      .hs-drafts-empty {
+        padding: 34px 0 26px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .hs-draft-card {
+        cursor: pointer;
+      }
+      .hs-draft-card:hover {
+        border-color: rgba(77, 182, 160, 0.45);
+      }
+      .hs-draft-card:active {
+        transform: scale(0.995);
+      }
+      .hs-draft-date {
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        flex-shrink: 0;
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-draft-desc {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .hs-draft-actions {
+        display: flex;
+        gap: 6px;
+        margin-left: auto;
+        align-items: center;
       }
 
       /* ── 弹窗 Modal ── */
@@ -1497,7 +1586,6 @@ window.__ModuleLoader__.load({
 
       // 文章列表搜索与过滤状态
       const [articleSearch, setArticleSearch] = useState('');
-      const [articleTabFilter, setArticleTabFilter] = useState('all'); // 'all' | 'published' | 'draft'
       const [articleTagFilter, setArticleTagFilter] = useState('all');
 
       // 新增源表单
@@ -1625,6 +1713,21 @@ window.__ModuleLoader__.load({
       const showToast = (message, isError = false) => {
         setToast({ message, isError });
         setTimeout(() => setToast(null), 3500);
+      };
+
+      /** 复制路径到剪贴板；没有剪贴板权限时至少把路径显示出来，别让按钮点了没反应。 */
+      const copyPath = (filePath) => {
+        if (!filePath) return;
+        try {
+          if (navigator?.clipboard?.writeText) {
+            navigator.clipboard.writeText(filePath);
+            showToast(`已复制: ${filePath}`);
+            return;
+          }
+        } catch {
+          // 落到下面的兜底提示
+        }
+        showToast(filePath);
       };
 
       const openArticleEditor = async (item) => {
@@ -2875,7 +2978,7 @@ window.__ModuleLoader__.load({
             ])
           ]),
 
-          // ── TAB: 草稿箱（专注待发布草稿的管理、在线润色、转正与删除，不干预已发布博文） ──
+          // ── TAB: 草稿箱（只做草稿该做的事：找草稿、看正文、转正、废弃） ──
           (tab === 'drafts' || tab === 'articles') && (() => {
             const drafts = (state?.drafts || []).map(d => ({
               ...d,
@@ -2883,67 +2986,33 @@ window.__ModuleLoader__.load({
               file: d.file || d.path || `docs/draft/${d.slug}/index.md`
             }));
 
-            // 搜索过滤与标签筛选
+            // 标签只从这些草稿自身取，避免出现「点一下就空列表」的标签
+            const draftTags = Array.from(
+              new Set(drafts.flatMap(d => (Array.isArray(d.tags) ? d.tags : [])))
+            ).slice(0, 12);
+
+            const keyword = articleSearch.trim().toLowerCase();
             const filteredDrafts = drafts.filter(item => {
               if (articleTagFilter !== 'all') {
                 if (!Array.isArray(item.tags) || !item.tags.includes(articleTagFilter)) return false;
               }
-              if (articleSearch.trim()) {
-                const q = articleSearch.trim().toLowerCase();
-                const titleMatch = (item.title || '').toLowerCase().includes(q);
-                const slugMatch = (item.slug || '').toLowerCase().includes(q);
-                const tagMatch = Array.isArray(item.tags) && item.tags.some(t => String(t).toLowerCase().includes(q));
-                const fileMatch = (item.file || item.path || '').toLowerCase().includes(q);
-                const descMatch = (item.description || '').toLowerCase().includes(q);
-                if (!titleMatch && !slugMatch && !tagMatch && !fileMatch && !descMatch) return false;
-              }
-              return true;
+              if (!keyword) return true;
+              return [item.title, item.slug, item.description, ...(Array.isArray(item.tags) ? item.tags : [])]
+                .some(value => String(value || '').toLowerCase().includes(keyword));
             });
 
-            const availableTags = (state?.profile?.tags || []).slice(0, 15);
-
-            const handleCopyPath = (filePath) => {
-              if (!filePath) return;
-              try {
-                if (navigator?.clipboard?.writeText) {
-                  navigator.clipboard.writeText(filePath);
-                  showToast(`已复制草稿路径: ${filePath}`);
-                } else {
-                  showToast(filePath);
-                }
-              } catch {
-                showToast(filePath);
-              }
+            const filtersActive = Boolean(keyword) || articleTagFilter !== 'all';
+            const resetFilters = () => {
+              setArticleSearch('');
+              setArticleTagFilter('all');
             };
+            const openEditor = (item) => openArticleEditor({ ...item, file: item.file, isDraft: true });
 
             return h('div', { key: 'drafts-panel' }, [
-              // 概览指标卡片
-              h('div', { className: 'hs-stat-grid' }, [
-                h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, drafts.length),
-                  h('div', { className: 'hs-stat-title' }, '待发布草稿总数')
-                ]),
-                h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: '#f59e0b', fontSize: 16, fontFamily: 'monospace' } }, state?.blog?.draftDir || 'docs/draft'),
-                  h('div', { className: 'hs-stat-title' }, '草稿落地相对目录')
-                ]),
-                h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: isBlogConfigured ? '#34d399' : '#f87171', fontSize: 16 } },
-                    isBlogConfigured ? '已绑定' : '未绑定'
-                  ),
-                  h('div', { className: 'hs-stat-title' }, '博客项目状态')
-                ]),
-                h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: '#38bdf8' } }, state?.profile?.tags?.length || 0),
-                  h('div', { className: 'hs-stat-title' }, '博客参考标签库')
-                ])
-              ]),
-
-              // 搜索与过滤工具栏
-              h('div', { className: 'hs-card', style: { padding: '14px 18px' } }, [
-                h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 } }, [
-                  // 搜索框
-                  h('div', { className: 'hs-search-box', style: { flex: '1 1 240px' } }, [
+              h('div', { className: 'hs-card' }, [
+                // 工具行：搜索 + 数量 + 清空（只有真的在筛选时才出现）
+                h('div', { className: 'hs-drafts-toolbar' }, [
+                  h('div', { className: 'hs-search-box' }, [
                     h('svg', {
                       className: 'hs-search-icon',
                       width: 14,
@@ -2958,151 +3027,96 @@ window.__ModuleLoader__.load({
                     ]),
                     h('input', {
                       className: 'hs-input hs-search-input',
-                      placeholder: '搜索草稿标题、slug、标签或路径...',
+                      placeholder: '搜索标题、标签...',
                       value: articleSearch,
                       onChange: (e) => setArticleSearch(e.target.value)
                     })
                   ]),
-
-                  // 快速清空搜索
-                  articleSearch.trim() && h('button', {
-                    className: 'hs-btn sm',
-                    onClick: () => setArticleSearch('')
-                  }, '清空搜索')
+                  h('span', { className: 'hs-drafts-count' }, `${filteredDrafts.length} 篇`),
+                  filtersActive && h('button', {
+                    className: 'hs-btn sm ghost',
+                    onClick: resetFilters
+                  }, '清空筛选')
                 ]),
 
-                // 热门标签快捷过滤
-                availableTags.length > 0 && h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid var(--dsw-alias-border-l1, #282a34)' } }, [
-                  h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginRight: 4 } }, '标签过滤:'),
+                draftTags.length > 1 && h('div', { className: 'hs-drafts-tags' }, [
+                  h('span', { className: 'hs-drafts-tags-label' }, '标签'),
                   h('span', {
                     className: `hs-filter-tag ${articleTagFilter === 'all' ? 'active' : ''}`,
-                    style: { cursor: 'pointer' },
                     onClick: () => setArticleTagFilter('all')
-                  }, '全部标签'),
-                  ...availableTags.map(tag => h('span', {
+                  }, '全部'),
+                  ...draftTags.map(tag => h('span', {
                     key: tag,
                     className: `hs-filter-tag ${articleTagFilter === tag ? 'active' : ''}`,
-                    style: { cursor: 'pointer' },
                     onClick: () => setArticleTagFilter(articleTagFilter === tag ? 'all' : tag)
                   }, `#${tag}`))
-                ])
-              ]),
-
-              // 草稿卡片列表
-              h('div', { className: 'hs-card' }, [
-                h('div', { className: 'hs-card-header' }, [
-                  h('div', null, [
-                    h('div', { className: 'hs-card-title' }, `草稿明细 (${filteredDrafts.length} / ${drafts.length})`),
-                    h('div', { className: 'hs-card-subtitle' },
-                      '专注管理由热点聚合生成的待发布草稿（支持预览润色、补料核验、转正发布与废弃删除，不干预博客正式文章）'
-                    )
-                  ]),
-                  (articleSearch || articleTagFilter !== 'all') && h('button', {
-                    className: 'hs-btn sm',
-                    onClick: () => {
-                      setArticleSearch('');
-                      setArticleTagFilter('all');
-                    }
-                  }, '重置筛选')
                 ]),
 
                 filteredDrafts.length === 0
-                  ? h('div', { style: { padding: '36px 0', textAlign: 'center', color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, [
-                      h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📝'),
-                      h('div', { style: { fontWeight: 500 } }, '暂无符合条件的草稿'),
-                      h('div', { style: { fontSize: 12, marginTop: 4 } }, '可在「热点候选」中点击一键生成草稿，草稿将落地到 docs/draft 目录')
+                  ? h('div', { className: 'hs-drafts-empty' }, drafts.length === 0 ? [
+                      h('div', { style: { fontSize: 22, marginBottom: 6 } }, '📝'),
+                      h('div', { style: { fontWeight: 600 } }, '还没有草稿'),
+                      h('div', { style: { fontSize: 12, marginTop: 4, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                        '去热点候选里挑一个题目，就能一键生成草稿。'),
+                      h('button', {
+                        className: 'hs-btn primary',
+                        style: { marginTop: 12 },
+                        onClick: () => setTab('candidates')
+                      }, '去看热点候选 →')
+                    ] : [
+                      h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, '没有匹配的草稿'),
+                      h('button', { className: 'hs-btn sm', style: { marginTop: 10 }, onClick: resetFilters }, '清空筛选')
                     ])
-                  : h('div', null, filteredDrafts.map(item => {
-                      const filePath = item.file || item.path || `docs/draft/${item.slug}/index.md`;
+                  : h('div', { className: 'hs-drafts-list' }, filteredDrafts.map(item => {
+                      const tags = Array.isArray(item.tags) ? item.tags : [];
                       return h('div', {
                         key: `draft-${item.slug}`,
-                        className: 'hs-article-card'
+                        className: 'hs-article-card hs-draft-card',
+                        title: '点开预览与润色',
+                        onClick: () => openEditor(item)
                       }, [
-                        // 标题行与状态
                         h('div', { className: 'hs-article-title-row' }, [
-                          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 } }, [
-                            h('span', {
-                              className: 'hs-tag-pill',
-                              style: {
-                                background: 'rgba(245, 158, 11, 0.15)',
-                                color: '#fbbf24',
-                                borderColor: 'rgba(245, 158, 11, 0.3)',
-                                fontSize: 11
-                              }
-                            }, '草稿 (sitemap:false)'),
-                            h('span', { className: 'hs-article-title', style: { wordBreak: 'break-word' } }, item.title || item.slug)
-                          ]),
-                          item.date && h('span', {
-                            style: {
-                              fontSize: 11,
-                              color: 'var(--dsw-alias-label-secondary, #8c909e)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 4,
-                              flexShrink: 0
-                            }
-                          }, [
-                            h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
-                              h('rect', { x: 3, y: 4, width: 18, height: 18, rx: 2, ry: 2 }),
-                              h('line', { x1: 16, y1: 2, x2: 16, y2: 6 }),
-                              h('line', { x1: 8, y1: 2, x2: 8, y2: 6 }),
-                              h('line', { x1: 3, y1: 10, x2: 21, y2: 10 })
-                            ]),
-                            item.date
-                          ])
+                          h('span', { className: 'hs-article-title', style: { wordBreak: 'break-word' } }, item.title || item.slug),
+                          item.date && h('span', { className: 'hs-draft-date' }, item.date)
                         ]),
-
-                        // 描述（如有）
-                        item.description && h('div', { className: 'hs-article-desc' }, item.description),
-
-                        // 底部元数据与操作
+                        item.description && h('div', { className: 'hs-article-desc hs-draft-desc' }, item.description),
                         h('div', { className: 'hs-article-meta' }, [
-                          // 文件路径胶囊
-                          h('span', {
-                            className: 'hs-article-file',
-                            title: '点击复制草稿文件路径',
-                            onClick: () => handleCopyPath(filePath)
-                          }, [
-                            h('svg', { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
-                              h('path', { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }),
-                              h('polyline', { points: '14 2 14 8 20 8' })
-                            ]),
-                            filePath,
-                            h('span', { style: { fontSize: 10, color: 'var(--dsw-alias-brand-primary, #4db6a0)', marginLeft: 2 } }, '📋')
-                          ]),
-
-                          // slug
-                          h('span', { style: { fontFamily: 'monospace', color: '#6e7382' } }, `slug: ${item.slug}`),
-
-                          // 标签
-                          (item.tags || []).length > 0 && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
-                            item.tags.map(t => h('span', {
-                              key: t,
-                              className: 'hs-tag-pill',
-                              style: { cursor: 'pointer' },
-                              onClick: () => setArticleTagFilter(t)
-                            }, `#${t}`))
-                          ),
-
-                          // 操作按钮区：专注草稿的预览润色、转正发布与废弃删除
-                          h('div', { style: { display: 'flex', gap: 6, marginLeft: 'auto', alignItems: 'center' } }, [
+                          tags.slice(0, 6).map(tag => h('span', {
+                            key: tag,
+                            className: 'hs-tag-pill',
+                            style: { cursor: 'pointer' },
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              setArticleTagFilter(tag);
+                            }
+                          }, `#${tag}`)),
+                          h('div', { className: 'hs-draft-actions' }, [
                             h('button', {
                               className: 'hs-btn sm',
                               style: { padding: '3px 8px', fontSize: 11 },
-                              onClick: () => openArticleEditor({ ...item, file: filePath, isDraft: true })
-                            }, '✏️ 预览与润色'),
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                openEditor(item);
+                              }
+                            }, '✏️ 编辑正文'),
                             h('button', {
                               className: 'hs-btn sm primary',
                               style: { padding: '3px 8px', fontSize: 11 },
                               disabled: isPromotingArticle,
-                              onClick: () => handlePromoteArticle(item.slug)
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                handlePromoteArticle(item.slug);
+                              }
                             }, '🚀 转正发布'),
                             h('button', {
                               className: 'hs-btn sm',
                               style: { padding: '3px 8px', fontSize: 11, color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' },
                               disabled: isDeletingArticle,
-                              onClick: () => handleDeleteArticle({ ...item, file: filePath, isDraft: true })
-                            }, '🗑️ 废弃草稿')
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                handleDeleteArticle({ ...item, file: item.file, isDraft: true });
+                              }
+                            }, '🗑️ 废弃')
                           ])
                         ])
                       ]);
@@ -3612,12 +3626,17 @@ window.__ModuleLoader__.load({
                   }
                 }, editModalItem.title || editModalItem.slug),
                 h('span', {
+                  className: 'hs-article-file',
                   style: {
                     fontSize: 11,
-                    color: 'var(--dsw-alias-label-secondary, #8c909e)',
-                    fontFamily: 'monospace'
-                  }
-                }, `(${editModalItem.file})`)
+                    maxWidth: 340,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  },
+                  title: '点击复制文件路径',
+                  onClick: () => copyPath(editModalItem.file)
+                }, editModalItem.file)
               ]),
 
               // 中间模式切换 Tabs
