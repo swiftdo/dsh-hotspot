@@ -65,6 +65,23 @@ test('流式拼接：text-delta / text-chunks / 嵌套 chunk / 裸字符串都�
   assert.equal(collectStreamText([]), '');
 });
 
+test('流式拼接：新版宿主的扁平 chunk（block-start / text-delta / block-end）也要认', () => {
+  // 这一组形状来自真机：magpie / deepseek-v4.1-flash 的 stream 直接吐扁平事件，
+  // 老实现只认嵌套 chunk，于是「模型没有返回正文」——模型回了，只是被丢掉了。
+  const text = collectStreamText([
+    { type: 'block-start' },
+    { type: 'text-delta', text: 'Swift 6.2 ' },
+    { type: 'text-delta', delta: '把严格并发变成了默认值' },
+    { type: 'block-end' },
+    { type: 'usage', usage: { inputTokens: 10, outputTokens: 8 } },
+    { type: 'finish' },
+  ]);
+  assert.equal(text, 'Swift 6.2 把严格并发变成了默认值');
+
+  // 扁平的 reasoning-delta 同样不能混进正文
+  assert.equal(collectStreamText([{ type: 'reasoning-delta', text: '思考过程' }]), '');
+});
+
 test('只用手头证据的任务书：材料进提示词，并明确禁止引入材料之外的事实', () => {
   const prompt = buildDirectPrompt({
     title: 'OpenAI 收购 Pierre',

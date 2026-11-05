@@ -572,10 +572,11 @@ export function apply(ctx, config) {            // 具名导出，不用 export 
 }
 ```
 
-两个踩过的坑，写在这里免得再踩：
+三个踩过的坑，写在这里免得再踩：
 
 1. **`output.render` 必须返回 `ContentBlock[]`**。返回裸字符串不会立刻报错，而是在 `tools/post-execute` 阶段把下游消费者（如 hooks）打崩。
 2. **`output.schema` 不支持 `required: [...]`**。DSH 用的是自有 value schema DSL，写了会抛 `unsupported JSON schema: schema.required is not supported`，而 Cordis 会把 `inject` 回调里的异常静默掉——表现是"插件加载了但工具不存在"。所以 `plugin.js` 里注册块被 try/catch 包住并显式 `console.warn`，这个包装不要拆。
+3. **`llm.stream` 的 chunk 形状随宿主版本变，两种都得认**。老版是 `{ type: 'chunk', chunk: { type: 'text-delta', text } }`，新版直接吐扁平的 `{ type: 'text-delta', text }`（前后还有 `block-start` / `block-end` / `usage` / `finish`）。`collectStreamText` 只认嵌套形状时，表现是**「模型没有返回正文」**——模型明明回了 1745 字，被整段丢掉，而错误信息完全指错方向。现在两种形状都认，`test/writer_route.test.js` 各有一条用例；同理，给思考型模型留的 `maxTokens` 不能太小，预算先被思考吃掉时会表现成「返回空」。
 
 刻意没做的：**不注册 `/slash` 命令、不注册定时任务**。前者要猜命令 outcome 的契约；后者宿主已有「自动化任务」，让它定时调 `hotspot_run` 就行。少两处耦合，就少两处随 DSH 版本失效的地方。
 
@@ -644,6 +645,26 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | 内容 | 草稿与已发布文章列表，可预览、在线编辑、转正 |
 | 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单、构建与部署命令；画像 tag 与关键词只读展示 |
 
+### 生成草稿：AI 起标题 + 六步进度
+
+「生成草稿」弹窗里的标题**不再默认复制原文**：打开即请求 `POST /api/title-suggest`，模型给 3 个中文标题、每个各带一个英文 slug；第一个自动填入，点其他候选会连 slug 一起换，之后仍可手改。拿不到标题（没接 llm / 超时 / 输出认不出来）时**不阻断**：标题回退原文，弹窗里只多一行灰字提示——标题是建议，不是建草稿的前置条件。
+
+确认后弹窗原位换成进度面板，把这条链路按 6 步摊开：
+
+| # | 步骤 | 谁打点 |
+|---|---|---|
+| 1 | 建草稿 | `POST /api/scaffold` 同步落盘，起任务时直接预置成完成 |
+| 2 | 定位候选 | `createWriter` |
+| 3 | 收集一手素材 | `createWriter`（篇数 · 补料条数） |
+| 4 | 选模型 | `createWriter`（provider/model） |
+| 5 | 生成正文 | `createWriter`（模型返回字数） |
+| 6 | 写盘与校验 | 写盘 + 三道闸门；校验不过标黄不标红 |
+
+- 步骤定义收敛在 `src/server/write-steps.js`：服务端打点与面板渲染共用同一套 key/label，面板不会把「第 3 步」画成另一件事；
+- **每切一步落一次盘**（`<digestDir>/jobs/<slug>.json`），面板 1.5 秒轮询一次 `/api/jobs?slug=` —— 轮询慢于切步就等于没有进度；
+- 关掉弹窗任务照跑，草稿卡片上的「✍️ 写作中」可以点开回看；失败时弹窗停在那一步并给「重试」，卡片上留 ⚠️ 徽标；
+- 失败/取消只把**当前那一步**标成 failed/cancelled，没跑到的步骤保持 pending —— 「没跑过」不会被写成「跑完了」。
+
 ### 订阅今日候选（RSS）
 
 订阅地址在「源」页底部，点「复制地址」即可；也可以直接在阅读器里添加：
@@ -671,7 +692,8 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.{build,script}（合并语义，只传 build 不会抹掉 script） |
 | POST | `/hotspot/api/run` | 触发一次抓取；已有一次在跑时回 409 `ERR_SCAN_BUSY` |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿（`slug` / `title` / `description` 可覆盖）；`generate:true` 时建完立刻在后台写正文并返回 job；slug 推导不出回 400 `ERR_SLUG_REQUIRED` |
-| GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤） |
+| POST | `/hotspot/api/title-suggest` | 按候选 id 让模型起 3 个中文标题 + 英文 slug（复用写正文的模型选择）；失败回 500 `ERR_TITLE_SUGGEST`，面板据此回退原文标题 |
+| GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤）；每条任务带 `steps` 六步进度 |
 | POST | `/hotspot/api/jobs/cancel` | 取消正在跑的写作任务；没有在跑的回 404 `ERR_NO_RUNNING_JOB` |
 | GET | `/hotspot/api/errors` | 当天的错误日志（`?date=` / `?limit=`），附现有日志文件列表 |
 | POST / DELETE | `/hotspot/api/errors` | 清空错误日志；带 `{ date }` 只清那一天 |
@@ -692,7 +714,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 - **部署靠你自己配的命令**：插件只负责按 `deploy.build` → `deploy.script` 顺序执行、截留输出、记历史；构建产物目录、上传方式、探活地址都在你的脚本里，插件不猜。
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
-- **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
+- **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。面板里这条老问题由「AI 起标题」顺带解决——模型同时给一个英文 slug；CLI 与 `hotspot_scaffold` 工具没有这一步。
 - **`.hotspot/errors/` 默认只留当天**，与 raw/digest 的 30 天保留策略分开（错误日志过期更快）。
 - **`.hotspot/raw` 会自动清理**。每次抓取结束后删掉超过 `store.keepDays`（默认 30 天）的 digest 与 raw，`latest.*` / `writer/` / `jobs/` / 部署历史都不动。`check` 只往回找 14 天，30 天够用；要留更久就把它调大。
 - **`promote` 是硬闸门，没有 force**。要放行只有两条路：把正文改到证据边界内，或把真正读过的页面登记成补料。MCP/宿主级强行改文件当然绕过它——闸门防的是流程上的惯性，不是防有磁盘权限的人。

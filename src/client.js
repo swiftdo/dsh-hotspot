@@ -2088,6 +2088,11 @@ window.__ModuleLoader__.load({
       const [scaffoldSlug, setScaffoldSlug] = useState('');
       const [scaffolding, setScaffolding] = useState(false);
       const [pickingDir, setPickingDir] = useState(false);
+      // AI 起标题：弹窗一打开就请求，给 3 个候选；拿不到就安静回退原文标题
+      const [titleSuggestions, setTitleSuggestions] = useState([]);
+      const [titleSuggestState, setTitleSuggestState] = useState('idle'); // idle | loading | done | failed
+      // 进度弹窗：按 slug 看一条后台写作任务的六步链路
+      const [progressSlug, setProgressSlug] = useState(null);
 
       // ── 文章与草稿编辑器状态 ──
       const [editModalItem, setEditModalItem] = useState(null); // { slug, title, file, isDraft }
@@ -2550,12 +2555,55 @@ window.__ModuleLoader__.load({
         return `hotspot-${Date.now().toString(36).slice(-4)}`;
       };
 
-      /** 生成草稿前先让人看一眼标题与目录名：目录名是永久 URL，改起来比选一次贵。 */
+      /**
+       * 要 3 个标题建议。失败不弹错：标题是建议不是前置条件，
+       * 弹窗照常用原文标题，只在下面给一行灰字提示。
+       */
+      const suggestTitles = async (item) => {
+        if (!item?.id) {
+          setTitleSuggestState('failed');
+          setTitleSuggestions([]);
+          return;
+        }
+        setTitleSuggestState('loading');
+        setTitleSuggestions([]);
+        try {
+          const res = await fetch(`${API_BASE}/title-suggest`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: item.id })
+          });
+          const data = await res.json();
+          const list = data?.ok && Array.isArray(data.value?.suggestions) ? data.value.suggestions : [];
+          if (list.length === 0) throw new Error(data?.message || '没有拿到标题建议');
+          setTitleSuggestions(list);
+          setTitleSuggestState('done');
+          // 第一个自动填入：否则「标题由模型生成」这句在默认值上就是假的
+          setScaffoldTitle(list[0].title);
+          if (list[0].slug) setScaffoldSlug(list[0].slug);
+        } catch (err) {
+          setTitleSuggestions([]);
+          setTitleSuggestState('failed');
+        }
+      };
+
+      /** 点一个候选标题：标题与 slug 一起换，之后仍可手改。 */
+      const pickTitleSuggestion = (suggestion) => {
+        if (!suggestion?.title) return;
+        setScaffoldTitle(suggestion.title);
+        if (suggestion.slug) setScaffoldSlug(suggestion.slug);
+      };
+
+      /**
+       * 生成草稿前先让人看一眼标题与目录名：目录名是永久 URL，改起来比选一次贵。
+       * 标题不再默认复制原文 —— 弹窗一打开就去要 3 个模型起的标题。
+       */
       const handleScaffold = (item) => {
         setScaffoldModalItem(item);
         setScaffoldTitle(String(item?.title || ''));
         setScaffoldSlug(item?.slugHint || suggestSlug(item));
         setScaffoldProjectRoot(isBlogConfigured ? '' : (blogProjectRoot || ''));
+        suggestTitles(item);
       };
 
       // 后台写作任务的实时状态：slug -> job。生成草稿后在这里推进度。
@@ -2565,14 +2613,16 @@ window.__ModuleLoader__.load({
 
       /**
        * 盯一个后台写作任务：生成草稿是「搜 → 读 → 综合」，几分钟是常态，
-       * 所以接口立刻返回 job，这里每 4 秒问一次，结束后刷新草稿箱并给结论。
+       * 所以接口立刻返回 job，这里每 1.5 秒问一次（进度弹窗靠这份数据推进），
+       * 结束后刷新草稿箱并给结论。弹窗关掉也照旧跑，结束时才有 toast。
        */
       const watchJob = async (slug) => {
         if (!slug || watchedSlugs.current.has(slug)) return;
         watchedSlugs.current.add(slug);
         try {
-          for (let i = 0; i < 200; i += 1) {
-            await new Promise(resolve => setTimeout(resolve, 4000));
+          // 1.5s × 800 ≈ 20 分钟：写正文的超时是 8 分钟，轮询不能先于它放弃
+          for (let i = 0; i < 800; i += 1) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
             let job = null;
             try {
               const res = await fetch(`${API_BASE}/jobs?slug=${encodeURIComponent(slug)}`);
@@ -2661,6 +2711,15 @@ window.__ModuleLoader__.load({
         }
       }, [state?.jobs]);
 
+      // 进度弹窗开着时每秒刷新一次「现在」：不 tick，「已用 1m 42s」就是死的
+      const [progressNow, setProgressNow] = useState(() => Date.now());
+      useEffect(() => {
+        if (!progressSlug) return undefined;
+        setProgressNow(Date.now());
+        const timer = setInterval(() => setProgressNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+      }, [progressSlug]);
+
       const executeScaffold = async (item, opts = {}) => {
         try {
           setScaffolding(true);
@@ -2678,9 +2737,12 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.ok) {
             setScaffoldModalItem(null);
+            setTitleSuggestions([]);
+            setTitleSuggestState('idle');
             if (data.job) {
               setJobStates(prev => ({ ...prev, [data.job.slug]: data.job }));
-              showToast(`草稿已建：${data.value?.slug || data.job.slug}，正文在后台写，写完会提示`);
+              // 弹窗原位换成进度面板：用户刚点的那件事就是这条六步链路
+              setProgressSlug(data.job.slug);
               watchJob(data.job.slug);
             } else {
               showToast(data.message || `草稿生成成功：${data.value?.file || data.value?.slug}`);
@@ -3056,6 +3118,169 @@ window.__ModuleLoader__.load({
 
       // 编辑器里的正文是否仍为空（scaffold 只写了标题与来源）
       const draftBodyEmpty = isDraftBodyEmpty(editContent);
+
+      /** 毫秒 → 「12s」/「1m 42s」；进度弹窗里每一步都挂一个。 */
+      const formatSpan = (ms) => {
+        const total = Math.max(0, Math.round(Number(ms) || 0));
+        if (total < 1000) return `${total}ms`;
+        const seconds = Math.round(total / 1000);
+        if (seconds < 60) return `${seconds}s`;
+        return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+      };
+
+      /**
+       * 进度弹窗：把一条后台写作任务的六步链路摊开。
+       *
+       * 数据就是 watchJob 轮询到的那份 job（不另起一套轮询）：
+       * 步骤是服务端按 write-steps.js 的模板推的，这里只负责画。
+       */
+      const renderProgressModal = () => {
+        if (!progressSlug) return null;
+        const job = jobStates[progressSlug]
+          || (state?.jobs || []).find(entry => entry && entry.slug === progressSlug)
+          || null;
+        const steps = Array.isArray(job?.steps) ? job.steps : [];
+        const running = job?.state === 'running';
+        const failed = job?.state === 'failed';
+        const checks = job?.result?.checks;
+        const draft = (state?.drafts || []).find(entry => entry && entry.slug === progressSlug) || null;
+        const doneCount = steps.filter(step => step.state === 'done').length;
+        const elapsed = job?.startedAt
+          ? formatSpan((job.endedAt ? new Date(job.endedAt).getTime() : progressNow) - new Date(job.startedAt).getTime())
+          : '';
+
+        const markOf = (state) => ({
+          done: { glyph: '✓', color: '#6fe0c6', background: 'rgba(77,182,160,.16)', border: '1px solid rgba(77,182,160,.5)' },
+          active: { glyph: '●', color: '#60a5fa', background: 'rgba(96,165,250,.16)', border: '1px solid rgba(96,165,250,.55)' },
+          failed: { glyph: '✕', color: '#f87171', background: 'rgba(239,68,68,.14)', border: '1px solid rgba(239,68,68,.5)' },
+          cancelled: { glyph: '✕', color: '#94a3b8', background: 'rgba(148,163,184,.12)', border: '1px solid rgba(148,163,184,.4)' }
+        }[state] || { glyph: '○', color: '#5d6170', background: 'transparent', border: '1px solid #3a3e4d' });
+        const summary = !job
+          ? '这条任务的状态已经找不到了（宿主可能重启过）'
+          : running
+            ? `第 ${Math.min(doneCount + 1, steps.length || 1)} / ${steps.length || 6} 步 · 已用 ${elapsed}`
+            : job.state === 'done'
+              ? `${steps.length || 6} 步全部完成 · 共 ${elapsed}`
+              : job.state === 'cancelled'
+                ? `已取消 · 停在 ${elapsed}`
+                : `失败 · 已用 ${elapsed}`;
+
+        return h('div', { className: 'hs-modal-mask', key: 'progress-modal', style: { zIndex: 1250 } }, [
+          h('div', { className: 'hs-modal', style: { width: 560 } }, [
+            h('div', { className: 'hs-modal-header' }, [
+              h('div', { style: { minWidth: 0 } }, [
+                h('h3', { className: 'hs-modal-title' }, `生成草稿 · ${progressSlug}`),
+                h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 2 } },
+                  draft?.title ? `《${draft.title}》` : (running ? '正文在后台写' : '正文已写入'))
+              ]),
+              h('button', {
+                className: 'hs-btn ghost',
+                style: { padding: '4px 8px' },
+                onClick: () => setProgressSlug(null)
+              }, '✕')
+            ]),
+            h('div', { className: 'hs-modal-body' }, [
+              h('div', {
+                style: {
+                  display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5,
+                  color: 'var(--dsw-alias-label-secondary, #9da1b0)', marginBottom: 12
+                }
+              }, [
+                running && h('span', {
+                  style: { width: 6, height: 6, borderRadius: '50%', background: '#60a5fa', boxShadow: '0 0 0 3px rgba(96,165,250,.15)' }
+                }),
+                summary
+              ]),
+
+              steps.length === 0
+                ? h('div', { style: { fontSize: 12, color: '#8c909e', lineHeight: 1.7 } },
+                    job?.message || '这条任务没有步骤记录（可能是旧版本起的任务）')
+                : h('div', { style: { display: 'flex', flexDirection: 'column' } }, steps.map((step, index) => {
+                    const mark = markOf(step.state);
+                    const span = step.startedAt
+                      ? formatSpan((step.endedAt ? new Date(step.endedAt).getTime() : progressNow) - new Date(step.startedAt).getTime())
+                      : '';
+                    const { glyph, ...markStyle } = mark;
+                    return h('div', {
+                      key: `progress-step-${step.key}`,
+                      style: {
+                        display: 'grid', gridTemplateColumns: '22px 1fr auto', gap: 10, alignItems: 'start',
+                        padding: '9px 0', borderTop: index === 0 ? 'none' : '1px dashed rgba(255,255,255,.06)'
+                      }
+                    }, [
+                      h('span', {
+                        style: {
+                          width: 18, height: 18, borderRadius: '50%', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', fontSize: 11, marginTop: 1,
+                          ...markStyle
+                        }
+                      }, glyph),
+                      h('div', { style: { minWidth: 0 } }, [
+                        h('div', {
+                          style: {
+                            fontSize: 12.5,
+                            fontWeight: step.state === 'pending' ? 500 : 600,
+                            color: step.state === 'pending' ? '#6f7484' : 'var(--dsw-alias-label-primary, #ececf1)'
+                          }
+                        }, step.label),
+                        step.detail && h('div', {
+                          style: { fontSize: 11, color: '#6f7484', marginTop: 1, wordBreak: 'break-word' }
+                        }, step.detail)
+                      ]),
+                      h('span', {
+                        style: {
+                          fontSize: 11, fontVariantNumeric: 'tabular-nums',
+                          color: step.state === 'active' ? '#60a5fa' : '#6f7484'
+                        }
+                      }, step.state === 'active' ? `${span}…` : (span || '待开始'))
+                    ]);
+                  })),
+
+              checks && checks.ok === false && h('div', {
+                style: {
+                  marginTop: 12, fontSize: 11.5, color: '#fbbf24',
+                  background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.25)',
+                  borderLeft: '3px solid #fbbf24', borderRadius: 8, padding: '8px 12px'
+                }
+              }, `正文已写入，但校验未过 ${checks.violations?.length || 0} 条：` +
+                (checks.violations || []).slice(0, 3).map(v => `[${v.code}] ${v.message}`).join('；')),
+
+              failed && job?.error && h('div', {
+                style: {
+                  marginTop: 12, fontSize: 11.5, color: '#f87171',
+                  background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.25)',
+                  borderLeft: '3px solid #ef4444', borderRadius: 8, padding: '8px 12px', wordBreak: 'break-word'
+                }
+              }, job.error)
+            ]),
+            h('div', { className: 'hs-modal-footer' }, [
+              h('div', { style: { marginRight: 'auto', fontSize: 11, color: '#6f7484' } },
+                running ? '关掉不影响后台，卡片上的「写作中」能再打开' : ''),
+              running && h('button', {
+                className: 'hs-btn',
+                style: { color: '#f87171', borderColor: 'rgba(239,68,68,.3)' },
+                onClick: () => cancelWrite(progressSlug)
+              }, '✕ 取消写作'),
+              failed && h('button', {
+                className: 'hs-btn',
+                disabled: Boolean(jobStarting[progressSlug]),
+                onClick: () => retryWrite(progressSlug)
+              }, '🔁 重试'),
+              !running && draft && h('button', {
+                className: 'hs-btn',
+                onClick: () => {
+                  setProgressSlug(null);
+                  openEditor(draft);
+                }
+              }, '✏️ 打开草稿'),
+              h('button', {
+                className: 'hs-btn primary',
+                onClick: () => setProgressSlug(null)
+              }, running ? '后台继续' : '关闭')
+            ])
+          ])
+        ]);
+      };
 
       return h('div', { className: 'hs-root' }, [
         // ── 顶部 Header ──
@@ -3837,16 +4062,25 @@ window.__ModuleLoader__.load({
                       }, [
                         h('div', { className: 'hs-article-title-row' }, [
                           h('span', { className: 'hs-article-title', style: { wordBreak: 'break-word' } }, item.title || item.slug),
-                          writing && h('span', {
+                          writing && h('button', {
                             key: 'job-running',
                             className: 'hs-tag-pill',
-                            style: { background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', borderColor: 'rgba(59, 130, 246, 0.3)' }
+                            title: '看生成链路',
+                            style: { cursor: 'pointer', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', borderColor: 'rgba(59, 130, 246, 0.3)' },
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              setProgressSlug(item.slug);
+                            }
                           }, '✍️ 写作中'),
-                          failed && h('span', {
+                          failed && h('button', {
                             key: 'job-failed',
                             className: 'hs-tag-pill',
-                            title: job.error || '写正文失败',
-                            style: { background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }
+                            title: job.error || '写正文失败（点开看是哪一步挂的）',
+                            style: { cursor: 'pointer', background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' },
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              setProgressSlug(item.slug);
+                            }
                           }, '⚠️ 正文失败'),
                           // 写完了但校验没过：这件事必须留在卡片上，不能只 flash 一个 toast
                           job && job.state === 'done' && job.result?.checks && job.result.checks.ok === false && h('span', {
@@ -4527,7 +4761,45 @@ window.__ModuleLoader__.load({
                   value: scaffoldTitle,
                   onChange: (e) => setScaffoldTitle(e.target.value),
                   autoFocus: true
-                })
+                }),
+                // AI 起标题：弹窗一打开就请求。拿不到就安静回退原文标题，只留一行灰字。
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 6px' } }, [
+                  h('span', {
+                    style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-brand-primary, #4db6a0)' }
+                  }, titleSuggestState === 'loading' ? 'AI 正在起标题…' : 'AI 起标题'),
+                  titleSuggestState === 'done' && h('button', {
+                    className: 'hs-btn ghost',
+                    type: 'button',
+                    style: { marginLeft: 'auto', padding: '2px 6px', fontSize: 11, color: 'var(--dsw-alias-label-secondary, #9da1b0)' },
+                    onClick: () => suggestTitles(scaffoldModalItem)
+                  }, '↻ 换一批')
+                ]),
+                titleSuggestions.length > 0
+                  ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } }, titleSuggestions.map((suggestion) => {
+                      const active = scaffoldTitle.trim() === suggestion.title;
+                      return h('button', {
+                        key: `title-${suggestion.slug || suggestion.title}`,
+                        type: 'button',
+                        title: suggestion.slug ? `slug: ${suggestion.slug}` : '这条建议没给出 slug，目录名仍按标题推算',
+                        onClick: () => pickTitleSuggestion(suggestion),
+                        style: {
+                          textAlign: 'left', fontSize: 12, padding: '5px 10px', borderRadius: 999, cursor: 'pointer',
+                          border: active ? '1px solid rgba(77,182,160,.55)' : '1px solid var(--dsw-alias-border-l1, #2d303b)',
+                          background: active ? 'rgba(77,182,160,.12)' : 'var(--dsw-alias-bg-layer-2, #1f212a)',
+                          color: active ? '#8fe3d0' : 'var(--dsw-alias-label-secondary, #9da1b0)'
+                        }
+                      }, [
+                        h('div', null, suggestion.title),
+                        suggestion.slug && h('div', {
+                          style: { fontSize: 10, marginTop: 1, color: active ? '#6fc3b1' : '#6f7484' }
+                        }, suggestion.slug)
+                      ]);
+                    }))
+                  : titleSuggestState === 'loading'
+                    ? h('div', { style: { fontSize: 11, color: '#6f7484' } }, '正在按候选素材拟 3 个中文标题…')
+                    : titleSuggestState === 'failed'
+                      ? h('div', { style: { fontSize: 11, color: '#8c909e' } }, 'AI 起标题没成功，标题仍用原文，可手动改')
+                      : null
               ]),
               h('div', { className: 'hs-form-item' }, [
                 h('label', { className: 'hs-form-label' }, '目录名 slug（永久 URL，只能小写字母/数字/连字符）'),
@@ -4581,7 +4853,7 @@ window.__ModuleLoader__.load({
                 ])
               ]),
               h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 4 } },
-                '确认后先建草稿，随后在后台写正文：读候选素材 + 已登记补料 → 一次 completion → 跑三道校验。可以随时取消。')
+                '确认后建草稿，随即在这个位置展开六步进度：定位候选 → 收素材 → 选模型 → 生成正文 → 写盘与校验。关掉弹窗不影响后台，随时可取消。')
             ]),
             h('div', { className: 'hs-modal-footer' }, [
               h('button', {
@@ -4616,6 +4888,9 @@ window.__ModuleLoader__.load({
             ])
           ])
         ]),
+
+        // ── 进度弹窗：生成草稿后的六步链路（可关掉，后台照跑） ──
+        renderProgressModal(),
 
         // ── 在线文章与草稿编辑器 / 预览全屏模态框 ──
         editModalItem && h('div', { className: 'hs-modal-mask', key: 'edit-modal', style: { zIndex: 1050 } }, [

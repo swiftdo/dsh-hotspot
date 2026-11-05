@@ -14,6 +14,7 @@ import { checkDraft } from './core/checks.js';
 import { promoteChecked } from './core/promote.js';
 import {
   createPolisher,
+  createTitleSuggester,
   createWriter,
   listCatalog,
   readWriterConfig,
@@ -395,6 +396,12 @@ export function apply(ctx, config = {}) {
         digestDir: writerConfigDir,
         log,
       });
+      // 面板弹窗里的「AI 起标题」：同一套模型选择，只换提示词。
+      const titleSuggester = createTitleSuggester({
+        getLlm: () => (typeof ctx.get === 'function' ? ctx.get('llm') : null),
+        digestDir: writerConfigDir,
+        log,
+      });
       // 后台写作任务：状态落到 <digestDir>/jobs/<slug>.json，
       // 面板刷新或宿主重启后仍能看出「上次写作失败的原因」。
       const jobs = createJobRunner({
@@ -421,6 +428,7 @@ export function apply(ctx, config = {}) {
         onConfigUpdated: updateRuntime,
         generate: writer,
         polish: polisher,
+        suggestTitles: titleSuggester,
         // 面板的模型选择：目录来自宿主的 llm 服务，选择存在 .hotspot/writer-config.json。
         // 返回 selection（global/writer/polish 完整结构）与两个用途实际解析到的路由，
         // 面板据此显示「这个用途到底会用哪个模型」。

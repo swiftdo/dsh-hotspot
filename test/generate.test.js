@@ -8,6 +8,7 @@ import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
 import { resolveWriterSelection } from '../src/core/writer-route.js';
 import {
   createPolisher,
+  createTitleSuggester,
   createWriter,
   readWriterConfig,
   saveWriterConfig,
@@ -264,5 +265,93 @@ test('润色：草稿不存在时明确报错', async () => {
   await assert.rejects(
     () => polish({ slug: 'nope', target, projectRoot: root, instruction: '' }),
     /找不到草稿/,
+  );
+});
+
+// ── 六步链路的打点（面板进度弹窗靠它） ──
+
+test('写正文：按链路顺序打点，最后一步落在写盘的文件上', async () => {
+  const { root, target, store } = await setup();
+  const llm = fakeLlm();
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
+  const marks = [];
+  await write({
+    slug: 'demo-post',
+    store,
+    target,
+    projectRoot: root,
+    provider: 'openai',
+    model: 'gpt-x',
+    onStep: (key, detail) => marks.push([key, detail ?? '']),
+  });
+
+  // 同一个 key 会打两次（进入该步 / 该步有结论），顺序必须与 write-steps 一致
+  const order = marks.map(([key]) => key).filter((key, index, list) => list.indexOf(key) === index);
+  assert.deepEqual(order, ['resolve', 'brief', 'route', 'write', 'persist']);
+
+  assert.match(marks.find(([key, detail]) => key === 'resolve' && detail)[1], /h-20261105-01/);
+  assert.match(marks.find(([key, detail]) => key === 'brief' && detail)[1], /篇原文/);
+  assert.match(marks.find(([key, detail]) => key === 'route' && detail)[1], /openai\/gpt-x/);
+  const lastPersist = marks.filter(([key]) => key === 'persist').pop();
+  assert.match(lastPersist[1], /demo-post/, '写盘那一步的 detail 要是文件路径');
+});
+
+test('写正文：没有 onStep 时也不炸（同步 /api/generate 的老路径）', async () => {
+  const { root, target, store } = await setup();
+  const llm = fakeLlm();
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
+  assert.ok(value.bodyChars > 0);
+});
+
+// ── AI 起标题 ──
+
+const TITLE_JSON = JSON.stringify([
+  { title: 'Swift 6.2 把严格并发变成了默认值', slug: 'swift-6-2-strict-concurrency' },
+  { title: '数据竞争被挡在编译期', slug: 'data-race-compile-time' },
+  { title: '升级前先看懂这四条并发规则', slug: 'swift-6-2-concurrency-rules' },
+]);
+
+test('起标题：一次 completion，素材来自候选 brief，返回三条建议', async () => {
+  const { root, store } = await setup();
+  const llm = fakeLlm({ texts: [TITLE_JSON] });
+  const suggest = createTitleSuggester({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
+  const value = await suggest({
+    item: CANDIDATE,
+    digest: { date: '2026-11-05', items: [CANDIDATE] },
+    store,
+    projectRoot: root,
+    provider: 'openai',
+    model: 'gpt-x',
+  });
+
+  assert.equal(value.suggestions.length, 3);
+  assert.equal(value.suggestions[0].slug, 'swift-6-2-strict-concurrency');
+  assert.equal(value.provider, 'openai');
+  assert.equal(value.model, 'gpt-x');
+  // 素材必须真的进了提示词：一手原文里的那句话
+  assert.match(JSON.stringify(llm.calls[0].messages), /OpenAI 在 11 月 4 日宣布收购/);
+  assert.ok(llm.calls[0].maxTokens >= 1000, '起标题也要给思考预算，太小会拿不到正文');
+});
+
+test('起标题：模型答非所问时抛错，让面板回退原文标题', async () => {
+  const { root, store } = await setup();
+  const llm = fakeLlm({ texts: ['这篇文章很好，标题你自己想吧。'] });
+  const suggest = createTitleSuggester({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
+  await assert.rejects(
+    () => suggest({ item: CANDIDATE, digest: { date: '2026-11-05' }, store, projectRoot: root }),
+    /没有给出可用的标题/,
+  );
+});
+
+test('起标题：宿主没有 llm 时直接抛错', async () => {
+  const { root, store } = await setup();
+  const suggest = createTitleSuggester({ getLlm: () => null, digestDir: '.hotspot', log: () => {} });
+  await assert.rejects(
+    () => suggest({ item: CANDIDATE, digest: { date: '2026-11-05' }, store, projectRoot: root }),
+    /没有提供 llm 服务/,
   );
 });

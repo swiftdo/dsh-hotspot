@@ -17,6 +17,7 @@ import {
   runDeployPlan,
 } from './deploy.js';
 import { createStateBuilder, sourceLabel } from './state.js';
+import { writeSteps } from './write-steps.js';
 import { LEGACY_PREFIX, PREFIX } from './prefix.js';
 
 /**
@@ -38,6 +39,24 @@ export { LEGACY_PREFIX, PREFIX } from './prefix.js';
 export { BUILTIN_SOURCES };
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
+
+/**
+ * 候选定位：完整 id（h-20261105-03）、尾号（03 / 3）、序号（3）都认。
+ * scaffold 与 title-suggest 共用同一套解析 —— 两个入口对着同一条候选，
+ * 各自解析一套的结果就是「弹窗里是这条、落盘是那条」。
+ *
+ * @param {{ items?: Array<{ id: string }> }} digest
+ * @param {unknown} rawId
+ */
+export function findCandidateItem(digest, rawId) {
+  const key = String(rawId ?? '').replace(/^#/, '').trim();
+  const items = Array.isArray(digest?.items) ? digest.items : [];
+  if (!key || items.length === 0) return null;
+  return (
+    items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`)) ??
+    (Number(key) >= 1 && Number(key) <= items.length ? items[Number(key) - 1] : null)
+  );
+}
 
 /**
  * 调起系统原生文件夹选择器。
@@ -246,17 +265,26 @@ export function createRoutes(deps) {
   /**
    * 起一个后台写作任务：在后台「读素材 → 写正文」，写盘后立刻复核。
    * 三个入口（建草稿后自动写、面板重试、以后可能的定时任务）共用这一段。
+   *
+   * 链路六步（`write-steps.js`）：`scaffold` 由建草稿那一步同步做完，
+   * 起任务时直接预置成 done；其余五步由 writer 通过 `onStep` 推进。
    */
-  function startWriteJob({ slug, target, store, projectRoot, message = '正在写正文' }) {
+  function startWriteJob({ slug, target, store, projectRoot, message = '正在写正文', scaffoldDetail = '' }) {
     if (!deps.jobs || typeof deps.generate !== 'function') return null;
     return deps.jobs.start({
       slug,
       message,
-      run: async ({ signal }) => {
+      steps: writeSteps({ scaffoldDetail }),
+      run: async ({ signal, step }) => {
         try {
           // signal 一路传到模型请求：取消要真停，不是只把状态改成 cancelled
-          const value = await deps.generate({ slug, store, target, projectRoot, signal });
+          const value = await deps.generate({ slug, store, target, projectRoot, signal, onStep: step });
           const checks = await draftChecks(slug, target, store);
+          // 校验算在 persist 步里：写盘和「写出来的东西站不站得住」是同一件事的两半
+          const verdict = checks?.ok === false
+            ? `校验未过 ${checks.violations?.length ?? 0} 条`
+            : '校验通过';
+          step('persist', [value?.file, verdict].filter(Boolean).join(' · '));
           return { ...value, checks };
         } catch (error) {
           await deps.logError?.({ source: 'writer', slug, error });
@@ -455,6 +483,7 @@ export function createRoutes(deps) {
             store: currentStore,
             projectRoot: currentProjectRoot,
             message: '正在重试写正文',
+            scaffoldDetail: '草稿已存在',
           });
           if (!job) {
             await noteFailure('writer-sync', '当前环境没有接入 llm 服务，无法重试写正文', { code: 'ERR_NO_WRITER', slug });
@@ -722,10 +751,7 @@ export function createRoutes(deps) {
         const digest = await currentStore.loadDigest('latest');
         if (!digest) return sendJson(res, 400, { ok: false, message: '还没有 digest，先跑一次抓取' });
 
-        const key = String(body.id ?? '').replace(/^#/, '');
-        const item =
-          digest.items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`)) ??
-          (Number(key) >= 1 && Number(key) <= digest.items.length ? digest.items[Number(key) - 1] : null);
+        const item = findCandidateItem(digest, body.id);
         if (!item) return sendJson(res, 404, { ok: false, message: `没有候选 ${body.id}` });
 
         let effectiveTarget = currentTarget;
@@ -832,6 +858,8 @@ export function createRoutes(deps) {
               target: effectiveTarget,
               store: currentStore,
               projectRoot: targetRoot,
+              // 第一格「建草稿」在本次请求里已经落盘：直接把文件名写进进度里
+              scaffoldDetail: path.relative(targetRoot, result.file) || result.file,
             });
           } catch (error) {
             // 草稿已经建好了，任务起不来也要把这件事说清楚，不能回 500 让前端以为草稿没建。
@@ -852,6 +880,58 @@ export function createRoutes(deps) {
         } catch (error) {
           await deps.logError?.({ source: 'scaffold', error, context: { id: body?.id } });
           sendJson(res, 500, { ok: false, message: error.message });
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/title-suggest`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (typeof deps.suggestTitles !== 'function') {
+          sendJson(res, 501, {
+            ok: false,
+            code: 'ERR_NO_TITLE_SUGGESTER',
+            message: '当前环境没有接入 llm 服务，无法生成标题建议',
+          });
+          return;
+        }
+        const body = await readJson(req);
+        if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
+
+        const digest = await currentStore.loadDigest('latest');
+        if (!digest) {
+          sendJson(res, 400, { ok: false, code: 'ERR_NO_DIGEST', message: '还没有 digest，先跑一次抓取' });
+          return;
+        }
+        // 与 /api/scaffold 共用同一套候选定位：弹窗里起标题的那条必须就是待会儿落盘的那条
+        const item = findCandidateItem(digest, body.id);
+        if (!item) {
+          sendJson(res, 404, { ok: false, code: 'ERR_CANDIDATE_NOT_FOUND', message: `没有候选 ${body.id}` });
+          return;
+        }
+
+        try {
+          const value = await deps.suggestTitles({
+            item,
+            digest,
+            store: currentStore,
+            projectRoot: currentProjectRoot,
+            provider: body.provider ? String(body.provider) : undefined,
+            model: body.model ? String(body.model) : undefined,
+          });
+          sendJson(res, 200, { ok: true, value });
+        } catch (error) {
+          // 起标题是「建议」不是前置条件：面板会回退原文标题，这里照实记一笔便于排查
+          await noteFailure('title-suggest', `起标题失败：${error?.message ?? error}`, {
+            code: error?.code || 'ERR_TITLE_SUGGEST',
+            context: { id: item?.id },
+          });
+          sendJson(res, 500, {
+            ok: false,
+            code: error?.code || 'ERR_TITLE_SUGGEST',
+            message: error?.message || String(error),
+          });
         }
       },
     },

@@ -196,6 +196,13 @@ export function collectStreamText(chunks) {
       continue;
     }
     if (!chunk || typeof chunk !== 'object') continue;
+    // 宿主版本之间 chunk 的嵌套层数不一样：老版是 { type: 'chunk', chunk: {...} }，
+    // 新版直接吐 { type: 'text-delta', text }。两种都得认 —— 只认嵌套的那种表现是
+    // 「模型没有返回正文」，而模型其实回了，只是被这里整段丢掉了。
+    if (chunk.type === 'text-delta') {
+      pushText(chunk.text ?? chunk.delta);
+      continue;
+    }
     if (chunk.type === 'text-chunks' && Array.isArray(chunk.texts)) {
       for (const text of chunk.texts) pushText(text);
       continue;

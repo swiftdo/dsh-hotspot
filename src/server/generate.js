@@ -14,6 +14,7 @@ import {
 import { slugify } from '../core/normalize.js';
 import { buildCandidateBrief } from '../core/brief.js';
 import { resolveCandidate } from '../core/checks.js';
+import { buildTitlePrompt, parseTitleSuggestions } from '../core/title.js';
 import {
   MAX_POLISH_BODY_CHARS,
   buildPolishPrompt,
@@ -37,6 +38,9 @@ export const DEFAULT_WRITER_TIMEOUT_MS = 8 * 60 * 1000;
 
 /** 润色是短任务：3 分钟够用，超时说明模型路由卡住了。 */
 export const DEFAULT_POLISH_TIMEOUT_MS = 3 * 60 * 1000;
+
+/** 起标题是几十个 token 的小请求：45 秒还不回来说明路由或网络卡住了。 */
+export const DEFAULT_TITLE_TIMEOUT_MS = 45 * 1000;
 
 /** 模型目录：`listProviders()` 与 `listModels()` 的形状由宿主决定，这里只做容忍式摊平。 */
 export async function listCatalog(llm) {
@@ -103,6 +107,21 @@ export async function saveWriterConfig(digestDir, patch = {}) {
 }
 
 /**
+ * 解析「这个用途该用哪个模型」：选择文件 → 模型目录 → 路由。
+ * 写正文、润色、起标题三处共用 —— 三份拷贝迟早会漂成三种行为。
+ *
+ * @param {any} llm
+ * @param {string} dir  writer-config.json 所在目录（已是绝对路径）
+ * @param {{ provider?: string, model?: string, purpose?: 'writer'|'polish' }} [opts]
+ * @returns {Promise<{ provider: string, model: string }|null>}
+ */
+async function resolveConfiguredRoute(llm, dir, { provider, model, purpose = 'writer' } = {}) {
+  const configured = resolveWriterSelection(await readWriterConfig(dir), purpose);
+  const catalog = await listCatalog(llm);
+  return resolveRoute(catalog, { provider: provider || configured.provider, model: model || configured.model });
+}
+
+/**
  * 把外部的取消信号接到我们自己的 controller 上。
  *
  * 超时是「我们主动掐」，取消是「用户要求停」——两者都要能让子代理 / 流真的中断，
@@ -126,7 +145,7 @@ function linkAbort(outer, controller) {
 }
 
 /** 一次 completion 的文本；message 形状优先用宿主自己的 createUserMessage，拿不到再退回朴素形状。 */
-async function streamOnce(llm, route, { system, prompt, signal, maxTokens = 4096 }) {
+async function streamOnce(llm, route, { system, prompt, signal, maxTokens = 4096, onChunk } = {}) {
   let createUserMessage = null;
   try {
     ({ createUserMessage } = await import('@deepseek-ai/dsh-llm'));
@@ -151,6 +170,7 @@ async function streamOnce(llm, route, { system, prompt, signal, maxTokens = 4096
     signal,
   })) {
     chunks.push(chunk);
+    if (typeof onChunk === 'function') onChunk(chunk);
   }
   return collectStreamText(chunks);
 }
@@ -184,6 +204,7 @@ export function createWriter({
     signal: outerSignal,
     provider: wantedProvider,
     model: wantedModel,
+    onStep = () => {},
   }) {
     const clean = String(slug ?? '').trim();
     if (!clean) throw new Error('缺少 slug');
@@ -196,6 +217,7 @@ export function createWriter({
 
     // 定位候选：优先读草稿里记下的 candidate.id（scaffold / registerSlug 会写），
     // 找不到再退回 slugHint / 标题。
+    onStep('resolve');
     const drafts = typeof target.listDrafts === 'function' ? await target.listDrafts() : [];
     const draft = (Array.isArray(drafts) ? drafts : []).find((entry) => entry && entry.slug === clean) ?? null;
     const draftTitle = String(draft?.title ?? '');
@@ -218,16 +240,17 @@ export function createWriter({
     const brief = buildCandidateBrief(item ?? { title: draftTitle || clean }, raw);
     const title = brief.title || draftTitle || clean;
     const url = brief.url || brief.sources[0]?.url || '';
+    onStep('resolve', item?.id ? `候选 ${item.id}` : '按草稿标题定位（无候选记录）');
 
-    const configured = resolveWriterSelection(await readWriterConfig(absDirOf(projectRoot)), 'writer');
-    const selection = {
-      provider: wantedProvider || configured.provider,
-      model: wantedModel || configured.model,
-    };
+    onStep('brief', `${brief.sources.length} 篇原文 · ${(supplements?.entries ?? []).length} 条补料`);
 
-    const catalog = await listCatalog(llm);
-    const route = resolveRoute(catalog, selection);
+    const route = await resolveConfiguredRoute(llm, absDirOf(projectRoot), {
+      provider: wantedProvider,
+      model: wantedModel,
+      purpose: 'writer',
+    });
     if (!route) throw new Error('宿主没有可用的模型路由，请先在设置页里选一个模型');
+    onStep('route', `${route.provider}/${route.model || '默认模型'}`);
 
     const prompt = buildDirectPrompt({
       title,
@@ -245,6 +268,7 @@ export function createWriter({
     );
     const unlink = linkAbort(outerSignal, controller);
     let body = '';
+    onStep('write', '正在生成正文…');
     try {
       const text = await streamOnce(llm, route, {
         system: '你是技术博客作者，只用给定材料写作，不编造事实。',
@@ -258,8 +282,11 @@ export function createWriter({
     }
     if (!body) throw new Error('模型没有返回正文');
     log(`模型 ${route.provider}/${route.model} 完成：${body.slice(0, 80)}`);
+    onStep('write', `模型返回 ${[...body].length} 字`);
 
+    onStep('persist', '正在写盘与跑校验');
     const written = await target.writeBody(clean, body);
+    onStep('persist', written.file);
     return {
       slug: clean,
       file: written.file,
@@ -274,6 +301,105 @@ export function createWriter({
       sources: brief.sources.length,
       registered: 0,
       registerFailed: [],
+    };
+  };
+}
+
+/**
+ * 宿主侧的「起标题」：在面板弹窗里给 3 个中文标题 + 英文 slug 建议。
+ *
+ * 为什么复用写正文的模型选择：用户只在设置页里选过一次「用哪个模型」，
+ * 再冒出一个「起标题模型」只会让人多一处要配、多一处会错。
+ * 素材走和写正文同一份 brief（候选摘要 + 一手原文），标题才不是凭空编的。
+ */
+export function createTitleSuggester({
+  getLlm,
+  digestDir = '.hotspot',
+  timeoutMs = DEFAULT_TITLE_TIMEOUT_MS,
+  log = () => {},
+} = {}) {
+  const dirOf = () => (typeof digestDir === 'function' ? digestDir() : digestDir);
+  const absDirOf = (projectRoot) => {
+    const dir = String(dirOf() || '.hotspot');
+    return path.isAbsolute(dir) ? dir : path.join(projectRoot || '.', dir);
+  };
+
+  return async function suggestTitles({
+    item,
+    digest,
+    store,
+    projectRoot,
+    provider: wantedProvider,
+    model: wantedModel,
+    signal: outerSignal,
+  } = {}) {
+    const llm = typeof getLlm === 'function' ? getLlm() : null;
+    if (!llm || typeof llm.stream !== 'function') {
+      throw new Error('宿主没有提供 llm 服务，无法生成标题建议');
+    }
+
+    const date = digest?.date || '';
+    const raw = date && store && typeof store.loadRaw === 'function' ? await store.loadRaw(date) : [];
+    const brief = buildCandidateBrief(item ?? {}, raw);
+
+    const route = await resolveConfiguredRoute(llm, absDirOf(projectRoot), {
+      provider: wantedProvider,
+      model: wantedModel,
+      purpose: 'writer',
+    });
+    if (!route) throw new Error('宿主没有可用的模型路由，请先在设置页里选一个模型');
+
+    const prompt = buildTitlePrompt({
+      title: brief.title || String(item?.title ?? ''),
+      url: brief.url || String(item?.url ?? ''),
+      summary: brief.summary,
+      tags: brief.tags,
+      sources: brief.sources,
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`起标题超时（${Math.round(timeoutMs / 1000)}s）`)),
+      timeoutMs,
+    );
+    const unlink = linkAbort(outerSignal, controller);
+    let text = '';
+    // 诊断用：拿不到正文时把 chunk 形状带进错误，否则只能看到一句「没有返回」
+    const shapes = new Set();
+    try {
+      text = await streamOnce(llm, route, {
+        system: '你是中文技术博客编辑，只根据给定材料起标题，不编造事实。',
+        prompt,
+        signal: controller.signal,
+        // 给 2000 而不是几百：思考型模型会先花掉一段预算再吐正文，
+        // 预算给小了会表现成「模型没有返回任何文本」（写正文用 4096，同理）。
+        maxTokens: 2000,
+        onChunk: (chunk) => {
+          const outer = chunk && typeof chunk === 'object' ? chunk.type ?? typeof chunk : typeof chunk;
+          const inner = chunk?.chunk && typeof chunk.chunk === 'object' ? chunk.chunk.type ?? '' : '';
+          shapes.add(inner ? `${outer}/${inner}` : String(outer));
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+      unlink();
+    }
+
+    const suggestions = parseTitleSuggestions(text);
+    if (suggestions.length === 0) {
+      // 把原始返回截一段带进错误：这类失败十次有九次是「模型换了输出格式」，
+      // 没有原文就只能看到一句「没给出可用的标题」，排查等于瞎猜。
+      throw new Error(
+        `模型没有给出可用的标题（原始返回：${String(text).replace(/\s+/g, ' ').slice(0, 200) || `空；chunk 形状：${[...shapes].join(', ') || '一个 chunk 都没有'}`}）`,
+      );
+    }
+    log(`起标题 ${route.provider}/${route.model}：${suggestions.length} 条`);
+
+    return {
+      suggestions,
+      sourceTitle: brief.title || String(item?.title ?? ''),
+      provider: route.provider,
+      model: route.model || '',
     };
   };
 }
@@ -326,13 +452,11 @@ export function createPolisher({
     if (!llm || typeof llm.stream !== 'function') {
       throw new Error('宿主没有提供 llm 服务，无法润色正文');
     }
-    const catalog = await listCatalog(llm);
-    const configured = resolveWriterSelection(await readWriterConfig(absDirOf(projectRoot)), 'polish');
-    const selection = {
-      provider: wantedProvider || configured.provider,
-      model: wantedModel || configured.model,
-    };
-    const route = resolveRoute(catalog, selection);
+    const route = await resolveConfiguredRoute(llm, absDirOf(projectRoot), {
+      provider: wantedProvider,
+      model: wantedModel,
+      purpose: 'polish',
+    });
     if (!route) throw new Error('宿主没有可用的模型路由，请先在面板里选一个模型');
 
     const ask = String(instruction ?? '').trim();

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createJobRunner } from '../src/server/jobs.js';
+import { writeSteps } from '../src/server/write-steps.js';
 
 /** 等到某个 slug 的任务不再是 running。 */
 async function settle(runner, slug, timeoutMs = 2000) {
@@ -150,4 +151,132 @@ test('取消：没有正在跑的任务时返回 null（已结束的不再取消
   await settle(runner, 'done-job');
   assert.equal(runner.cancel({ slug: 'done-job' }), null);
   assert.equal(runner.cancel({}), null);
+});
+
+// ── 六步链路（生成草稿的进度面板靠它） ──
+
+test('步骤模板：预置 done 的步保持 done，其余从 pending 起', () => {
+  const runner = createJobRunner();
+  const job = runner.start({
+    slug: 'demo',
+    steps: writeSteps({ scaffoldDetail: '.drafts/demo/index.md', now: new Date('2026-11-05T10:00:00Z') }),
+    run: async () => ({}),
+  });
+
+  assert.deepEqual(
+    job.steps.map((step) => [step.key, step.state]),
+    [
+      ['scaffold', 'done'],
+      ['resolve', 'pending'],
+      ['brief', 'pending'],
+      ['route', 'pending'],
+      ['write', 'pending'],
+      ['persist', 'pending'],
+    ],
+  );
+  assert.equal(job.steps[0].detail, '.drafts/demo/index.md');
+  assert.equal(job.steps[0].label, '建草稿');
+});
+
+test('步骤推进：上一步收尾成 done，当前步 active，每切一步落一次盘', async () => {
+  const saved = [];
+  const runner = createJobRunner({ persist: async (job) => saved.push(job) });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  runner.start({
+    slug: 'demo',
+    steps: writeSteps({ scaffoldDetail: 'a.md' }),
+    run: async ({ step }) => {
+      step('resolve', '候选 h-20261105-01');
+      step('brief', '3 篇原文');
+      await gate;
+      return {};
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const mid = runner.runningFor('demo');
+  assert.deepEqual(
+    mid.steps.map((step) => step.state),
+    ['done', 'done', 'active', 'pending', 'pending', 'pending'],
+  );
+  assert.equal(mid.steps[1].detail, '候选 h-20261105-01');
+  assert.ok(mid.steps[1].startedAt, 'active 步要记开始时间，面板才算得出耗时');
+  assert.ok(saved.length >= 3, '开始 + 两次切步，至少三次落盘');
+
+  release();
+  const done = await settle(runner, 'demo');
+  assert.equal(done.state, 'done');
+  // 没跑到的步骤不能被写成「跑完了」
+  assert.deepEqual(
+    done.steps.map((step) => step.state),
+    ['done', 'done', 'done', 'pending', 'pending', 'pending'],
+  );
+});
+
+test('步骤失败：当前步标 failed 并带上错误，后面的保持 pending', async () => {
+  const runner = createJobRunner();
+  runner.start({
+    slug: 'demo',
+    steps: writeSteps(),
+    run: async ({ step }) => {
+      step('resolve');
+      step('brief');
+      throw new Error('模型超时');
+    },
+  });
+
+  const failed = await settle(runner, 'demo');
+  assert.equal(failed.state, 'failed');
+  const brief = failed.steps.find((step) => step.key === 'brief');
+  assert.equal(brief.state, 'failed');
+  assert.equal(brief.detail, '模型超时');
+  assert.ok(brief.endedAt);
+  assert.equal(failed.steps.find((step) => step.key === 'write').state, 'pending');
+});
+
+test('步骤取消：正在做的那一步标 cancelled', async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const runner = createJobRunner();
+  runner.start({
+    slug: 'demo',
+    steps: writeSteps(),
+    run: async ({ step }) => {
+      step('resolve');
+      await gate;
+      return {};
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  runner.cancel({ slug: 'demo' });
+  release();
+
+  const settled = await settle(runner, 'demo');
+  assert.equal(settled.state, 'cancelled');
+  assert.equal(settled.steps.find((step) => step.key === 'resolve').state, 'cancelled');
+  assert.equal(settled.steps.find((step) => step.key === 'brief').state, 'pending');
+});
+
+test('步骤推进：任务已结束后再打点不会改状态', async () => {
+  const runner = createJobRunner();
+  let late;
+  runner.start({
+    slug: 'demo',
+    steps: writeSteps(),
+    run: async ({ step }) => {
+      late = step;
+      return {};
+    },
+  });
+  await settle(runner, 'demo');
+  late('write', '迟到的打点');
+  const after = runner.list({ slug: 'demo' })[0];
+  assert.equal(after.steps.find((step) => step.key === 'write').state, 'pending');
 });

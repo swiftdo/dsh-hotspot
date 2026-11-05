@@ -20,6 +20,21 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error ?? '');
 }
 
+/**
+ * 步骤快照：只给前端要的字段，不把内部结构漏出去。
+ * 状态：pending（还没轮到）/ active（正在做）/ done / failed / cancelled。
+ */
+function stepSnapshot(step) {
+  return {
+    key: step.key,
+    label: step.label,
+    state: step.state,
+    startedAt: step.startedAt,
+    endedAt: step.endedAt,
+    detail: step.detail,
+  };
+}
+
 export function createJobRunner({ log = () => {}, persist = null, now = () => new Date() } = {}) {
   const jobs = new Map();
   const runningBySlug = new Map();
@@ -34,6 +49,7 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
       endedAt: job.endedAt,
       message: job.message,
       error: job.error,
+      steps: job.steps.map(stepSnapshot),
       result: job.result,
     };
   }
@@ -57,12 +73,71 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
     }
   }
 
+  /**
+   * 步骤模板归一。允许调用方预置某几步为 done（例如 scaffold 已在 HTTP 请求里做完），
+   * 其余一律 pending —— 进度必须从「事实」开始，不能一上来就假装跑了三步。
+   */
+  function normalizeSteps(template) {
+    return (Array.isArray(template) ? template : []).map((step) => ({
+      key: String(step.key ?? ''),
+      label: String(step.label ?? step.key ?? ''),
+      state: step.state === 'done' ? 'done' : 'pending',
+      startedAt: String(step.startedAt ?? ''),
+      endedAt: String(step.endedAt ?? ''),
+      detail: step.detail == null ? '' : String(step.detail),
+    }));
+  }
+
+  /**
+   * 推进到某一步：上一步的 active 收尾成 done，这一步变 active。
+   * 已经 done 的步骤（预置）只更新 detail，不倒退。
+   * 每切一步落一次盘：面板靠轮询看进度，慢一拍就等于没有进度。
+   */
+  function advanceStep(job, key, detail) {
+    if (job.state !== 'running') return;
+    const index = job.steps.findIndex((step) => step.key === String(key ?? ''));
+    if (index < 0) return;
+    const at = now().toISOString();
+    for (let i = 0; i < index; i += 1) {
+      const step = job.steps[i];
+      if (step.state === 'active') {
+        step.state = 'done';
+        step.endedAt = step.endedAt || at;
+      }
+    }
+    const current = job.steps[index];
+    if (current.state === 'done') {
+      if (detail != null) current.detail = String(detail);
+      void persistJob(job);
+      return;
+    }
+    current.state = 'active';
+    current.startedAt = current.startedAt || at;
+    if (detail != null) current.detail = String(detail);
+    void persistJob(job);
+  }
+
+  /**
+   * 终态收尾：正在做的那一步给出结论（done / failed / cancelled），
+   * 还没轮到的保持 pending —— 「没跑过」不能写成「跑完了」。
+   */
+  function settleSteps(job, state, detail = '') {
+    const at = now().toISOString();
+    for (const step of job.steps) {
+      if (step.state !== 'active') continue;
+      step.state = state;
+      step.endedAt = at;
+      if (detail) step.detail = detail;
+    }
+  }
+
   return {
     /**
      * 起一个任务。立刻返回快照，不等任务体跑完。
-     * @param {{ slug: string, kind?: string, message?: string, run: () => Promise<any> }} input
+     * @param {{ slug: string, kind?: string, message?: string, steps?: any[],
+     *           run: (ctx: { signal: AbortSignal, step: (key: string, detail?: string) => void }) => Promise<any> }} input
      */
-    start({ slug, kind = 'write', message = '正在写正文', run } = {}) {
+    start({ slug, kind = 'write', message = '正在写正文', steps = [], run } = {}) {
       const clean = String(slug ?? '').trim();
       if (!clean) throw new Error('缺少 slug');
       if (typeof run !== 'function') throw new Error('缺少任务体');
@@ -83,6 +158,7 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
         endedAt: '',
         message,
         error: '',
+        steps: normalizeSteps(steps),
         result: null,
         // 不落盘：只在这个进程里有效
         controller: new AbortController(),
@@ -92,32 +168,38 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
       runningBySlug.set(clean, job.id);
       log(`任务 ${job.id} 开始：${clean}`);
 
+      const step = (key, detail) => advanceStep(job, key, detail);
+
       // 立刻返回快照：任务体自己跑，不挂在调用方（HTTP 请求）上
       void persistJob(job);
       Promise.resolve()
-        .then(() => run({ signal: job.controller.signal }))
+        .then(() => run({ signal: job.controller.signal, step }))
         .then((result) => {
           if (job.cancelRequested) {
             // 取消后才跑完的：结果留着，但状态照实说「已取消」
             job.result = result ?? null;
             job.state = 'cancelled';
             job.message = '已取消（若已写盘则保留）';
+            settleSteps(job, 'cancelled', '已取消');
             return;
           }
           job.state = 'done';
           job.message = '正文已写入';
           job.result = result ?? null;
+          settleSteps(job, 'done');
         })
         .catch((error) => {
           if (job.cancelRequested) {
             job.state = 'cancelled';
             job.message = '已取消';
             job.error = '';
+            settleSteps(job, 'cancelled', '已取消');
             return;
           }
           job.state = 'failed';
           job.error = errorMessage(error);
           job.message = '正文失败，可重试';
+          settleSteps(job, 'failed', job.error);
         })
         .finally(async () => {
           job.endedAt = now().toISOString();
