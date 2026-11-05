@@ -1,5 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
@@ -37,23 +37,41 @@ export const BUILTIN_SOURCES = [
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
 
-// 站点部署：命令来自项目配置里的 deploy.script，在博客根目录下用 /bin/sh 执行。
-// 面板只在 loopback 同源下可达，所以不额外做命令沙箱；真正要防的是「忘记配置也能跑」。
+// 站点部署：命令来自项目配置的 deploy 段（build 可选、script 必填），
+// 在博客根目录下用「用户登录 shell」执行。
+//
+// 为什么不用 /bin/sh -c：面板跑在 DSH 进程里，GUI 从 Finder 启动时 PATH 只有
+// launchd 的最小集合，yarn / nvm / corepack / ssh-agent 都不在里面。用户在终端
+// 里能跑通的部署脚本，面板一点就 command not found —— 这是「部署逻辑没打通」
+// 最常见的原因。用 -l 让登录 shell 重新加载用户的 PATH，与终端行为对齐。
 const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const DEPLOY_OUTPUT_LIMIT = 64 * 1024;
+const DEPLOY_HISTORY_LIMIT = 10;
 
 function tail(text, limit = DEPLOY_OUTPUT_LIMIT) {
   if (text.length <= limit) return text;
   return `…（输出超过 ${limit} 字符，已保留末尾）\n${text.slice(-limit)}`;
 }
 
+/** 优先用用户的登录 shell；找不到就退回 /bin/sh。 */
+export function resolveLoginShell() {
+  for (const candidate of [process.env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh']) {
+    if (typeof candidate === 'string' && candidate.startsWith('/') && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return '/bin/sh';
+}
+
 /**
- * 执行部署脚本，永不 reject：失败也把 stdout/stderr/退出码交回给调用方。
+ * 执行单条命令，永不 reject：失败也把 stdout/stderr/退出码交回给调用方。
  * @param {string} script
  * @param {string} cwd
+ * @param {{ timeoutMs?: number }} [options]
  * @returns {Promise<{ success: boolean, code: number|null, signal: string|null, stdout: string, stderr: string, durationMs: number, timedOut: boolean }>}
  */
-export function runDeployScript(script, cwd) {
+export function runDeployScript(script, cwd, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEPLOY_TIMEOUT_MS;
   return new Promise((resolve) => {
     const startedAt = Date.now();
     let stdout = '';
@@ -79,7 +97,7 @@ export function runDeployScript(script, cwd) {
 
     let child;
     try {
-      child = spawn('/bin/sh', ['-c', script], {
+      child = spawn(resolveLoginShell(), ['-l', '-c', script], {
         cwd,
         env: process.env,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -97,7 +115,7 @@ export function runDeployScript(script, cwd) {
       } catch {
         /* 进程可能已经退出 */
       }
-    }, DEPLOY_TIMEOUT_MS);
+    }, timeoutMs);
 
     child.stdout?.on('data', (chunk) => {
       stdout += chunk.toString('utf8');
@@ -110,6 +128,113 @@ export function runDeployScript(script, cwd) {
     child.on('error', (error) => finish(null, null, error));
     child.on('close', (code, signal) => finish(code, signal));
   });
+}
+
+/**
+ * 探测博客根目录里现成的部署入口，给面板一个「一键绑定」的建议值。
+ * 只做只读判断，不改配置、不执行任何东西。
+ */
+export function detectDeployPlan(root) {
+  const detected = { script: '', build: '' };
+  if (!root || !existsSync(root)) return detected;
+
+  for (const rel of ['deploy.sh', 'scripts/deploy.sh', 'bin/deploy.sh']) {
+    if (existsSync(path.join(root, rel))) {
+      detected.script = `./${rel}`;
+      break;
+    }
+  }
+
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    if (pkg?.scripts?.build) {
+      if (existsSync(path.join(root, 'pnpm-lock.yaml'))) detected.build = 'pnpm run build';
+      else if (existsSync(path.join(root, 'yarn.lock'))) detected.build = 'yarn build';
+      else detected.build = 'npm run build';
+    }
+  } catch {
+    /* 没有 package.json 就不是前端站点，留空即可 */
+  }
+  return detected;
+}
+
+/**
+ * 把配置里的 deploy 段摊平成面板与接口共用的一份描述。
+ * 未配置 timeoutMs 时用默认值，配置值不允许超过默认上限。
+ */
+export function describeDeploy(config, root) {
+  const script = String(config?.deploy?.script ?? '').trim();
+  const build = String(config?.deploy?.build ?? '').trim();
+  const rawTimeout = Number(config?.deploy?.timeoutMs);
+  const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0
+    ? Math.min(Math.floor(rawTimeout), DEPLOY_TIMEOUT_MS)
+    : DEPLOY_TIMEOUT_MS;
+  return {
+    script,
+    build,
+    timeoutMs,
+    configured: Boolean(script),
+    detected: detectDeployPlan(root),
+  };
+}
+
+/**
+ * 按 build → script 的顺序执行部署计划，任一步失败即停。
+ * 顶层字段取「最后执行的那一步」，并额外带 steps，兼容旧的单脚本调用方。
+ */
+export async function runDeployPlan(plan, cwd) {
+  const startedAt = Date.now();
+  const steps = [];
+
+  const runOne = async (name, script) => {
+    const result = await runDeployScript(script, cwd, { timeoutMs: plan.timeoutMs });
+    steps.push({ name, script, ...result });
+    return result;
+  };
+
+  if (plan.build) {
+    const built = await runOne('build', plan.build);
+    if (!built.success) {
+      return { success: false, failedStep: 'build', steps, durationMs: Date.now() - startedAt };
+    }
+  }
+
+  const deployed = await runOne('deploy', plan.script);
+  return {
+    success: deployed.success,
+    failedStep: deployed.success ? null : 'deploy',
+    steps,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+function deployHistoryFile(root, digestDir) {
+  return path.join(root, digestDir || '.hotspot', 'deploy-history.json');
+}
+
+/** 部署历史只是面板的辅助信息，读写失败不能影响部署结果本身。 */
+export async function readDeployHistory(root, digestDir) {
+  if (!root) return [];
+  try {
+    const raw = await readFile(deployHistoryFile(root, digestDir), 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.slice(0, DEPLOY_HISTORY_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function appendDeployHistory(root, digestDir, entry) {
+  if (!root) return [];
+  const file = deployHistoryFile(root, digestDir);
+  const history = [entry, ...(await readDeployHistory(root, digestDir))].slice(0, DEPLOY_HISTORY_LIMIT);
+  try {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify(history, null, 2)}\n`, 'utf8');
+  } catch {
+    /* 历史写不进去不影响本次部署 */
+  }
+  return history;
 }
 
 function sendJson(res, status, value) {
@@ -366,9 +491,10 @@ export function createRoutes(deps) {
           ...(config.publish ?? {}),
         },
         // deploy.script 为空时面板不渲染「部署站点」按钮 —— 没绑定命令就不给入口。
+        // detected 只是只读探测出来的建议值，面板可据此一键绑定。
         deploy: {
-          script: String(config.deploy?.script ?? '').trim(),
-          configured: Boolean(String(config.deploy?.script ?? '').trim()),
+          ...describeDeploy(config, activeProjectRoot),
+          history: await readDeployHistory(activeProjectRoot, config.digestDir || '.hotspot'),
         },
       },
       profile: {
@@ -530,13 +656,25 @@ export function createRoutes(deps) {
           config.publish = publish;
         }
 
-        // 4. 站点部署脚本：空字符串视为解绑，面板随之隐藏按钮
+        // 4. 站点部署：script 必填、build 可选，空字符串视为解绑对应命令。
+        // 采用「合并」语义：只传 build 时不会把已保存的 script 抹掉。
         if (body.deploy && typeof body.deploy === 'object') {
-          const script = String(body.deploy.script ?? '').trim();
-          if (script.length > 4096) {
-            return sendJson(res, 400, { ok: false, message: '部署脚本过长（上限 4096 字符）' });
+          const deploy = { ...(config.deploy ?? {}) };
+          for (const key of ['script', 'build']) {
+            if (!(key in body.deploy)) continue;
+            const value = String(body.deploy[key] ?? '').trim();
+            if (value.length > 4096) {
+              return sendJson(res, 400, { ok: false, message: `deploy.${key} 过长（上限 4096 字符）` });
+            }
+            if (value) deploy[key] = value;
+            else delete deploy[key];
           }
-          if (script) config.deploy = { script };
+          if ('timeoutMs' in body.deploy) {
+            const ms = Number(body.deploy.timeoutMs);
+            if (Number.isFinite(ms) && ms > 0) deploy.timeoutMs = Math.min(Math.floor(ms), DEPLOY_TIMEOUT_MS);
+            else delete deploy.timeoutMs;
+          }
+          if (Object.keys(deploy).length > 0) config.deploy = deploy;
           else delete config.deploy;
         }
 
@@ -564,10 +702,7 @@ export function createRoutes(deps) {
             digestDir: config.digestDir || '.hotspot',
             rank: config.rank ?? {},
             publish: config.publish ?? {},
-            deploy: {
-              script: String(config.deploy?.script ?? '').trim(),
-              configured: Boolean(String(config.deploy?.script ?? '').trim()),
-            },
+            deploy: describeDeploy(config, config.projectRoot || currentProjectRoot),
           },
         });
       },
@@ -1012,13 +1147,18 @@ export function createRoutes(deps) {
           return;
         }
         const config = await readConfig();
-        const script = String(config.deploy?.script ?? '').trim();
+        const deploy = describeDeploy(config, config.projectRoot || currentProjectRoot);
+        const script = deploy.script;
         if (!script) {
+          const detected = deploy.detected.script;
+          const hint = detected
+            ? `博客根目录检测到 ${detected}，可在「策略与路径配置」里一键绑定`
+            : '尚未绑定部署脚本，先在「策略与路径配置」里填写 deploy.script';
           sendJson(res, 400, {
             ok: false,
             code: 'ERR_NO_DEPLOY_SCRIPT',
-            message: '尚未绑定部署脚本，先在「策略与路径配置」里填写 deploy.script',
-            error: '尚未绑定部署脚本，先在「策略与路径配置」里填写 deploy.script',
+            message: hint,
+            error: hint,
           });
           return;
         }
@@ -1036,14 +1176,49 @@ export function createRoutes(deps) {
 
         deployInProgress = true;
         try {
-          const value = await runDeployScript(script, root);
+          const plan = { build: deploy.build, script, timeoutMs: deploy.timeoutMs };
+          const value = await runDeployPlan(plan, root);
+          const last = value.steps[value.steps.length - 1] ?? {};
+          const failedLabel = value.failedStep === 'build' ? '构建' : '部署';
+          const message = value.success
+            ? '站点部署完成'
+            : last.timedOut
+              ? `${failedLabel}脚本超时`
+              : `${failedLabel}脚本退出码 ${last.code ?? '未知'}`;
+
+          await appendDeployHistory(root, config.digestDir || '.hotspot', {
+            at: new Date().toISOString(),
+            success: value.success,
+            failedStep: value.failedStep,
+            durationMs: value.durationMs,
+            build: deploy.build,
+            script,
+            steps: value.steps.map((step) => ({
+              name: step.name,
+              script: step.script,
+              success: step.success,
+              code: step.code,
+              timedOut: step.timedOut,
+              durationMs: step.durationMs,
+              stdout: step.stdout.slice(-4000),
+              stderr: step.stderr.slice(-4000),
+            })),
+          });
+
           sendJson(res, 200, {
             ok: true,
             success: value.success,
-            message: value.success
-              ? '站点部署完成'
-              : (value.timedOut ? '部署脚本超时' : `部署脚本退出码 ${value.code ?? '未知'}`),
-            value: { ...value, script, cwd: root },
+            message,
+            value: {
+              ...last,
+              success: value.success,
+              failedStep: value.failedStep,
+              steps: value.steps,
+              durationMs: value.durationMs,
+              script,
+              build: deploy.build,
+              cwd: root,
+            },
           });
         } finally {
           deployInProgress = false;

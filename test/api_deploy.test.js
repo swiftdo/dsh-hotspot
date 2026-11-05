@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -89,7 +89,10 @@ test('部署：未绑定脚本时按钮信息为空，直接调用接口返回 E
 
   const stateResult = await callRoute(routeOf(routes, 'state'), 'GET');
   assert.equal(stateResult.status, 200);
-  assert.deepEqual(stateResult.json().value.config.deploy, { script: '', configured: false });
+  const deployState = stateResult.json().value.config.deploy;
+  assert.equal(deployState.script, '');
+  assert.equal(deployState.configured, false);
+  assert.deepEqual(deployState.history, []);
 
   const deployResult = await callRoute(routeOf(routes, 'deploy'), 'POST', {});
   assert.equal(deployResult.status, 400);
@@ -107,17 +110,22 @@ test('部署：配置保存 deploy.script 后 state 标为已绑定，空字符�
 
   const saved = await callRoute(configRoute, 'POST', { deploy: { script: '  npm run build  ' } });
   assert.equal(saved.status, 200);
-  assert.deepEqual(saved.json().value.deploy, { script: 'npm run build', configured: true });
+  const savedDeploy = saved.json().value.deploy;
+  assert.equal(savedDeploy.script, 'npm run build');
+  assert.equal(savedDeploy.configured, true);
+  assert.equal(savedDeploy.build, '');
 
   const state = await callRoute(stateRoute, 'GET');
-  assert.deepEqual(state.json().value.config.deploy, { script: 'npm run build', configured: true });
+  assert.equal(state.json().value.config.deploy.script, 'npm run build');
+  assert.equal(state.json().value.config.deploy.configured, true);
 
   const onDisk = JSON.parse(readFileSync(path.join(tempDir, 'dsh-hotspot.config.json'), 'utf8'));
   assert.equal(onDisk.deploy.script, 'npm run build');
 
   const cleared = await callRoute(configRoute, 'POST', { deploy: { script: '   ' } });
   assert.equal(cleared.status, 200);
-  assert.deepEqual(cleared.json().value.deploy, { script: '', configured: false });
+  assert.equal(cleared.json().value.deploy.script, '');
+  assert.equal(cleared.json().value.deploy.configured, false);
   const clearedDisk = JSON.parse(readFileSync(path.join(tempDir, 'dsh-hotspot.config.json'), 'utf8'));
   assert.equal(clearedDisk.deploy, undefined);
 
@@ -205,4 +213,84 @@ test('部署：并发请求被 409 ERR_DEPLOY_BUSY 挡住，前一次正常完�
   const third = await callRoute(deployRoute, 'POST', {});
   assert.equal(third.status, 200);
   assert.equal(third.json().success, true);
+});
+
+
+test('部署：探测博客根目录里的 deploy.sh 与构建命令，供面板一键绑定', async (t) => {
+  const { tempDir, blogDir } = setupBlog(t);
+  writeFileSync(path.join(blogDir, 'deploy.sh'), '#!/usr/bin/env bash\necho hi\n');
+  writeFileSync(path.join(blogDir, 'yarn.lock'), '');
+  writeFileSync(path.join(blogDir, 'package.json'), JSON.stringify({ scripts: { build: 'vitepress build docs' } }));
+
+  const routes = createRoutes(makeDeps(tempDir));
+  await callRoute(routeOf(routes, 'config'), 'POST', { projectRoot: blogDir });
+  const state = await callRoute(routeOf(routes, 'state'), 'GET');
+  const deploy = state.json().value.config.deploy;
+
+  assert.equal(deploy.detected.script, './deploy.sh');
+  assert.equal(deploy.detected.build, 'yarn build');
+  // 探测值不落盘、不冒充已绑定
+  assert.equal(deploy.configured, false);
+});
+
+test('部署：build 失败时不再执行 script，failedStep 指到 build', async (t) => {
+  const { tempDir, blogDir } = setupBlog(t);
+  const routes = createRoutes(makeDeps(tempDir));
+  await callRoute(routeOf(routes, 'config'), 'POST', {
+    projectRoot: blogDir,
+    deploy: { build: 'echo build-broken >&2; exit 3', script: 'printf ran > should-not-exist.txt' },
+  });
+
+  const result = await callRoute(routeOf(routes, 'deploy'), 'POST', {});
+  const payload = result.json();
+  assert.equal(payload.success, false);
+  assert.equal(payload.value.failedStep, 'build');
+  assert.equal(payload.value.steps.length, 1);
+  assert.equal(payload.value.steps[0].name, 'build');
+  assert.equal(payload.value.code, 3);
+  assert.equal(existsSync(path.join(blogDir, 'should-not-exist.txt')), false);
+  assert.ok(payload.message.includes('构建'));
+});
+
+test('部署：build 成功后按 build → deploy 顺序执行，历史落盘并回填 state', async (t) => {
+  const { tempDir, blogDir } = setupBlog(t);
+  const routes = createRoutes(makeDeps(tempDir));
+  await callRoute(routeOf(routes, 'config'), 'POST', {
+    projectRoot: blogDir,
+    deploy: { build: 'echo built > build.txt', script: 'echo shipped > deploy.txt' },
+  });
+
+  const result = await callRoute(routeOf(routes, 'deploy'), 'POST', {});
+  const payload = result.json();
+  assert.equal(payload.success, true);
+  assert.deepEqual(payload.value.steps.map((s) => s.name), ['build', 'deploy']);
+  assert.equal(readFileSync(path.join(blogDir, 'build.txt'), 'utf8').trim(), 'built');
+  assert.equal(readFileSync(path.join(blogDir, 'deploy.txt'), 'utf8').trim(), 'shipped');
+
+  const historyFile = path.join(blogDir, '.hotspot', 'deploy-history.json');
+  assert.equal(existsSync(historyFile), true);
+  const history = JSON.parse(readFileSync(historyFile, 'utf8'));
+  assert.equal(history.length, 1);
+  assert.equal(history[0].success, true);
+  assert.equal(history[0].script, 'echo shipped > deploy.txt');
+
+  const state = await callRoute(routeOf(routes, 'state'), 'GET');
+  const deployState = state.json().value.config.deploy;
+  assert.equal(deployState.history.length, 1);
+  assert.equal(deployState.history[0].success, true);
+  assert.deepEqual(deployState.history[0].steps.map((s) => s.name), ['build', 'deploy']);
+});
+
+test('部署：保存 build 不会抹掉已保存的 script（合并语义）', async (t) => {
+  const { tempDir } = setupBlog(t);
+  const routes = createRoutes(makeDeps(tempDir));
+  const configRoute = routeOf(routes, 'config');
+
+  await callRoute(configRoute, 'POST', { deploy: { script: './deploy.sh' } });
+  const merged = await callRoute(configRoute, 'POST', { deploy: { build: 'yarn build' } });
+  assert.equal(merged.json().value.deploy.script, './deploy.sh');
+  assert.equal(merged.json().value.deploy.build, 'yarn build');
+
+  const onDisk = JSON.parse(readFileSync(path.join(tempDir, 'dsh-hotspot.config.json'), 'utf8'));
+  assert.deepEqual(onDisk.deploy, { script: './deploy.sh', build: 'yarn build' });
 });

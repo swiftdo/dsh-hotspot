@@ -390,6 +390,15 @@ function run(cmd, args, opts = {}) {
   if (result.status !== 0) fail(`${cmd} 失败（退出码 ${result.status}）`);
 }
 
+/** 用用户登录 shell 跑配置里的命令串，和面板部署保持同一套 PATH。 */
+function runShell(script) {
+  log(`\n$ ${script}`);
+  const shell = [process.env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh']
+    .find((candidate) => typeof candidate === 'string' && candidate.startsWith('/') && existsSync(candidate));
+  const result = spawnSync(shell || '/bin/sh', ['-l', '-c', script], { cwd, stdio: 'inherit' });
+  if (result.status !== 0) fail(`${script} 失败（退出码 ${result.status}）`);
+}
+
 async function cmdPublish() {
   const slug = positional[1];
   if (!slug) fail('用法：hotspot publish <slug> --yes');
@@ -404,29 +413,36 @@ async function cmdPublish() {
   const inDraft = existsSync(path.join(cwd, 'docs/draft', slug, 'index.md'));
   if (inDraft) fail('还在 docs/draft/，先 hotspot promote ' + slug);
 
+  // 构建与部署都从配置读，不再写死在代码里 —— 面板的「部署站点」用的是同一份。
+  const { raw } = await loadConfig();
+  const buildScript = String(raw.deploy?.build ?? '').trim();
+  const deployScript = String(raw.deploy?.script ?? '').trim();
+  if (!deployScript) {
+    fail('配置里没有 deploy.script：先在「策略与路径配置」或 dsh-hotspot.config.json 的 deploy.script 绑定部署命令');
+  }
+
   const rel = path.relative(cwd, path.join(cwd, 'docs/article', slug));
-  const steps = [
-    ['yarn', ['build']],
-    ['git', ['add', rel]],
-    ['git', ['commit', '-m', `post(auto): ${slug}`]],
-    ['git', ['push', 'origin', 'HEAD']],
-    ['./deploy.sh', ['--no-git', '--skip-build']],
+  const planned = [
+    ...(buildScript ? [`build: ${buildScript}`] : []),
+    `git add ${rel}`,
+    `git commit -m "post(auto): ${slug}"`,
+    'git push origin HEAD',
+    `deploy: ${deployScript}`,
   ];
 
   if (!confirmed) {
     log('将要执行（加 --yes 才会真的跑）：');
-    for (const [cmd, args] of steps) log(`  ${cmd} ${args.join(' ')}`);
+    for (const line of planned) log(`  ${line}`);
     log('\n注意：只 git add 这一篇文章的目录，不会 add -A，避免把工作区的半成品一起提交');
+    log('提示：deploy.script 若用 ./deploy.sh，建议带上 --no-git --skip-build，避免与上面的构建/推送重复');
     return;
   }
 
-  for (const [cmd, args] of steps) {
-    if (cmd === './deploy.sh') {
-      run('bash', ['./deploy.sh', ...args]);
-    } else {
-      run(cmd, args);
-    }
-  }
+  if (buildScript) runShell(buildScript);
+  run('git', ['add', rel]);
+  run('git', ['commit', '-m', `post(auto): ${slug}`]);
+  run('git', ['push', 'origin', 'HEAD']);
+  runShell(deployScript);
   log('\n✓ 发布完成');
 }
 

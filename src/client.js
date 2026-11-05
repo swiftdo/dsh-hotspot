@@ -1243,6 +1243,7 @@ window.__ModuleLoader__.load({
       const [publishMaxPerDay, setPublishMaxPerDay] = useState(3);
       const [publishAllowedHosts, setPublishAllowedHosts] = useState('');
       const [deployScript, setDeployScript] = useState('');
+      const [deployBuild, setDeployBuild] = useState('');
       const [deploying, setDeploying] = useState(false);
       const [deployResult, setDeployResult] = useState(null);
       const [savingConfig, setSavingConfig] = useState(false);
@@ -1317,6 +1318,7 @@ window.__ModuleLoader__.load({
           }
         }
         setDeployScript(cfg.deploy?.script || '');
+        setDeployBuild(cfg.deploy?.build || '');
       };
 
       const loadState = useCallback(async () => {
@@ -1663,7 +1665,8 @@ window.__ModuleLoader__.load({
               allowedHosts: allowedList
             },
             deploy: {
-              script: deployScript.trim()
+              script: deployScript.trim(),
+              build: deployBuild.trim()
             }
           };
 
@@ -1750,6 +1753,10 @@ window.__ModuleLoader__.load({
 
       const deployConfigured = Boolean(state?.config?.deploy?.configured);
       const savedDeployScript = state?.config?.deploy?.script || '';
+      const savedDeployBuild = state?.config?.deploy?.build || '';
+      const deployDetected = state?.config?.deploy?.detected || { script: '', build: '' };
+      const deployHistory = state?.config?.deploy?.history || [];
+      const lastDeploy = deployHistory[0] || null;
       const deployCodeStyle = {
         margin: 0,
         padding: '8px 10px',
@@ -1835,13 +1842,27 @@ window.__ModuleLoader__.load({
               ]),
               loading ? '刷新中' : '刷新'
             ]),
-            (state?.config?.deploy?.configured) && h('button', {
+            (deployConfigured || deployDetected.script) && h('button', {
               className: 'hs-btn',
-              onClick: handleDeploy,
+              onClick: () => {
+                if (!deployConfigured) {
+                  setTab('config');
+                  showToast(
+                    deployDetected.script
+                      ? `检测到 ${deployDetected.script}，在配置里点「使用探测结果」并保存即可部署`
+                      : '先在「策略与路径配置」里绑定部署脚本',
+                    true
+                  );
+                  return;
+                }
+                handleDeploy();
+              },
               disabled: deploying || !isBlogConfigured,
-              title: isBlogConfigured
-                ? `执行部署脚本：${state.config.deploy.script}`
-                : '先在「策略与路径配置」里绑定博客项目根目录'
+              title: !isBlogConfigured
+                ? '先在「策略与路径配置」里绑定博客项目根目录'
+                : deployConfigured
+                  ? `执行部署：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
+                  : '尚未绑定部署脚本，点击前往配置'
             }, [
               h('svg', {
                 width: 14,
@@ -2741,7 +2762,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'hs-card-header' }, [
                 h('div', null, [
                   h('div', { className: 'hs-card-title' }, '站点部署'),
-                  h('div', { className: 'hs-card-subtitle' }, '绑定一条部署命令后，页头才会出现「部署站点」按钮；留空即解绑')
+                  h('div', { className: 'hs-card-subtitle' }, '先构建、再执行部署脚本，两步都在博客根目录下跑；构建失败即停，不会带着旧产物上线')
                 ]),
                 h('span', {
                   style: {
@@ -2754,16 +2775,49 @@ window.__ModuleLoader__.load({
                   }
                 }, deployConfigured ? '已绑定' : '未绑定')
               ]),
+              (deployDetected.script || deployDetected.build) && h('div', {
+                style: {
+                  display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+                  padding: '10px 12px', marginBottom: 12, borderRadius: 8,
+                  background: 'rgba(59, 130, 246, 0.10)',
+                  border: '1px solid rgba(59, 130, 246, 0.28)',
+                  fontSize: 12
+                }
+              }, [
+                h('span', { style: { color: '#93c5fd' } }, '在博客根目录探测到：'),
+                deployDetected.build && h('code', { style: { color: '#e2e8f0' } }, `build = ${deployDetected.build}`),
+                deployDetected.script && h('code', { style: { color: '#e2e8f0' } }, `deploy = ${deployDetected.script}`),
+                h('button', {
+                  className: 'hs-btn',
+                  type: 'button',
+                  onClick: () => {
+                    if (deployDetected.build) setDeployBuild(deployDetected.build);
+                    if (deployDetected.script) setDeployScript(deployDetected.script);
+                    showToast('已填入探测结果，点「保存策略与路径配置」后生效');
+                  }
+                }, '使用探测结果')
+              ]),
               h('div', { className: 'hs-form-item' }, [
-                h('label', { className: 'hs-form-label' }, '部署脚本 (deploy.script)'),
+                h('label', { className: 'hs-form-label' }, '构建命令 (deploy.build · 可选)'),
+                h('input', {
+                  className: 'hs-input',
+                  style: { width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
+                  placeholder: 'yarn build',
+                  value: deployBuild,
+                  onChange: (e) => setDeployBuild(e.target.value)
+                }),
+                h('div', { className: 'hs-form-hint' }, '留空则跳过构建，直接执行部署脚本。CLI 的 hotspot publish 也读这一项。')
+              ]),
+              h('div', { className: 'hs-form-item' }, [
+                h('label', { className: 'hs-form-label' }, '部署脚本 (deploy.script · 必填)'),
                 h('textarea', {
                   className: 'hs-textarea',
                   style: { height: 86, width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
-                  placeholder: 'npm run build && ./deploy.sh --no-git --skip-build',
+                  placeholder: './deploy.sh --no-git --skip-build',
                   value: deployScript,
                   onChange: (e) => setDeployScript(e.target.value)
                 }),
-                h('div', { className: 'hs-form-hint' }, '在博客项目根目录下由 /bin/sh -c 执行，单次最长 10 分钟，输出保留末尾 64KB。留空保存后，页头按钮即消失。')
+                h('div', { className: 'hs-form-hint' }, '用你的登录 shell（zsh/bash -l）在博客根目录执行，PATH 与终端一致，nvm/yarn/ssh-agent 都能找到；单步最长 10 分钟，输出保留末尾 64KB。留空保存即解绑。')
               ]),
               h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } }, [
                 h('button', {
@@ -2772,13 +2826,36 @@ window.__ModuleLoader__.load({
                   disabled: deploying || !deployConfigured || !isBlogConfigured,
                   title: !deployConfigured
                     ? '先在下方填写并保存部署脚本'
-                    : (!isBlogConfigured ? '先在「博客仓库与文档目录」绑定博客根目录' : '用已保存的脚本立即部署'),
+                    : (!isBlogConfigured ? '先在「博客仓库与文档目录」绑定博客根目录' : '用已保存的配置立即部署'),
                   onClick: handleDeploy
                 }, deploying ? '部署中...' : '立即部署'),
                 h('span', { className: 'hs-form-hint', style: { marginTop: 0 } },
-                  deployConfigured ? `已保存：${savedDeployScript}` : '此时页头不显示「部署站点」按钮'),
-                deployConfigured && deployScript.trim() !== savedDeployScript
+                  deployConfigured
+                    ? `已保存：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
+                    : '尚未绑定部署脚本'),
+                (deployScript.trim() !== savedDeployScript || deployBuild.trim() !== savedDeployBuild)
                   && h('span', { style: { fontSize: 11, color: '#fbbf24' } }, '（表单已改动，保存后生效）')
+              ]),
+              lastDeploy && h('div', { style: { marginTop: 12 } }, [
+                h('div', { className: 'hs-form-label' }, '上次部署'),
+                h('div', {
+                  style: {
+                    display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', fontSize: 12,
+                    color: lastDeploy.success ? '#34d399' : '#f87171'
+                  }
+                }, [
+                  h('span', null, lastDeploy.success
+                    ? '✓ 成功'
+                    : `✗ 失败${lastDeploy.failedStep ? `（${lastDeploy.failedStep === 'build' ? '构建' : '部署'}阶段）` : ''}`),
+                  h('span', { style: { color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                    `${new Date(lastDeploy.at).toLocaleString()} · ${(Number(lastDeploy.durationMs || 0) / 1000).toFixed(1)}s`),
+                  h('button', {
+                    className: 'hs-btn ghost',
+                    type: 'button',
+                    style: { padding: '2px 8px', fontSize: 11 },
+                    onClick: () => setDeployResult(lastDeploy)
+                  }, '查看详情')
+                ])
               ])
             ]),
 
@@ -2843,7 +2920,9 @@ window.__ModuleLoader__.load({
         deployResult && h('div', { className: 'hs-modal-mask', key: 'deploy-modal' }, [
           h('div', { className: 'hs-modal', style: { width: 760, maxWidth: '92vw' } }, [
             h('div', { className: 'hs-modal-header' }, [
-              h('h3', { className: 'hs-modal-title' }, deployResult.success ? '✅ 站点部署完成' : '❌ 站点部署失败'),
+              h('h3', { className: 'hs-modal-title' }, deployResult.success
+                ? '✅ 站点部署完成'
+                : `❌ 部署失败${deployResult.failedStep ? `（${deployResult.failedStep === 'build' ? '构建' : '部署'}阶段）` : ''}`),
               h('button', { className: 'hs-btn ghost', onClick: () => setDeployResult(null) }, '关闭')
             ]),
             h('div', { className: 'hs-modal-body', style: { maxHeight: '60vh', overflowY: 'auto' } }, [
@@ -2853,25 +2932,60 @@ window.__ModuleLoader__.load({
                   color: 'var(--dsw-alias-label-secondary, #8c909e)'
                 }
               }, [
-                h('span', null, `退出码：${deployResult.code ?? '无'}`),
-                deployResult.signal && h('span', null, `信号：${deployResult.signal}`),
-                h('span', null, `耗时：${(Number(deployResult.durationMs || 0) / 1000).toFixed(1)}s`),
-                deployResult.timedOut && h('span', { style: { color: '#f87171' } }, '已超时并强制结束')
+                deployResult.at && h('span', null, `时间：${new Date(deployResult.at).toLocaleString()}`),
+                h('span', null, `总耗时：${(Number(deployResult.durationMs || 0) / 1000).toFixed(1)}s`),
+                deployResult.cwd && h('span', { style: { wordBreak: 'break-all' } }, `工作目录：${deployResult.cwd}`)
               ]),
-              h('div', { style: { marginBottom: 12 } }, [
-                h('div', { className: 'hs-form-label' }, '执行命令'),
-                h('div', { style: deployCodeStyle }, deployResult.script),
-                h('div', { className: 'hs-form-label', style: { marginTop: 8 } }, '工作目录'),
-                h('div', { style: deployCodeStyle }, deployResult.cwd)
-              ]),
-              h('div', { style: { marginBottom: 12 } }, [
-                h('div', { className: 'hs-form-label' }, 'stdout'),
-                h('div', { style: deployCodeStyle }, deployResult.stdout?.trim() ? deployResult.stdout : '（无输出）')
-              ]),
-              deployResult.stderr?.trim() && h('div', null, [
-                h('div', { className: 'hs-form-label' }, 'stderr'),
-                h('div', { style: { ...deployCodeStyle, color: '#f87171' } }, deployResult.stderr)
-              ])
+              (deployResult.steps && deployResult.steps.length
+                ? deployResult.steps
+                : [{
+                    name: 'deploy',
+                    script: deployResult.script,
+                    success: deployResult.success,
+                    code: deployResult.code,
+                    timedOut: deployResult.timedOut,
+                    durationMs: deployResult.durationMs,
+                    stdout: deployResult.stdout,
+                    stderr: deployResult.stderr
+                  }]
+              ).map((step, index) => h('div', {
+                key: `step-${index}`,
+                style: {
+                  marginBottom: 16,
+                  paddingTop: index === 0 ? 0 : 12,
+                  borderTop: index === 0 ? 'none' : '1px solid var(--dsw-alias-border-l1, #2d303b)'
+                }
+              }, [
+                h('div', {
+                  style: {
+                    display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+                    marginBottom: 8, fontSize: 12
+                  }
+                }, [
+                  h('span', {
+                    style: {
+                      fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                      background: step.success ? 'rgba(16, 185, 129, 0.15)' : 'rgba(248, 113, 113, 0.15)',
+                      color: step.success ? '#34d399' : '#f87171'
+                    }
+                  }, `${step.name === 'build' ? '构建' : '部署'} · ${step.success ? '成功' : '失败'}`),
+                  h('span', null, `退出码：${step.code ?? '无'}`),
+                  step.timedOut && h('span', { style: { color: '#f87171' } }, '已超时并强制结束'),
+                  h('span', null, `耗时：${(Number(step.durationMs || 0) / 1000).toFixed(1)}s`)
+                ]),
+                h('div', { style: { marginBottom: 8 } }, [
+                  h('div', { className: 'hs-form-label' }, '执行命令'),
+                  h('div', { style: deployCodeStyle }, step.script || '（未配置）')
+                ]),
+                h('div', { style: { marginBottom: 8 } }, [
+                  h('div', { className: 'hs-form-label' }, 'stdout'),
+                  h('div', { style: deployCodeStyle }, step.stdout?.trim() ? step.stdout : '（无输出）')
+                ]),
+                step.stderr?.trim() && h('div', null, [
+                  h('div', { className: 'hs-form-label' }, 'stderr'),
+                  h('div', { style: { ...deployCodeStyle, color: '#f87171' } }, step.stderr)
+                ])
+              ]))
             ]),
             h('div', { className: 'hs-modal-footer' }, [
               h('button', { className: 'hs-btn', onClick: () => setDeployResult(null) }, '关闭'),

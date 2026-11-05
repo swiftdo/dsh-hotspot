@@ -290,16 +290,21 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 `publish` 只做五步，且**只 `git add` 这一篇的目录**：
 
 ```bash
-yarn build                              # 构建（死链检查通常在这里拦第一道）
-git add <articleDir>/<slug>             # 只 add 这一篇
+# 1. 构建（可选）：配置里的 deploy.build
+yarn build
+# 2-4. 只 add 这一篇 → 提交 → 推送
+git add <articleDir>/<slug>
 git commit -m "post(auto): <slug>"
 git push origin HEAD
-./deploy.sh --no-git --skip-build       # 部署
+# 5. 部署：配置里的 deploy.script
+./deploy.sh --no-git --skip-build
 ```
+
+构建与部署两条命令**都从配置读**（`deploy.build` / `deploy.script`），和面板「部署站点」用的是同一份配置。没配 `deploy.script` 时 `publish` 直接失败并提示去配置，不再有写死的默认流水线。
 
 不用 `git add -A` 是有意的：自动发布时工作区通常有你的半成品，一个 `add -A` 就把它们全提交并发上线了。
 
-⚠️ `publish` 的构建与部署命令仍**写死在 `src/cli.js` 的 `cmdPublish`**（`yarn build` 与 `./deploy.sh --no-git --skip-build`）。这不是通用约定，是作者自己站点的流水线——命令行发布若用别的构建/部署方式，要么改这两行，要么别用 `publish`，手动执行上面五步。
+`deploy.build` 留空就跳过构建，只跑 `deploy.script`——如果你的 `deploy.sh` 自己会构建（很多站点脚本都是这样），这样配就不会重复构建一遍。
 
 ### 面板里的「部署站点」按钮（可配置）
 
@@ -307,13 +312,19 @@ git push origin HEAD
 
 ```json
 {
-  "deploy": { "script": "npm run build && ./deploy.sh --no-git --skip-build" }
+  "deploy": {
+    "build": "yarn build",
+    "script": "./deploy.sh --skip-build"
+  }
 }
 ```
 
-- 在「设置 → 站点部署」里填写脚本，或 POST `/hotspot/api/config` 带 `{"deploy":{"script":"…"}}`。
-- **留空即解绑**：`deploy.script` 为空时页头不渲染按钮，接口返回 `ERR_NO_DEPLOY_SCRIPT`，没有配置就没有入口。
-- 脚本在 `projectRoot`（博客项目根目录）下由 `/bin/sh -c` 执行，单次超时 10 分钟，stdout/stderr 各保留末尾 64KB；结果弹窗展示命令、cwd、退出码、耗时与输出。
+- `deploy.build` 可选，`deploy.script` 必填；面板按 **build → script** 顺序执行，**任一步失败即停**，不会带着构建失败的旧产物去上线。
+- 用**你的登录 shell**（`$SHELL` → `/bin/zsh` → `/bin/bash` → `/bin/sh`，以 `-l -c` 调用）执行，PATH 和终端里一致：从 Finder 启动的 GUI 也能找到 nvm 装的 `node`/`yarn` 与 `ssh-agent` 里的 key。原先用 `/bin/sh -c` 时终端能跑的脚本在面板里会 `command not found`，这是「部署没打通」最常见的原因。
+- **没配也能开始**：面板会只读探测博客根目录（`deploy.sh` / `scripts/deploy.sh` / `bin/deploy.sh`，以及 `package.json` 的 `scripts.build` 搭配 `pnpm-lock.yaml` / `yarn.lock`），在配置卡片里给出建议值，点「使用探测结果」填入表单，保存即生效。探测本身不写盘、不冒充已绑定。
+- **留空即解绑**：`deploy.script` 为空时接口返回 `ERR_NO_DEPLOY_SCRIPT`；页头按钮此时只在探测到候选脚本时显示，点了会跳到配置页。
+- 单步超时 10 分钟，stdout/stderr 各保留末尾 64KB；结果弹窗按步骤分块展示命令、退出码、耗时与输出，失败时标出是**构建**还是**部署**阶段。
+- 最近 10 次部署写入 `<projectRoot>/<digestDir>/deploy-history.json`，配置卡片底部显示「上次部署」并可回看详情。
 - 并发请求会被 `ERR_DEPLOY_BUSY`（409）挡住，同一时间只跑一次；根目录失效则返回 `ERR_NO_BLOG_ROOT`。
 - 路由和其他面板接口一样只接受 loopback 同源请求，不额外做命令沙箱——**谁能拿到这个面板，谁就能执行这条命令**。
 
@@ -489,7 +500,7 @@ dsh plugin --profile <profile> add <本仓库路径>
 | 源 | 增删 RSS / GitHub releases / HN 三种源，保存即写回配置文件 |
 | 候选 | 看当日候选、分数、多个来源的原文摘要，一键生成草稿 |
 | 内容 | 草稿与已发布文章列表，可预览、在线编辑、转正 |
-| 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单、部署脚本；画像 tag 与关键词只读展示 |
+| 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单、构建与部署命令；画像 tag 与关键词只读展示 |
 
 接口都在 `/hotspot/api/` 下，普通 Node http handler，可直接 curl：
 
@@ -497,13 +508,13 @@ dsh plugin --profile <profile> add <本仓库路径>
 |---|---|---|
 | GET | `/hotspot/api/state` | 一次返回 sources / config / articles / drafts / 最新 digest |
 | POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
-| POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.script |
+| POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.{build,script}（合并语义，只传 build 不会抹掉 script） |
 | POST | `/hotspot/api/run` | 触发一次抓取 |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿 |
 | GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
 | POST | `/hotspot/api/article` | 保存正文 |
 | POST | `/hotspot/api/article-promote` | 草稿转正 |
-| POST | `/hotspot/api/deploy` | 执行 `deploy.script`（未绑定 → 400，已在跑 → 409），返回退出码与输出 |
+| POST | `/hotspot/api/deploy` | 按 `deploy.build` → `deploy.script` 顺序执行（未绑定 → 400，已在跑 → 409），返回分步退出码与输出，并落一条部署历史 |
 
 **为什么不做 React 客户端插件**：`dsh.client` 需要引入客户端构建链，还要绑定预发布期的客户端 UI API。这几个页面都是表格和表单，单个零依赖 HTML 足够；省下的是一整条会随 DSH 版本失效的耦合。
 
@@ -512,7 +523,7 @@ dsh plugin --profile <profile> add <本仓库路径>
 ## 已知限制
 
 - **只支持 VitePress**。换生成器要写 `Target` 适配器（`src/adapters/target-vitepress.js` 是唯一实现）。
-- **`publish` 的构建/部署命令写死**（`yarn build`、`./deploy.sh --no-git --skip-build`）；面板的「部署站点」按钮不走这套逻辑，只执行配置里的 `deploy.script`。
+- **部署靠你自己配的命令**：插件只负责按 `deploy.build` → `deploy.script` 顺序执行、截留输出、记历史；构建产物目录、上传方式、探活地址都在你的脚本里，插件不猜。
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
