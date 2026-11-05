@@ -284,10 +284,15 @@ export function apply(ctx, config = {}) {
           defineTool({
             name: 'hotspot_scaffold',
             description:
-              '按候选 id 在目标博客里生成草稿骨架（docs/draft/<slug>/index.md），自带 sitemap:false，不会进博客列表也不会被搜索引擎收录。',
+              '按候选 id 在目标博客里生成草稿（docs/draft/<slug>/index.md），自带 sitemap:false，不会进博客列表也不会被搜索引擎收录。' +
+              '传 body 就是一次成型：正文随草稿落盘，文件里不留占位；不传 body 只得到骨架（正文待写）。' +
+              '推荐做法：先用 hotspot_get 取一手源、联网补料写好正文，再把正文传给本工具。',
             parameters: {
               id: { type: 'string', description: '候选 id（必填）' },
               slug: { type: 'string', description: '目录名；中文标题必须显式指定' },
+              title: { type: 'string', description: '可选：frontmatter 与 H1 的标题（正文是中文时通常要传，避免沿用英文 RSS 标题）' },
+              description: { type: 'string', description: '可选：frontmatter description（缺省取候选摘要，上限 118 字）' },
+              body: { type: 'string', description: '可选：正文 Markdown（含 # 标题时原样使用；不传则写入「（正文待写）」占位）' },
               projectRoot: { type: 'string', description: '可选：博客项目根目录（未配置全局路径时必须提供）' },
             },
             output: {
@@ -298,11 +303,14 @@ export function apply(ctx, config = {}) {
                   ok: { type: 'boolean' },
                   file: { type: 'string' },
                   slug: { type: 'string' },
+                  bodyWritten: { type: 'boolean' },
                   message: { type: 'string' },
                 },
               },
               render(_args, value) {
-                return textBlocks(value.ok ? `草稿已生成：${value.file}\nslug: ${value.slug}` : value.message);
+                if (!value.ok) return textBlocks(value.message);
+                const kind = value.bodyWritten ? '草稿（含正文）' : '草稿骨架（正文待写）';
+                return textBlocks(`${kind}：${value.file}\nslug: ${value.slug}`);
               },
             },
             async execute(args) {
@@ -337,8 +345,14 @@ export function apply(ctx, config = {}) {
               const existing = await effectiveTarget.exists(item);
               if (existing.exists) return { ok: false, message: `已经写过：${existing.reason}` };
 
-              const result = await effectiveTarget.scaffold(item, { draft: true, slug: args?.slug });
-              return { ok: true, file: result.file, slug: result.slug };
+              const result = await effectiveTarget.scaffold(item, {
+                draft: true,
+                slug: args?.slug,
+                title: args?.title,
+                description: args?.description,
+                body: args?.body,
+              });
+              return { ok: true, file: result.file, slug: result.slug, bodyWritten: result.bodyWritten };
             },
           }),
         ),

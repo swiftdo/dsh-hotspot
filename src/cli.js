@@ -21,7 +21,7 @@ hotspot —— 热点采集 → 去重 → 确定性排序 → 草稿落地
   hotspot init [--root <dir>]              扫描目标项目，生成 hotspot.config.json
   hotspot run [--dry-run]                 抓取并生成 digest
   hotspot show [<date>|latest]            打印已有 digest
-  hotspot scaffold <id|#3> [--slug x]     按候选生成草稿到 docs/draft/
+  hotspot scaffold <id|#3> [--slug x]     按候选生成草稿到 docs/draft/（--body-file 直接带正文，一次成型）
   hotspot supplement <slug> --url <url>  登记写正文时联网补到的证据（--file 存正文 / --list 查看）
   hotspot check <slug>                    草稿发布前三道机械校验
   hotspot promote <slug>                  草稿转正到 docs/article/
@@ -32,8 +32,10 @@ hotspot —— 热点采集 → 去重 → 确定性排序 → 草稿落地
   --online       doctor 时真的去连每个源（会发网络请求）
 
 写作顺序（顺序错了会白跑一遍）：
-  抓题 hotspot run → 落骨架 hotspot scaffold → 查原文 hotspot get（CLI: hotspot show）
-  → 联网补料 hotspot supplement → 写正文 → 去 AI 味 → hotspot check → hotspot promote
+  抓题 hotspot run → 查原文 hotspot get（CLI: hotspot show）→ 联网补料 hotspot supplement
+  → 写正文 → 去 AI 味 → hotspot scaffold <id> --body-file 正文.md（正文随草稿一次落盘）
+  → hotspot check → hotspot promote
+  只想先占位、后补写时，才省略 --body-file。
 `;
 
 function parseArgs(argv) {
@@ -237,7 +239,7 @@ function pickCandidate(digest, rawId) {
 
 async function cmdScaffold() {
   const id = positional[1];
-  if (!id) fail('用法：hotspot scaffold <id|#3>');
+  if (!id) fail('用法：hotspot scaffold <id|#3> [--slug s] [--title t] [--description d] [--body-file 正文.md]');
   const { target, store } = await loadConfig();
   const digest = await store.loadDigest(String(flags.get('date') ?? 'latest'));
   const candidate = pickCandidate(digest, id);
@@ -246,12 +248,32 @@ async function cmdScaffold() {
   const existing = await target.exists(candidate);
   if (existing.exists) fail(`这个题已经写过了：${existing.reason}`);
 
-  const result = await target.scaffold(candidate, { draft: true, slug: flags.get('slug') });
-  log(`✓ 草稿：${path.relative(cwd, result.file)}`);
+  // 正文可以直接带进来：写好的稿子一次性落盘，草稿里不留「（正文待写）」。
+  const bodyFile = flags.get('body-file');
+  const body = bodyFile ? await readFile(path.resolve(cwd, String(bodyFile)), 'utf8') : flags.get('body');
+
+  const result = await target.scaffold(candidate, {
+    draft: true,
+    slug: flags.get('slug'),
+    title: flags.get('title'),
+    description: flags.get('description'),
+    body: body == null ? undefined : String(body),
+  });
+  log(`✓ ${result.bodyWritten ? '草稿（含正文）' : '草稿骨架'}：${path.relative(cwd, result.file)}`);
   log(`  slug: ${result.slug}`);
+
+  if (result.bodyWritten) {
+    if (!printCheckReport(result.slug, await runChecks(result.slug))) {
+      log('');
+      log(`  草稿已落盘（含正文），改完重跑：hotspot check ${result.slug}`);
+    }
+    return;
+  }
+
   log(`  写正文前先 hotspot show / 读 digest 取多源原文；联网读到新页面就登记：`);
   log(`    hotspot supplement ${result.slug} --url <页面地址> --file <保存下来的正文>`);
   log(`  写完去 AI 味，再 hotspot check ${result.slug} → hotspot promote ${result.slug}`);
+  log(`  想一次成型：写好正文后用 --body-file <正文.md> 重新生成（删掉当前草稿目录即可）。`);
 }
 
 async function runChecks(slug) {
@@ -306,10 +328,7 @@ async function runChecks(slug) {
   return { result, file, candidate, supplements };
 }
 
-async function cmdCheck() {
-  const slug = positional[1];
-  if (!slug) fail('用法：hotspot check <slug>');
-  const { result, file, supplements } = await runChecks(slug);
+function printCheckReport(slug, { result, file, supplements }) {
   log(`校验 ${path.relative(cwd, file)}`);
   if (supplements.entries.length > 0) {
     const hosts = [...new Set(supplements.entries.map((e) => e.host).filter(Boolean))];
@@ -321,7 +340,7 @@ async function cmdCheck() {
   if (result.ok) {
     log('✓ 三道检查全过');
     log(`  下一步：hotspot promote ${slug}`);
-    return;
+    return true;
   }
   for (const v of result.violations) log(`✖ [${v.code}] ${v.message}`);
 
@@ -338,7 +357,13 @@ async function cmdCheck() {
   }
   log('');
   log('  顺序提醒：写 → 去 AI 味 → check。先去味再校验，否则改完措辞还要再跑一遍。');
-  process.exitCode = 1;
+  return false;
+}
+
+async function cmdCheck() {
+  const slug = positional[1];
+  if (!slug) fail('用法：hotspot check <slug>');
+  if (!printCheckReport(slug, await runChecks(slug))) process.exitCode = 1;
 }
 
 /**

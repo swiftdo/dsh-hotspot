@@ -99,13 +99,13 @@ sequenceDiagram
   T->>B: 读 digest/raw，写 docs/draft/my-post/sources.json
   T-->>U: 多源原文（核对版本号、日期）
 
-  U->>T: hotspot_scaffold 3（slug=my-post）
-  T->>B: 写 docs/draft/my-post/index.md（sitemap: false）
-
   Note over U: 联网搜官方 release notes / issue，综合后写正文，再去 AI 味
 
   U->>T: hotspot_supplement（边搜边登记，可多次）
   T->>B: sources.json 追加一条（正文 ≤ 4000 字）
+
+  U->>T: hotspot_scaffold 3（slug=my-post，body=写好的正文）
+  T->>B: 写 docs/draft/my-post/index.md（正文随草稿落盘，sitemap: false）
 
   U->>T: hotspot check my-post
   T->>B: 读正文 + 一手源 + 补料
@@ -121,7 +121,7 @@ sequenceDiagram
 |---|---|---|
 | `run` | `.hotspot/digest/*.json`、`.hotspot/raw/*.json` | `check` 要拿一手源原文比数字 |
 | `get --registerSlug` | `<draftDir>/<slug>/sources.json` | digest 按天滚动，隔天 latest 里已无该 cluster，来源会丢 |
-| `scaffold` | `<draftDir>/<slug>/index.md` | 骨架与 frontmatter 由程序生成，不是模型写的 |
+| `scaffold` | `<draftDir>/<slug>/index.md` | frontmatter 由程序生成；传 `body` 时正文一起落盘，不传才写占位 |
 | `supplement` | 同一个 `sources.json` | 补料是**证据账本**，不是笔记 |
 | `promote` | `<articleDir>/<slug>/{index.md,sources.json}` | 转正后仍要答得出「这段数字从哪读来的」 |
 
@@ -157,7 +157,7 @@ node src/cli.js init --root <你的博客目录>   # 生成配置文件，并从
 # 编辑配置里的 sources，换成你关心的源
 node src/cli.js run --dry-run                # 只看不落盘
 node src/cli.js run                          # 落 .hotspot/digest/YYYY-MM-DD.{json,md}
-node src/cli.js scaffold '#3'                # 生成 <draftDir>/<slug>/index.md
+node src/cli.js scaffold '#3' --body-file post.md  # 一次成型：正文随草稿落盘（省略 --body-file 只写骨架）
 node src/cli.js supplement <slug> --url <页面> --file <正文>  # 联网补到的证据，登记后 check 才认
 node src/cli.js check <slug>                 # 三道机械校验
 node src/cli.js promote <slug>               # 转到文章目录，去掉 sitemap:false
@@ -200,6 +200,15 @@ node src/cli.js supplement <slug> --list     # 看已登记的补料
 ```
 
 登记后 `check` 做三件事：补料原文并入数字比对、补料 URL 与域名并入外链白名单、配置里的 `publish.allowedHosts` 继续生效。文件落在 `<draftDir>/<slug>/sources.json`，`promote` 时一起搬到文章目录——转正之后仍答得出"这段数字是从哪读来的"。
+
+草稿要一次成型：写完、去完 AI 味，再用 `scaffold --body-file` 把正文一起落盘，草稿目录里不会出现「（正文待写）」。
+
+```bash
+node src/cli.js scaffold '#3' --slug my-post --title '中文标题' --body-file post.md
+# 落盘即校验：违规直接列出来，草稿保留，改完重跑 hotspot check
+```
+
+`--title` / `--description` 覆盖 frontmatter（正文是中文时基本都要传，否则会沿用英文 RSS 标题）。正文自带 `# 标题` 就原样使用，没有才自动补一个。
 
 顺序是硬的：**写 → 去 AI 味 → check**。去味会改数字写法（`6.1.2` → `v6.1.2`）和删链接，先 check 等于白跑一遍。
 
@@ -335,7 +344,7 @@ flowchart TB
 |---|---|---|---|
 | `hotspot_run` | `limit?` | 配置文件里的 sources | `.hotspot/digest/*.json`、`.hotspot/raw/*.json` |
 | `hotspot_get` | `id`、`registerSlug?` | digest + raw | 仅当传 `registerSlug`：`<draftDir>/<slug>/sources.json` |
-| `hotspot_scaffold` | `id`、`slug?`、`projectRoot?` | digest | `<draftDir>/<slug>/index.md` |
+| `hotspot_scaffold` | `id`、`slug?`、`title?`、`description?`、`body?`、`projectRoot?` | digest | `<draftDir>/<slug>/index.md` |
 | `hotspot_supplement` | `slug`、`url`、`title?`、`content?`、`kind?`、`projectRoot?` | `sources.json` | 同文件追加/覆盖 |
 
 `hotspot_get` 是唯一「读的时候可能写」的工具，因为 digest 按天滚动：隔天写同一篇草稿时，latest 里已经没有那个 cluster，`check` 也就不再认它的来源。写正文前用 `registerSlug` 把证据固化一次，是最省事的做法。

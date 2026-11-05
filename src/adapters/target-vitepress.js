@@ -312,9 +312,12 @@ export function createVitePressTarget(config) {
     },
 
     /**
-     * 生成草稿骨架。draft=true 时进 docs/draft/ 并带 sitemap: false。
+     * 生成草稿。draft=true 时进 docs/draft/ 并带 sitemap: false。
+     *
+     * 传 opts.body 就是「一次成型」：正文直接落盘，不留「（正文待写）」占位。
+     * 不传 body 时退化成骨架 —— 只有明确要「先占位、后补写」时才该走这条路。
      * @param {any} candidate
-     * @param {{ draft?: boolean, now?: Date, slug?: string }} [opts]
+     * @param {{ draft?: boolean, now?: Date, slug?: string, title?: string, description?: string, body?: string }} [opts]
      */
     async scaffold(candidate, opts = {}) {
       const now = opts.now ?? new Date();
@@ -329,8 +332,11 @@ export function createVitePressTarget(config) {
       const file = path.join(dir, 'index.md');
       if (await readIfExists(file)) throw new Error(`已存在：${path.relative(root, file)}`);
 
-      const title = candidate.title.replace(/"/g, "'");
-      const description = cleanText(candidate.summary || candidate.title, 118);
+      const title = String(opts.title ?? candidate.title).replace(/"/g, "'");
+      const description = cleanText(
+        String(opts.description ?? candidate.summary ?? candidate.title).replace(/"/g, "'"),
+        118,
+      );
       const tags = Array.isArray(candidate.tags) && candidate.tags.length > 0 ? candidate.tags : [];
 
       const lines = [
@@ -346,18 +352,24 @@ export function createVitePressTarget(config) {
       }
       if (draft) lines.push('sitemap: false');
       lines.push('---', '');
-      lines.push(`# ${title}`, '');
-      const sources = (candidate.sources ?? []).slice(0, 3);
-      if (sources.length > 0) {
-        lines.push('> 草稿，来源：');
-        for (const source of sources) lines.push(`> - [${cleanText(source.title, 60)}](${source.url})`);
-        lines.push('');
+      const body = typeof opts.body === 'string' ? opts.body.trim() : '';
+      if (body) {
+        // 正文自带标题就用它，没有才补一个 —— 不重复、不覆盖作者写的结构。
+        lines.push(/^#\s/.test(body) ? body : `# ${title}\n\n${body}`, '');
+      } else {
+        lines.push(`# ${title}`, '');
+        const sources = (candidate.sources ?? []).slice(0, 3);
+        if (sources.length > 0) {
+          lines.push('> 草稿，来源：');
+          for (const source of sources) lines.push(`> - [${cleanText(source.title, 60)}](${source.url})`);
+          lines.push('');
+        }
+        lines.push('（正文待写）', '');
       }
-      lines.push('（正文待写）', '');
 
       await mkdir(dir, { recursive: true });
       await writeFile(file, lines.join('\n'), 'utf8');
-      return { file, dir, slug, draft };
+      return { file, dir, slug, draft, bodyWritten: body.length > 0 };
     },
 
     /**
