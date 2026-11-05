@@ -234,15 +234,20 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 
 ### 面板里一键生成成稿
 
-候选页点「生成草稿」就是一次成稿，不再是空骨架：
+候选页点「生成草稿」会先弹一个小窗确认**标题与目录名**（标题预填候选标题、目录名预填 `slugHint`，没有就按标题推算、纯中文标题退到 `hotspot-MMDD-NN`）。目录名是永久 URL，改起来比看一眼贵；而且纯中文标题推导不出 ASCII slug —— 以前这一步直接 500。
+
+确认后就是一次成稿，不再是空骨架：
 
 ```
-POST /api/scaffold {id, generate:true}
+POST /api/scaffold {id, slug, title, generate:true}
   ├─ 建草稿（frontmatter + sources.json 里的 candidate.id）→ 立刻返回 job
   └─ 后台任务：候选素材包（摘要 + tags + 一手源原文）→ 子代理联网搜 3–6 篇
                 → 综合成文 → 来源登记成补料 → 写盘 → 三道校验
 面板每 4 秒 GET /api/jobs?slug=…  → 卡片上「✍️ 写作中」→ 完成变标题，失败变「⚠️ 正文失败」+ 重试
+写作中可随时取消：POST /api/jobs/cancel  → 信号一路传到子代理，真停（已写盘的内容不回滚）
 ```
+
+草稿卡片上直接能看到状态：`✍️ 写作中`（带「✕ 取消写作」）、`⚠️ 正文失败`（带「🔁 重试写正文」）、`⚠️ 校验未过 N`（写完但闸门没过，鼠标悬停看违规清单）、`正文待写` 与 `1234 字`。
 
 为什么是后台任务：一次子代理 5 秒到几分钟，同步等会有两个问题——浏览器刷新就丢结果，面板也只能干等。任务状态落在 `<digestDir>/jobs/<slug>.json`，宿主重启后仍能看出上次失败的原因（但**不会自动续跑**）。
 
@@ -617,8 +622,9 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
 | POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.{build,script}（合并语义，只传 build 不会抹掉 script） |
 | POST | `/hotspot/api/run` | 触发一次抓取 |
-| POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿；`generate:true` 时建完立刻在后台写正文并返回 job |
+| POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿（`slug` / `title` / `description` 可覆盖）；`generate:true` 时建完立刻在后台写正文并返回 job；slug 推导不出回 400 `ERR_SLUG_REQUIRED` |
 | GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤） |
+| POST | `/hotspot/api/jobs/cancel` | 取消正在跑的写作任务；没有在跑的回 404 `ERR_NO_RUNNING_JOB` |
 | POST | `/hotspot/api/jobs` | 按 slug 重跑写正文（失败重试）；同篇在跑时 409 `ERR_JOB_BUSY` |
 | GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
 | POST | `/hotspot/api/article` | 保存正文 |

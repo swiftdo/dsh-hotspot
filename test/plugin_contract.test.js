@@ -73,3 +73,14 @@ test('面板契约：生成草稿带 generate:true 并轮询 /api/jobs', () => {
   assert.ok(client.includes('模型与写作方式'), '设置页要有模型选择卡');
   assert.ok(client.includes('/models`'), '模型卡要用 /api/models 读写');
 });
+
+test('面板契约：生成草稿先确认标题与 slug，写作可取消', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(client.includes('suggestSlug'), '要有目录名推导与兜底（纯中文标题）');
+  assert.ok(client.includes('目录名 slug（永久 URL'), '生成前要能确认目录名');
+  assert.ok(client.includes('按标题推算'), '推导不出时能一键按标题重算');
+  assert.ok(client.includes('/jobs/cancel'), '写作中要能取消');
+  assert.ok(client.includes('取消写作'), '卡片上要有取消入口');
+  assert.ok(client.includes('校验未过'), '写完但校验没过要留在卡片上');
+  assert.ok(client.includes('正文待写'), '骨架草稿要能一眼看出来');
+});

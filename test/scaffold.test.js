@@ -82,3 +82,24 @@ test('scaffold 把候选来源记进 sources.json：check 靠它定位证据，�
   const read = await target.readSupplements('with-meta');
   assert.equal(read.candidate.id, 'h-20261105-01');
 });
+
+test('listDrafts 标出字数与「正文待写」，面板卡片才有东西可显示', async () => {
+  const target = makeTarget();
+  const skeleton = await target.scaffold(candidate, { slug: 'skeleton-draft' });
+  const filled = await target.scaffold(candidate, {
+    slug: 'filled-draft',
+    title: '中文标题',
+    body: '## 小节\n\n一百来字的正文。',
+  });
+
+  const drafts = await target.listDrafts();
+  const bySlug = Object.fromEntries(drafts.map((d) => [d.slug, d]));
+
+  assert.equal(bySlug['skeleton-draft'].pending, true, '骨架要标成待写');
+  assert.ok(bySlug['skeleton-draft'].bodyChars > 0, '占位符也算字符，但 pending 优先');
+
+  assert.equal(bySlug['filled-draft'].pending, false);
+  assert.equal(bySlug['filled-draft'].bodyChars, [...'# 中文标题\n\n## 小节\n\n一百来字的正文。'].length);
+  assert.equal(bySlug['filled-draft'].file, path.relative(target.root, filled.file));
+  assert.equal(bySlug['skeleton-draft'].file, path.relative(target.root, skeleton.file));
+});

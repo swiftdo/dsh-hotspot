@@ -1788,6 +1788,8 @@ window.__ModuleLoader__.load({
       const [savingQuickBlog, setSavingQuickBlog] = useState(false);
       const [scaffoldModalItem, setScaffoldModalItem] = useState(null);
       const [scaffoldProjectRoot, setScaffoldProjectRoot] = useState('');
+      const [scaffoldTitle, setScaffoldTitle] = useState('');
+      const [scaffoldSlug, setScaffoldSlug] = useState('');
       const [scaffolding, setScaffolding] = useState(false);
       const [pickingDir, setPickingDir] = useState(false);
 
@@ -2198,13 +2200,26 @@ window.__ModuleLoader__.load({
         }
       };
 
+      /**
+       * 目录名建议：标题里的 ASCII 部分优先，纯中文标题退到 hotspot-MMDD-NN。
+       * 与服务端 slugify 同一套规则，但这里多一层兜底 —— 面板不能因为推导不出
+       * 目录名就让人卡住（那正是「生成草稿」以前直接报错的原因）。
+       */
+      const suggestSlug = (item) => {
+        const ascii = String(item?.title || '').replace(/[^\x00-\x7F]+/g, ' ');
+        const base = ascii.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-$/, '');
+        if (base) return base;
+        const matched = String(item?.id || '').match(/(\d{4})(\d{2})(\d{2})-(\d{2})$/);
+        if (matched) return `hotspot-${matched[2]}${matched[3]}-${matched[4]}`;
+        return `hotspot-${Date.now().toString(36).slice(-4)}`;
+      };
+
+      /** 生成草稿前先让人看一眼标题与目录名：目录名是永久 URL，改起来比选一次贵。 */
       const handleScaffold = (item) => {
-        if (!isBlogConfigured) {
-          setScaffoldModalItem(item);
-          setScaffoldProjectRoot(blogProjectRoot || '');
-          return;
-        }
-        executeScaffold(item);
+        setScaffoldModalItem(item);
+        setScaffoldTitle(String(item?.title || ''));
+        setScaffoldSlug(item?.slugHint || suggestSlug(item));
+        setScaffoldProjectRoot(isBlogConfigured ? '' : (blogProjectRoot || ''));
       };
 
       // 后台写作任务的实时状态：slug -> job。生成草稿后在这里推进度。
@@ -2279,6 +2294,28 @@ window.__ModuleLoader__.load({
         }
       };
 
+      /** 取消正在跑的写作任务：信号会一路传到子代理，真停。 */
+      const cancelWrite = async (slug) => {
+        if (!slug) return;
+        try {
+          const res = await fetch(`${API_BASE}/jobs/cancel`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ slug })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            setJobStates(prev => ({ ...prev, [slug]: data.job }));
+            showToast('已请求取消，正在停子代理…');
+            await loadState();
+          } else {
+            showToast(data.message || '取消失败', true);
+          }
+        } catch (err) {
+          showToast(err.message || String(err), true);
+        }
+      };
+
       // 面板重新打开时，把还在跑的任务接回来继续盯
       useEffect(() => {
         const running = (state?.jobs || []).filter(job => job && job.state === 'running');
@@ -2288,12 +2325,14 @@ window.__ModuleLoader__.load({
         }
       }, [state?.jobs]);
 
-      const executeScaffold = async (item, customRoot) => {
+      const executeScaffold = async (item, opts = {}) => {
         try {
           setScaffolding(true);
           // generate:true = 建完草稿直接在后台写正文（核心信息 → 联网 → 综合）
           const payload = { id: item.id, generate: true };
-          if (customRoot) payload.projectRoot = customRoot.trim();
+          if (opts.projectRoot) payload.projectRoot = String(opts.projectRoot).trim();
+          if (opts.slug) payload.slug = String(opts.slug).trim();
+          if (opts.title) payload.title = String(opts.title).trim();
 
           const res = await fetch(`${API_BASE}/scaffold`, {
             method: 'POST',
@@ -2311,6 +2350,13 @@ window.__ModuleLoader__.load({
               showToast(data.message || `草稿生成成功：${data.value?.file || data.value?.slug}`);
             }
             await loadState();
+          } else if (data.code === 'ERR_SLUG_REQUIRED') {
+            // 后端说目录名推导不出来：把弹窗重新打开并预填，别让人对着一条报错干瞪眼
+            setScaffoldModalItem(item);
+            setScaffoldTitle(String(data.value?.title || item.title || ''));
+            setScaffoldSlug(String(data.value?.slugHint || '') || suggestSlug(item));
+            setScaffoldProjectRoot(isBlogConfigured ? '' : (blogProjectRoot || ''));
+            showToast('请给这篇草稿定一个目录名（slug）', true);
           } else {
             showToast(data.message || '生成草稿失败', true);
           }
@@ -3438,6 +3484,22 @@ window.__ModuleLoader__.load({
                             title: job.error || '写正文失败',
                             style: { background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }
                           }, '⚠️ 正文失败'),
+                          // 写完了但校验没过：这件事必须留在卡片上，不能只 flash 一个 toast
+                          job && job.state === 'done' && job.result?.checks && job.result.checks.ok === false && h('span', {
+                            key: 'job-checks',
+                            className: 'hs-tag-pill',
+                            title: (job.result.checks.violations || []).map(v => `[${v.code}] ${v.message}`).join('\n'),
+                            style: { background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', borderColor: 'rgba(245, 158, 11, 0.3)' }
+                          }, `⚠️ 校验未过 ${job.result.checks.violations?.length || 0}`),
+                          item.pending && h('span', {
+                            key: 'draft-pending',
+                            className: 'hs-tag-pill',
+                            style: { background: 'rgba(148, 163, 184, 0.12)', color: '#94a3b8', borderColor: 'rgba(148, 163, 184, 0.3)' }
+                          }, '正文待写'),
+                          !item.pending && item.bodyChars > 0 && h('span', {
+                            key: 'draft-chars',
+                            className: 'hs-draft-date'
+                          }, `${item.bodyChars} 字`),
                           item.date && h('span', { className: 'hs-draft-date' }, item.date)
                         ]),
                         item.description && h('div', { className: 'hs-article-desc hs-draft-desc' }, item.description),
@@ -3460,17 +3522,26 @@ window.__ModuleLoader__.load({
                                 openEditor(item);
                               }
                             }, '✏️ 编辑正文'),
-                            (writing || failed) && h('button', {
+                            writing && h('button', {
+                              key: 'job-cancel',
+                              className: 'hs-btn sm',
+                              style: { padding: '3px 8px', fontSize: 11 },
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                cancelWrite(item.slug);
+                              }
+                            }, '✕ 取消写作'),
+                            failed && h('button', {
                               key: 'job-retry',
                               className: 'hs-btn sm',
                               style: { padding: '3px 8px', fontSize: 11 },
-                              disabled: writing || Boolean(jobStarting[item.slug]),
-                              title: failed ? (job.error || '重试写正文') : '正在写',
+                              disabled: Boolean(jobStarting[item.slug]),
+                              title: job.error || '重试写正文',
                               onClick: (e) => {
                                 e.stopPropagation();
                                 retryWrite(item.slug);
                               }
-                            }, writing ? '✍️ 写正文中…' : '🔁 重试写正文'),
+                            }, '🔁 重试写正文'),
                             h('button', {
                               className: 'hs-btn sm primary',
                               style: { padding: '3px 8px', fontSize: 11 },
@@ -3988,14 +4059,15 @@ window.__ModuleLoader__.load({
           ])
         ]),
 
-        // ── 强制提供博客路径生成草稿的 Modal 弹窗 ──
+        // ── 生成草稿 Modal：定标题与目录名（目录名是永久 URL，必须先看一眼） ──
         scaffoldModalItem && h('div', { className: 'hs-modal-mask', key: 'scaffold-modal' }, [
           h('div', { className: 'hs-modal' }, [
             h('div', { className: 'hs-modal-header' }, [
-              h('h3', { className: 'hs-modal-title' }, '指定博客项目并生成草稿'),
+              h('h3', { className: 'hs-modal-title' }, '生成草稿'),
               h('button', {
                 className: 'hs-btn ghost',
                 style: { padding: '4px 8px' },
+                disabled: scaffolding,
                 onClick: () => setScaffoldModalItem(null)
               }, '✕')
             ]),
@@ -4004,38 +4076,69 @@ window.__ModuleLoader__.load({
                 '目标候选：',
                 h('strong', { style: { color: 'var(--dsw-alias-label-primary, #ffffff)' } }, scaffoldModalItem.title)
               ]),
-              h('div', { className: 'hs-alert', style: { marginBottom: 16 } }, [
-                h('div', { className: 'hs-alert-top' }, '需要博客仓库路径'),
-                h('div', { className: 'hs-alert-desc' },
-                  '当前尚未绑定博客项目根目录。请提供目标博客仓库绝对路径（如 VitePress 根目录），系统将立即自动持久化并落地草稿，后续无需重复输入。'
-                )
+              h('div', { className: 'hs-form-item' }, [
+                h('label', { className: 'hs-form-label' }, '文章标题（写入 frontmatter）'),
+                h('input', {
+                  className: 'hs-input',
+                  placeholder: '中文标题这里改，否则会沿用英文 RSS 标题',
+                  value: scaffoldTitle,
+                  onChange: (e) => setScaffoldTitle(e.target.value),
+                  autoFocus: true
+                })
               ]),
               h('div', { className: 'hs-form-item' }, [
-                h('label', { className: 'hs-form-label' }, '博客项目根目录（绝对路径 · 必填）'),
+                h('label', { className: 'hs-form-label' }, '目录名 slug（永久 URL，只能小写字母/数字/连字符）'),
                 h('div', { style: { display: 'flex', gap: 8 } }, [
                   h('input', {
                     className: 'hs-input',
                     style: { flex: 1 },
-                    placeholder: '选择或输入博客根目录路径，如 /Users/username/Code/my-blog',
-                    value: scaffoldProjectRoot,
-                    onChange: (e) => setScaffoldProjectRoot(e.target.value),
-                    autoFocus: true
+                    placeholder: '例如 apple-new-chip',
+                    value: scaffoldSlug,
+                    onChange: (e) => setScaffoldSlug(e.target.value)
                   }),
                   h('button', {
                     className: 'hs-btn',
                     type: 'button',
-                    disabled: pickingDir,
-                    title: '调起系统原生文件夹选择器',
-                    onClick: async () => {
-                      const dir = await handlePickDirectory();
-                      if (dir) setScaffoldProjectRoot(dir);
-                    }
-                  }, [
-                    h('span', { style: { marginRight: 4 } }, '📁'),
-                    pickingDir ? '选择中...' : '选择文件夹'
+                    title: '按标题重新推导目录名',
+                    onClick: () => setScaffoldSlug(suggestSlug({ ...scaffoldModalItem, title: scaffoldTitle }))
+                  }, '↻ 按标题推算')
+                ]),
+                scaffoldSlug && !/^[a-z0-9-]+$/.test(scaffoldSlug.trim()) && h('div', {
+                  style: { fontSize: 11, color: '#f87171', marginTop: 4 }
+                }, '只能用小写字母、数字和连字符')
+              ]),
+              !isBlogConfigured && h('div', null, [
+                h('div', { className: 'hs-alert', style: { margin: '4px 0 12px' } }, [
+                  h('div', { className: 'hs-alert-top' }, '需要博客仓库路径'),
+                  h('div', { className: 'hs-alert-desc' },
+                    '当前尚未绑定博客项目根目录。填一次即可，之后会自动持久化。'
+                  )
+                ]),
+                h('div', { className: 'hs-form-item' }, [
+                  h('label', { className: 'hs-form-label' }, '博客项目根目录（绝对路径 · 必填）'),
+                  h('div', { style: { display: 'flex', gap: 8 } }, [
+                    h('input', {
+                      className: 'hs-input',
+                      style: { flex: 1 },
+                      placeholder: '如 /Users/username/Code/my-blog',
+                      value: scaffoldProjectRoot,
+                      onChange: (e) => setScaffoldProjectRoot(e.target.value)
+                    }),
+                    h('button', {
+                      className: 'hs-btn',
+                      type: 'button',
+                      disabled: pickingDir,
+                      title: '调起系统原生文件夹选择器',
+                      onClick: async () => {
+                        const dir = await handlePickDirectory();
+                        if (dir) setScaffoldProjectRoot(dir);
+                      }
+                    }, [h('span', { style: { marginRight: 4 } }, '📁'), pickingDir ? '选择中...' : '选择文件夹'])
                   ])
                 ])
-              ])
+              ]),
+              h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 4 } },
+                '确认后先建草稿，随后在后台起子代理：读候选素材 → 联网补 3–6 篇 → 综合成文 → 跑三道校验。可以随时取消。')
             ]),
             h('div', { className: 'hs-modal-footer' }, [
               h('button', {
@@ -4045,15 +4148,27 @@ window.__ModuleLoader__.load({
               }, '取消'),
               h('button', {
                 className: 'hs-btn primary',
+                disabled: scaffolding,
                 onClick: () => {
-                  const root = scaffoldProjectRoot.trim();
-                  if (!root) {
+                  const slug = scaffoldSlug.trim();
+                  if (!/^[a-z0-9-]+$/.test(slug)) {
+                    showToast('目录名只能用小写字母、数字和连字符', true);
+                    return;
+                  }
+                  if (!scaffoldTitle.trim()) {
+                    showToast('请填写文章标题', true);
+                    return;
+                  }
+                  if (!isBlogConfigured && !scaffoldProjectRoot.trim()) {
                     showToast('请填写博客项目根目录路径', true);
                     return;
                   }
-                  executeScaffold(scaffoldModalItem, root);
-                },
-                disabled: scaffolding
+                  executeScaffold(scaffoldModalItem, {
+                    slug,
+                    title: scaffoldTitle.trim(),
+                    projectRoot: isBlogConfigured ? '' : scaffoldProjectRoot.trim()
+                  });
+                }
               }, scaffolding ? '正在生成草稿...' : '确认并生成草稿')
             ])
           ])

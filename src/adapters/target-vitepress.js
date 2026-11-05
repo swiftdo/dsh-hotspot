@@ -481,14 +481,18 @@ export function createVitePressTarget(config) {
         seenFiles.add(fullPath);
         const text = await readIfExists(fullPath);
         if (!text) return;
-        const { data } = parseFrontmatter(text);
+        const { data, body } = parseFrontmatter(text);
         let fileStat = null;
         try {
           fileStat = await stat(fullPath);
         } catch {}
 
+        // 正文长度与「是不是还空着」：面板要在草稿卡片上直接看出「正文待写 / 1200 字」
+        const bodyText = String(body ?? '').trim();
         out.push({
           slug: fallbackSlug,
+          bodyChars: [...bodyText].length,
+          pending: bodyText.length === 0 || bodyText.includes('（正文待写）'),
           title: String(data.title ?? fallbackSlug),
           date: String(data.date ?? (fileStat ? new Date(fileStat.mtimeMs).toISOString().slice(0, 10) : '')),
           tags: Array.isArray(data.tags) ? data.tags : [],
