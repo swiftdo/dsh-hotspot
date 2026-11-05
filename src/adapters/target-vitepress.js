@@ -3,7 +3,11 @@ import path from 'node:path';
 import { parseFrontmatter } from '../core/validate.js';
 import { titleKey, slugify, dateLabel } from '../core/normalize.js';
 import {
-  SUPPLEMENT_VERSION, normalizeSupplementFile, normalizeSupplementEntry, upsertSupplement,
+  SUPPLEMENT_VERSION,
+  normalizeCandidateMeta,
+  normalizeSupplementFile,
+  normalizeSupplementEntry,
+  upsertSupplement,
 } from '../core/supplement.js';
 
 /**
@@ -160,7 +164,14 @@ export function createVitePressTarget(config) {
       text = await readIfExists(file);
     }
     if (text === null) {
-      return { version: SUPPLEMENT_VERSION, slug, file: path.relative(root, draftFile), entries: [], invalid: [] };
+      return {
+        version: SUPPLEMENT_VERSION,
+        slug,
+        file: path.relative(root, draftFile),
+        entries: [],
+        invalid: [],
+        candidate: null,
+      };
     }
     let raw;
     try {
@@ -169,8 +180,8 @@ export function createVitePressTarget(config) {
       // 坏 JSON 不吞：吞了就会表现为"登记过补料却仍报数字违规"
       throw new Error(`补料文件不是合法 JSON：${path.relative(root, file)}`);
     }
-    const { entries, invalid } = normalizeSupplementFile(raw);
-    return { version: SUPPLEMENT_VERSION, slug, file: path.relative(root, file), entries, invalid };
+    const { entries, invalid, candidate } = normalizeSupplementFile(raw);
+    return { version: SUPPLEMENT_VERSION, slug, file: path.relative(root, file), entries, invalid, candidate };
   }
 
   async function addSupplement(slug, input) {
@@ -188,9 +199,47 @@ export function createVitePressTarget(config) {
 
     const file = path.join(base, clean, SUPPLEMENT_FILE);
     await mkdir(path.dirname(file), { recursive: true });
-    const payload = { version: SUPPLEMENT_VERSION, slug: clean, updatedAt: new Date().toISOString(), entries };
+    // candidate 必须原样带回去：补料是「追加一条」，不是「重写整个账本」——
+    // 丢掉它，check 就又得靠标题猜候选，中文标题会直接塌成「当天全部原文都是证据」。
+    const payload = {
+      version: SUPPLEMENT_VERSION,
+      slug: clean,
+      updatedAt: new Date().toISOString(),
+      ...(current.candidate ? { candidate: current.candidate } : {}),
+      entries,
+    };
     await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
     return { file: path.relative(root, file), entry, entries, added };
+  }
+
+  /**
+   * 记录「这份草稿来自哪条候选」。写进 sources.json 的 candidate 字段：
+   * check 用它定位证据，promote 时跟着一起搬到文章目录。
+   *
+   * 没有 index.md 时不写 —— 与 addSupplement 保持一致，不留下只有 sources.json 的幽灵目录。
+   */
+  async function writeCandidateMeta(slug, meta) {
+    const clean = String(slug ?? '').trim();
+    if (!/^[a-z0-9-]+$/.test(clean)) throw new Error(`slug 不合法：${slug}`);
+    const normalized = normalizeCandidateMeta(meta);
+    if (!normalized) return null;
+
+    const inDraft = (await readIfExists(path.join(draftDir, clean, 'index.md'))) !== null;
+    const base = inDraft ? draftDir : articleDir;
+    if ((await readIfExists(path.join(base, clean, 'index.md'))) === null) return null;
+
+    const current = await readSupplements(clean);
+    const file = path.join(base, clean, SUPPLEMENT_FILE);
+    await mkdir(path.dirname(file), { recursive: true });
+    const payload = {
+      version: SUPPLEMENT_VERSION,
+      slug: clean,
+      updatedAt: new Date().toISOString(),
+      candidate: normalized,
+      entries: current.entries,
+    };
+    await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    return { file: path.relative(root, file), candidate: normalized };
   }
 
   return {
@@ -201,6 +250,7 @@ export function createVitePressTarget(config) {
     listArticles: scanArticles,
     readSupplements,
     addSupplement,
+    writeCandidateMeta,
 
     /**
      * 从项目本身归纳画像：article 的 tags 决定权重，docs 一级目录决定关键词。
@@ -369,6 +419,16 @@ export function createVitePressTarget(config) {
 
       await mkdir(dir, { recursive: true });
       await writeFile(file, lines.join('\n'), 'utf8');
+      // 记下候选：check 靠 candidate.id 定位证据边界，而不是按标题猜。
+      // 写不进去就照实抛 —— 静默留下没有 meta 的草稿，后面会表现成
+      // 「check 说定位不到候选」，比现在报错更难查。
+      if (candidate?.id) {
+        await writeCandidateMeta(slug, {
+          id: candidate.id,
+          url: candidate.url,
+          sources: (candidate.sources ?? []).map((source) => source.url),
+        });
+      }
       return { file, dir, slug, draft, bodyWritten: body.length > 0 };
     },
 

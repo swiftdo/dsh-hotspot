@@ -69,3 +69,16 @@ test('正文是空字符串时退回骨架（不把空正文当成型）', async
   assert.equal(result.bodyWritten, false);
   assert.ok(readFileSync(result.file, 'utf8').includes('（正文待写）'));
 });
+
+test('scaffold 把候选来源记进 sources.json：check 靠它定位证据，而不是按标题猜', async () => {
+  const target = makeTarget();
+  const result = await target.scaffold(candidate, { slug: 'with-meta', title: '中文标题' });
+
+  const meta = JSON.parse(readFileSync(path.join(path.dirname(result.file), 'sources.json'), 'utf8'));
+  assert.equal(meta.candidate.id, 'h-20261105-01');
+  assert.deepEqual(meta.candidate.sources, ['https://openai.com/index/openai-to-acquire-pierre']);
+  assert.deepEqual(meta.entries, [], '还没有补料时也要留下 candidate 记录');
+
+  const read = await target.readSupplements('with-meta');
+  assert.equal(read.candidate.id, 'h-20261105-01');
+});

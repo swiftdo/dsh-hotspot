@@ -81,6 +81,30 @@ export function upsertSupplement(entries, entry) {
 }
 
 /**
+ * 候选元数据：这份草稿是从哪条候选写出来的。
+ *
+ * 落盘在 sources.json 的 `candidate` 字段，不写进 frontmatter —— frontmatter 是站点的
+ * 契约，转正后要干净；而 sources.json 本来就是「这段内容的证据账本」，转正时跟着一起搬。
+ * 有了它，check 不必再靠 slugHint / 标题去猜候选：中文标题猜不到时会退化成
+ * 「当天全部原文都是证据」，那等于没有闸门。
+ *
+ * @param {any} input
+ * @returns {{ id: string, url: string, sources: string[] } | null}
+ */
+export function normalizeCandidateMeta(input) {
+  if (!input || typeof input !== 'object') return null;
+  const id = String(input.id ?? '').trim();
+  if (!id) return null;
+  const url = canonicalUrl(input.url) || String(input.url ?? '').trim();
+  const sources = [];
+  for (const item of Array.isArray(input.sources) ? input.sources : []) {
+    const value = typeof item === 'string' ? canonicalUrl(item) : canonicalUrl(item?.url);
+    if (value && !sources.includes(value)) sources.push(value);
+  }
+  return { id, url, sources };
+}
+
+/**
  * 容忍三种形态：裸数组、{ entries: [...] }、损坏文件。
  * 坏条目跳过但记进 invalid —— 静默丢弃会让"补料登记了却仍报数字违规"变成悬案。
  * @param {any} raw
@@ -96,7 +120,7 @@ export function normalizeSupplementFile(raw) {
       invalid.push({ url: String(item?.url ?? ''), reason: error instanceof Error ? error.message : String(error) });
     }
   }
-  return { entries, invalid };
+  return { entries, invalid, candidate: normalizeCandidateMeta(raw?.candidate) };
 }
 
 /**
@@ -139,15 +163,26 @@ export function collectSupplementEvidence(entries, opts = {}) {
  * 草稿时，check 已经找不到当初那个 cluster，候选来源不再自动进证据边界。写之前
  * 先固化一份，来源就跟着草稿走（promote 时还会一起搬到文章目录）。
  *
- * @param {{ addSupplement: (slug: string, input: any) => Promise<any> }} target
+ * @param {{ addSupplement: (slug: string, input: any) => Promise<any>, writeCandidateMeta?: Function }} target
  * @param {string} slug
  * @param {Array<{ url?: string, title?: string, source?: string }>} sources
  * @param {Array<{ url?: string, content?: string }>} [raw]
+ * @param {{ id?: string, url?: string }} [candidate] 候选本体，提供时顺便记下 meta
  */
-export async function registerCandidateSources(target, slug, sources, raw = []) {
+export async function registerCandidateSources(target, slug, sources, raw = [], candidate = null) {
   const registered = [];
   const failed = [];
   const raws = Array.isArray(raw) ? raw : [];
+
+  // 先记 meta：即使下面每条正文都没留存，check 也还能按 id 找回候选来源，
+  // 不至于退化成「不知道这篇是哪条候选」。
+  if (candidate?.id && typeof target.writeCandidateMeta === 'function') {
+    await target.writeCandidateMeta(slug, {
+      id: candidate.id,
+      url: candidate.url,
+      sources: (Array.isArray(sources) ? sources : []).map((source) => source?.url),
+    });
+  }
 
   for (const source of Array.isArray(sources) ? sources : []) {
     const url = canonicalUrl(source?.url);

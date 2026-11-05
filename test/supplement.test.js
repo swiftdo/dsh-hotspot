@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -202,4 +202,36 @@ test('一键登记候选来源：空来源与空 raw 不炸', async () => {
   const noRaw = await registerCandidateSources(target, 'demo', [{ url: 'https://a.com/x' }], []);
   assert.equal(noRaw.registered.length, 0);
   assert.equal(noRaw.failed.length, 1);
+});
+
+test('补料写回时保留 candidate 记录（否则每加一条补料就把候选抹掉）', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hotspot-supp-'));
+  try {
+    const target = createVitePressTarget({ root, articleDir: 'docs/article', draftDir: 'docs/draft' });
+    await mkdir(path.join(root, 'docs/draft/hello'), { recursive: true });
+    await writeFile(
+      path.join(root, 'docs/draft/hello/index.md'),
+      '---\ntitle: Hello\nsitemap: false\n---\n\n正文',
+      'utf8',
+    );
+
+    const written = await target.writeCandidateMeta('hello', {
+      id: 'h-20261105-03',
+      url: 'https://swift.org/blog/a/',
+      sources: ['https://swift.org/blog/a/'],
+    });
+    assert.ok(written, '应写入 candidate 记录');
+
+    await target.addSupplement('hello', { url: 'https://github.com/x/y', content: 'v6.1.3' });
+
+    const read = await target.readSupplements('hello');
+    assert.equal(read.entries.length, 1);
+    assert.equal(read.candidate.id, 'h-20261105-03');
+    assert.deepEqual(read.candidate.sources, ['https://swift.org/blog/a']);
+
+    const raw = JSON.parse(readFileSync(path.join(root, 'docs/draft/hello/sources.json'), 'utf8'));
+    assert.equal(raw.candidate.id, 'h-20261105-03', '落盘文件里也要有 candidate');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
