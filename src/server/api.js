@@ -231,7 +231,20 @@ export function createRoutes(deps) {
   }
 
   /**
-   * 起一个后台写作任务：子代理在后台「搜 → 读 → 综合」，写盘后立刻复核。
+   * 面板上两个最费劲的流程是「生成草稿」与「重新写正文」——它们失败时往往只有一条
+   * toast，用户回头想复现却什么线索都没有。这里把失败原因连同 code / 候选 / slug
+   * 一起记进错误日志；日志写不进去也不影响响应。
+   */
+  async function noteFailure(source, message, extra = {}) {
+    try {
+      await deps.logError?.({ source, message, ...extra });
+    } catch {
+      /* 诊断设施不能影响主流程 */
+    }
+  }
+
+  /**
+   * 起一个后台写作任务：在后台「读素材 → 写正文」，写盘后立刻复核。
    * 三个入口（建草稿后自动写、面板重试、以后可能的定时任务）共用这一段。
    */
   function startWriteJob({ slug, target, store, projectRoot, message = '正在写正文' }) {
@@ -421,10 +434,12 @@ export function createRoutes(deps) {
         }
         const slug = String(body?.slug ?? '').trim();
         if (!slug) {
+          await noteFailure('writer-sync', '重试写正文缺少 slug', { code: 'ERR_SLUG_REQUIRED' });
           sendJson(res, 400, { ok: false, message: '缺少必需字段 slug' });
           return;
         }
         if (!currentTarget) {
+          await noteFailure('writer-sync', '尚未配置博客项目根目录', { code: 'ERR_NO_BLOG_ROOT', slug });
           sendJson(res, 400, {
             ok: false,
             code: 'ERR_NO_BLOG_ROOT',
@@ -441,15 +456,21 @@ export function createRoutes(deps) {
             message: '正在重试写正文',
           });
           if (!job) {
+            await noteFailure('writer-sync', '当前环境没有接入 llm 服务，无法重试写正文', { code: 'ERR_NO_WRITER', slug });
             sendJson(res, 501, {
               ok: false,
               code: 'ERR_NO_WRITER',
-              message: '当前环境没有接入写作子代理，无法重试',
+              message: '当前环境没有接入 llm 服务，无法重试',
             });
             return;
           }
           sendJson(res, 200, { ok: true, value: job, job });
         } catch (error) {
+          // 同一篇已经在写（ERR_JOB_BUSY）也算一次「点了没成功」，记下来便于对时间线
+          await noteFailure('writer-sync', `重试写正文没起来：${error?.message ?? error}`, {
+            code: error?.code || 'ERR_JOB',
+            slug,
+          });
           sendJson(res, 409, { ok: false, ...jobError(error) });
         }
       },
@@ -742,6 +763,7 @@ export function createRoutes(deps) {
         }
 
         if (!targetRoot || !effectiveTarget) {
+          await noteFailure('scaffold', '未配置博客项目路径，无法建草稿', { code: 'ERR_NO_BLOG_ROOT', context: { id: body?.id } });
           return sendJson(res, 400, {
             ok: false,
             code: 'ERR_NO_BLOG_ROOT',
@@ -755,6 +777,10 @@ export function createRoutes(deps) {
         const requestedSlug = body.slug == null ? '' : String(body.slug).trim();
         const slug = requestedSlug || item.slugHint || slugify(item.title);
         if (!slug) {
+          await noteFailure('scaffold', '候选标题推导不出目录名', {
+            code: 'ERR_SLUG_REQUIRED',
+            context: { id: item?.id, title: item?.title },
+          });
           sendJson(res, 400, {
             ok: false,
             code: 'ERR_SLUG_REQUIRED',
@@ -764,6 +790,7 @@ export function createRoutes(deps) {
           return;
         }
         if (!/^[a-z0-9-]+$/.test(slug)) {
+          await noteFailure('scaffold', `slug 不合法：${slug}`, { code: 'ERR_SLUG_INVALID', slug });
           sendJson(res, 400, {
             ok: false,
             code: 'ERR_SLUG_INVALID',
@@ -772,13 +799,17 @@ export function createRoutes(deps) {
           return;
         }
         if (body.title != null && !String(body.title).trim()) {
+          await noteFailure('scaffold', '标题是空的', { code: 'ERR_TITLE_EMPTY', slug });
           sendJson(res, 400, { ok: false, code: 'ERR_TITLE_EMPTY', message: '标题不能是空的' });
           return;
         }
 
         try {
           const existing = await effectiveTarget.exists(item);
-          if (existing.exists) return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
+          if (existing.exists) {
+            await noteFailure('scaffold', `已经写过：${existing.reason}`, { code: 'ERR_ALREADY_WRITTEN', slug });
+            return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
+          }
           const result = await effectiveTarget.scaffold(item, {
             draft: true,
             slug,
@@ -803,6 +834,10 @@ export function createRoutes(deps) {
             });
           } catch (error) {
             // 草稿已经建好了，任务起不来也要把这件事说清楚，不能回 500 让前端以为草稿没建。
+            await noteFailure('writer', `草稿已建，但写作任务没起来：${error?.message ?? error}`, {
+              code: error?.code || 'ERR_JOB',
+              slug: result.slug,
+            });
             sendJson(res, 409, { ok: false, ...jobError(error), value: result });
             return;
           }
@@ -811,7 +846,7 @@ export function createRoutes(deps) {
             ok: true,
             value: result,
             job,
-            message: job ? '草稿已建，正文在后台写' : '草稿已建，但当前环境没有接入写作子代理，正文待补',
+            message: job ? '草稿已建，正文在后台写' : '草稿已建，但当前环境没有接入 llm 服务，正文待补',
           });
         } catch (error) {
           await deps.logError?.({ source: 'scaffold', error, context: { id: body?.id } });
@@ -1155,6 +1190,7 @@ export function createRoutes(deps) {
       handler: async (req, res) => {
         if (!guard(req, res, ['POST'])) return;
         if (typeof deps.generate !== 'function') {
+          await noteFailure('writer-sync', '当前环境没有接入 llm 服务，无法生成正文', { code: 'ERR_NO_WRITER' });
           sendJson(res, 501, {
             ok: false,
             code: 'ERR_NO_WRITER',
@@ -1180,6 +1216,7 @@ export function createRoutes(deps) {
         }
         const slug = String(body?.slug ?? '').trim();
         if (!slug) {
+          await noteFailure('writer-sync', '缺少必需字段 slug', { code: 'ERR_SLUG_REQUIRED' });
           sendJson(res, 400, { ok: false, error: '缺少必需字段 slug' });
           return;
         }

@@ -47,7 +47,10 @@ const WITH_HINT = { ...CHINESE_ONLY, title: 'Swift 6.2 released', slugHint: 'swi
 
 function makeDeps({ candidate = CHINESE_ONLY, scaffolded = [] } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'hotspot-api-scaffold-'));
+  const errors = [];
   const deps = {
+    // 生成草稿的失败都要进错误日志
+    logError: async (input) => { errors.push(input); },
     projectRoot: root,
     store: {
       async loadDigest() {
@@ -76,7 +79,7 @@ function makeDeps({ candidate = CHINESE_ONLY, scaffolded = [] } = {}) {
     },
     runScan: async () => ({ digest: null, status: {} }),
   };
-  return { deps, root, scaffolded, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { deps, root, scaffolded, errors, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 async function callScaffold(deps, body) {
@@ -87,13 +90,16 @@ async function callScaffold(deps, body) {
 }
 
 test('纯中文标题推导不出 slug：回 400 ERR_SLUG_REQUIRED，并带回标题供面板预填', async () => {
-  const { deps, scaffolded, cleanup } = makeDeps();
+  const { deps, scaffolded, errors, cleanup } = makeDeps();
   try {
     const out = await callScaffold(deps, { id: '#1' });
     assert.equal(out.status, 400);
     assert.equal(out.json().code, 'ERR_SLUG_REQUIRED');
     assert.equal(out.json().value.title, '苹果发布新芯片');
     assert.equal(scaffolded.length, 0, '不该先建半截草稿再报错');
+    assert.equal(errors.length, 1, '生成草稿失败要进错误日志');
+    assert.equal(errors[0].source, 'scaffold');
+    assert.equal(errors[0].code, 'ERR_SLUG_REQUIRED');
   } finally {
     cleanup();
   }
@@ -123,7 +129,7 @@ test('传了 slug 就能建：title / description 透传给 scaffold', async () 
 });
 
 test('slugHint 能推导时不需要面板再传', async () => {
-  const { deps, scaffolded, cleanup } = makeDeps({ candidate: WITH_HINT });
+  const { deps, scaffolded, errors, cleanup } = makeDeps({ candidate: WITH_HINT });
   try {
     const out = await callScaffold(deps, { id: '#1' });
     assert.equal(out.status, 200);
@@ -135,11 +141,12 @@ test('slugHint 能推导时不需要面板再传', async () => {
 });
 
 test('slug 不合法或标题为空时回 400，不写草稿', async () => {
-  const { deps, scaffolded, cleanup } = makeDeps({ candidate: WITH_HINT });
+  const { deps, scaffolded, errors, cleanup } = makeDeps({ candidate: WITH_HINT });
   try {
     const bad = await callScaffold(deps, { id: '#1', slug: '中文目录' });
     assert.equal(bad.status, 400);
     assert.equal(bad.json().code, 'ERR_SLUG_INVALID');
+    assert.equal(errors.at(-1).code, 'ERR_SLUG_INVALID', '非法 slug 也记');
 
     const emptyTitle = await callScaffold(deps, { id: '#1', slug: 'ok-slug', title: '   ' });
     assert.equal(emptyTitle.status, 400);

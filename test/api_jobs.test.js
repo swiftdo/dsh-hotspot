@@ -64,8 +64,11 @@ async function settle(jobs, slug, timeoutMs = 2000) {
 function makeDeps(overrides = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'hotspot-jobs-api-'));
   const generated = [];
+  const errors = [];
   const jobs = createJobRunner();
   const deps = {
+    // 生成草稿 / 重写正文的失败都要进错误日志
+    logError: async (input) => { errors.push(input); },
     projectRoot: root,
     store: {
       async loadDigest() {
@@ -106,7 +109,7 @@ function makeDeps(overrides = {}) {
     runScan: async () => ({ digest: null, status: {} }),
     ...overrides,
   };
-  return { deps, jobs, generated, root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { deps, jobs, generated, errors, root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 test('generate:true 建完草稿后在后台起任务，接口立刻返回 running', async () => {
@@ -176,7 +179,7 @@ test('GET /api/jobs 支持按 slug 过滤，state 里也带任务列表', async 
 });
 
 test('同一篇正在写时再点重试回 409 ERR_JOB_BUSY', async () => {
-  const { deps, jobs, cleanup } = makeDeps();
+  const { deps, jobs, errors, cleanup } = makeDeps();
   try {
     let release;
     const gate = new Promise((resolve) => {
@@ -196,6 +199,8 @@ test('同一篇正在写时再点重试回 409 ERR_JOB_BUSY', async () => {
     await route.handler(second.req, second.res);
     assert.equal(second.result().status, 409);
     assert.equal(second.result().json().code, 'ERR_JOB_BUSY');
+    assert.equal(errors.at(-1).code, 'ERR_JOB_BUSY', '重试被挡下也要记一条');
+    assert.equal(errors.at(-1).slug, 'swift-6-2');
 
     release();
     const done = await settle(jobs, 'swift-6-2');
@@ -261,3 +266,23 @@ test('POST /api/jobs/cancel：取消在跑的任务，再取消回 404', async (
   }
 });
 
+
+test('写作任务失败会进错误日志（source=writer，带 slug）', async () => {
+  const { deps, jobs, errors, cleanup } = makeDeps();
+  try {
+    deps.generate = async () => {
+      throw new Error('模型没有返回正文');
+    };
+    const route = createRoutes(deps).find((r) => r.path === '/dsh-hotspot/api/jobs');
+    const started = mockReqRes('POST', '/dsh-hotspot/api/jobs', { slug: 'swift-6-2' });
+    await route.handler(started.req, started.res);
+    await settle(jobs, 'swift-6-2');
+
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].source, 'writer');
+    assert.equal(errors[0].slug, 'swift-6-2');
+    assert.match(errors[0].error?.message ?? '', /模型没有返回正文/);
+  } finally {
+    cleanup();
+  }
+});
