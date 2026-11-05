@@ -105,15 +105,17 @@ sequenceDiagram
   T->>B: sources.json 追加一条（正文 ≤ 4000 字）
 
   U->>T: hotspot_scaffold 3（slug=my-post，body=写好的正文）
-  T->>B: 写 docs/draft/my-post/index.md（正文随草稿落盘，sitemap: false）
+  T->>B: 写 index.md + sources.json（记下 candidate.id），sitemap: false
 
-  U->>T: hotspot check my-post
+  U->>T: hotspot_check my-post（改稿走 hotspot_write，写完自动复核）
   T->>B: 读正文 + 一手源 + 补料
-  T-->>U: 三道检查 + frontmatter 结果
+  T-->>U: 三道检查 + frontmatter 结果，违规逐条列出
 
-  U->>T: hotspot promote my-post
-  T->>B: 搬到文章目录，删 sitemap: false，sources.json 一起搬
+  U->>T: hotspot_promote my-post
+  T->>B: 再过一次闸门 → 搬到文章目录，删 sitemap: false，sources.json 一起搬
 ```
+
+CLI 里对应 `hotspot check` / `hotspot promote`，面板里对应「转正」按钮 —— 三处走的是同一段 `src/core/promote.js`。
 
 每步落在磁盘上的东西，决定了下一步能看到什么：
 
@@ -121,7 +123,8 @@ sequenceDiagram
 |---|---|---|
 | `run` | `.hotspot/digest/*.json`、`.hotspot/raw/*.json` | `check` 要拿一手源原文比数字 |
 | `get --registerSlug` | `<draftDir>/<slug>/sources.json` | digest 按天滚动，隔天 latest 里已无该 cluster，来源会丢 |
-| `scaffold` | `<draftDir>/<slug>/index.md` | frontmatter 由程序生成；传 `body` 时正文一起落盘，不传才写占位 |
+| `scaffold` | `<draftDir>/<slug>/index.md`、`sources.json` 的 `candidate` | frontmatter 由程序生成；传 `body` 时正文一起落盘；`candidate.id` 是 `check` 定位证据的唯一依据 |
+| `write` | 同一个 `index.md`（保留 frontmatter） | 改稿是迭代的：scaffold 只能建一次，改正文走 `hotspot_write` |
 | `supplement` | 同一个 `sources.json` | 补料是**证据账本**，不是笔记 |
 | `promote` | `<articleDir>/<slug>/{index.md,sources.json}` | 转正后仍要答得出「这段数字从哪读来的」 |
 
@@ -150,6 +153,12 @@ flowchart TD
 
 「证据边界」是三层叠加的：**候选源原文**（digest + raw）、**已登记的补料**（`sources.json`）、**配置里的 `publish.allowedHosts`**。闸门不会因为 `--allow` 变松——它只会因为「你真的读过」而变宽。
 
+有三件事是这版才硬起来的：
+
+- **`promote` 必须过闸**。CLI、面板「转正」、`hotspot_promote` 三处都走 `src/core/promote.js`，违规就拒绝，草稿留在 `docs/draft/`。没有 force 开关。
+- **候选定位不再靠猜**。`scaffold` 把 `candidate.id` 写进 `sources.json`；`check` 按 id 在最近 14 天的 digest 里找回它当时所在的那份，证据取自**那一天**的 raw。定位不到就判 `candidate-unresolved` —— 以前会退化成「当天全部原文都是证据」，等于没有数字闸门。
+- **中文标题不再漏闸**。老实现靠 `slugHint` 或标题反查候选，中文标题两条都匹配不上，于是走了上面那条宽松路径。现在有 `candidate.id` 就不再依赖标题。
+
 ## 快速开始
 
 在**你的博客仓库根目录**下跑（`--root` 就是博客项目路径，不是本仓库）：
@@ -162,7 +171,7 @@ node src/cli.js run                          # 落 .hotspot/digest/YYYY-MM-DD.{j
 node src/cli.js scaffold '#3' --body-file post.md  # 一次成型：正文随草稿落盘（省略 --body-file 只写骨架）
 node src/cli.js supplement <slug> --url <页面> --file <正文>  # 联网补到的证据，登记后 check 才认
 node src/cli.js check <slug>                 # 三道机械校验
-node src/cli.js promote <slug>               # 转到文章目录，去掉 sitemap:false
+node src/cli.js promote <slug>               # 过闸后转到文章目录，去掉 sitemap:false（违规就拒绝）
 node src/cli.js publish <slug> --yes         # 校验 → 构建 → 只提交这一篇 → 推送 → 部署
 node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 每个源 / DSH 安装状态
 ```
@@ -186,7 +195,7 @@ node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 
 ```text
 [dsh-hotspot] dsh-hotspot: 插件已加载，projectRoot=/path/to/blog
 [dsh-hotspot] tools 服务就绪=true
-[dsh-hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
+[dsh-hotspot] 已注册 7 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement / hotspot_check / hotspot_promote / hotspot_write
 [dsh-hotspot] 已注册 N 条路由，管理页 /dsh-hotspot/
 ```
 
@@ -220,7 +229,7 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 
 两处配套，省掉手工登记：
 
-- **`hotspot_get` 带 `registerSlug`**：把该候选的多源原文一次性登记成补料。digest 按天滚动，隔天再写这篇草稿时 `latest` 里已经没有这个 cluster，check 也就不再自动认它的来源——写之前先固化一份。
+- **`hotspot_get` 带 `registerSlug`**：把该候选的多源原文一次性登记成补料，并把 `candidate.id` 记进 `sources.json`。digest 按天滚动，隔天再写这篇草稿时 `latest` 里已经没有这个 cluster——写之前先固化一份，check 才能按 id 找回当时的证据。
 - **面板里的证据条**：打开草稿/文章的「预览与修改」后，正文上方有一条 `📎 证据 N 条`，展开可看每条补料的标题、类型、字数与正文摘要。转正后这条也还在，因为 sources.json 跟着一起搬走了。
 
 ### 面板里一键写正文
@@ -400,7 +409,7 @@ flowchart TB
 |---|---|---|
 | `cordis.patch.yml` 的 `config` | `apply` 入参，启动时 | `projectRoot` / `articleDir` / `draftDir` / `digestDir` / `limit` / `verbose` |
 | 工作区根目录的 `dsh-hotspot.config.json` 或 `hotspot.config.json` | 启动时读一次（`projectRoot` 为空则整段跳过） | `projectRoot` 及其 `digestDir` / `articleDir` / `draftDir` |
-| 面板「设置」页 | 运行时，走 `onConfigUpdated → updateRuntime` | `projectRoot` / 目录名 / `digestDir`（rank、publish 写回配置文件，下次启动生效） |
+| 面板「设置」页 | 运行时，走 `onConfigUpdated → updateRuntime` | `projectRoot` / 目录名 / `digestDir`（rank、publish 写回配置文件；`rank.limit` 当场对下一次 `hotspot_run` 生效） |
 | 工具参数 `projectRoot` | 单次调用 | 临时指定另一份博客仓库，不改全局状态 |
 
 优先级从上到下**后者覆盖前者**（工具参数只影响那一次调用）。
@@ -410,29 +419,38 @@ flowchart TB
 - **缺省文章目录不同**。插件侧 `articleDir` 缺省 `docs`（最早只服务「文章直接放 `docs/` 下」这种布局），而 CLI 走适配器默认值 `docs/article`（`src/adapters/target-vitepress.js` 里的 `config.articleDir ?? 'docs/article'`）。插件的默认值会盖掉适配器的默认值，所以同一个仓库在插件里和 CLI 里可能指向不同目录——配置里显式写死 `articleDir` 就没有歧义。
 - **配置键不同**。插件读顶层的 `articleDir` / `draftDir` / `digestDir`，CLI 读 `target.articleDir` / `target.draftDir`。两个键写在同一个文件里，各读各的。
 
+候选上限的优先级是 `工具参数 limit > 项目配置 rank.limit > cordis.patch.yml 的 limit`。早期版本把 `config.limit` 写在前面，而 patch 里默认就有 `limit: 15`，于是面板里改的上限永远不生效——现在按上面这个顺序解析。
+
 ### 没配置博客目录时会怎样
 
 `projectRoot` 为空或路径不存在 → 进入**未绑定状态**：`target = null`。
 
 | 能力 | 未绑定时的行为 |
 |---|---|
-| `hotspot_run` | 照常跑，但画像为空（没有 tag 词表、没有关键词加权），排序只剩新鲜度与源数 |
-| `hotspot_get` | 照常读 digest；带 `registerSlug` 会返回「尚未配置博客项目根目录」 |
-| `hotspot_scaffold` / `hotspot_supplement` | 返回同一条提示，不抛异常 |
+| `hotspot_run` | 照常跑，但画像为空（没有 tag 词表、没有关键词加权），排序只剩新鲜度与源数；**digest 只落在进程内存里**，返回 `persisted: false` |
+| `hotspot_get` | 读同一份内存 digest（本次会话内能读，重启就没了）；带 `registerSlug` 会返回「尚未配置博客项目根目录」 |
+| `hotspot_scaffold` / `hotspot_supplement` / `hotspot_check` / `hotspot_promote` / `hotspot_write` | 返回同一条提示，不抛异常 |
 | 面板 | 能开，能在「设置」里填路径，填完立即生效 |
 
-刻意的取舍：**没有默认目录**。猜一个 `~/blog` 然后往里面写文件，比明确报错糟糕得多。
+刻意的取舍：**没有默认目录**。猜一个 `~/blog` 或者往宿主进程的 cwd 写 `.hotspot/`，比明确报错糟糕得多——所以在未绑定时抓取照常进行，只是不落盘。
 
-### 四个工具
+### 七个工具
 
 | 工具 | 参数 | 读 | 写 |
 |---|---|---|---|
-| `hotspot_run` | `limit?` | 配置文件里的 sources | `.hotspot/digest/*.json`、`.hotspot/raw/*.json` |
+| `hotspot_run` | `limit?` | 配置文件里的 sources | `.hotspot/digest/*.json`、`.hotspot/raw/*.json`（未绑定时不写） |
 | `hotspot_get` | `id`、`registerSlug?` | digest + raw | 仅当传 `registerSlug`：`<draftDir>/<slug>/sources.json` |
-| `hotspot_scaffold` | `id`、`slug?`、`title?`、`description?`、`body?`、`projectRoot?` | digest | `<draftDir>/<slug>/index.md` |
-| `hotspot_supplement` | `slug`、`url`、`title?`、`content?`、`kind?`、`projectRoot?` | `sources.json` | 同文件追加/覆盖 |
+| `hotspot_scaffold` | `id`、`slug?`、`title?`、`description?`、`body?`、`projectRoot?` | digest | `<draftDir>/<slug>/index.md` + `sources.json` 的 `candidate` |
+| `hotspot_supplement` | `slug`、`url`、`title?`、`content?`、`kind?`、`projectRoot?` | `sources.json` | 同文件追加/覆盖（保留 `candidate`） |
+| `hotspot_check` | `slug`、`projectRoot?` | 正文 + 一手源 + 补料 | — |
+| `hotspot_promote` | `slug`、`projectRoot?` | 同上 | `<articleDir>/<slug>/{index.md,sources.json}` |
+| `hotspot_write` | `slug`、`body`、`projectRoot?` | 已有草稿 | 覆盖正文（保留 frontmatter），写完立刻复核 |
 
-`hotspot_get` 是唯一「读的时候可能写」的工具，因为 digest 按天滚动：隔天写同一篇草稿时，latest 里已经没有那个 cluster，`check` 也就不再认它的来源。写正文前用 `registerSlug` 把证据固化一次，是最省事的做法。
+三件事值得单独说：
+
+- **`scaffold` 只能建一次，改稿走 `write`**。草稿已存在时 `scaffold` 会拒绝并提示改用 `hotspot_write` —— 早期版本这里没有出口，agent 拿到违规清单后只能请人去面板改。
+- **`promote` 必须过闸**。它内部就是 `checkDraft` → `target.promote`，违规就拒绝、草稿留在原处。没有 force 开关：要放行只有改稿或登记补料两条正路。
+- **`hotspot_get` 是唯一「读的时候可能写」的工具**，因为 digest 按天滚动：隔天写同一篇草稿时，latest 里已经没有那个 cluster。`registerSlug` 会把该候选的来源原文登记成补料，**同时**把 `candidate.id` 写进 `sources.json`，写正文前先固化一次是最省事的做法。
 
 ### 路由与面板
 
@@ -448,7 +466,7 @@ flowchart TB
 
 `src/plugin.js` 是薄壳（结构见上一节）：把 core 的端口接上 `ctx`，然后就没它的事了。
 
-**已在真实运行时验证**（DeepSeek Harness 0.2.1-rc.5，`dsh web --port 0`）：apply 执行、`tools` 服务就绪、四个工具注册成功。
+**已在真实运行时验证**（DeepSeek Harness 0.2.1-rc.5，`dsh web --port 0`）：apply 执行、`tools` 服务就绪、工具注册成功。
 
 接口是从已安装插件的源码里读出来的，不是猜的：
 
@@ -512,7 +530,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 ```text
 [dsh-hotspot] dsh-hotspot: 插件已加载，projectRoot=...
 [dsh-hotspot] tools 服务就绪=true
-[dsh-hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
+[dsh-hotspot] 已注册 7 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement / hotspot_check / hotspot_promote / hotspot_write
 ```
 
 ## 管理界面
@@ -561,7 +579,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿 |
 | GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
 | POST | `/hotspot/api/article` | 保存正文 |
-| POST | `/hotspot/api/article-promote` | 草稿转正 |
+| POST | `/hotspot/api/article-promote` | 草稿转正（过闸；违规回 409 `ERR_CHECK_FAILED` + 违规清单） |
 | POST | `/hotspot/api/deploy` | 按 `deploy.build` → `deploy.script` 顺序执行（未绑定 → 400，已在跑 → 409），返回分步退出码与输出，并落一条部署历史 |
 | GET | `/hotspot/rss.xml` | 今日候选（前）+ 今日订阅文章（后）的 RSS 2.0 订阅源，`content-type: application/rss+xml` |
 
@@ -576,4 +594,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
+- **`promote` 是硬闸门，没有 force**。要放行只有两条路：把正文改到证据边界内，或把真正读过的页面登记成补料。MCP/宿主级强行改文件当然绕过它——闸门防的是流程上的惯性，不是防有磁盘权限的人。
+- **同一天重跑 `run` 会覆盖当天 digest**（`<date>.json` 与 `latest.json`），候选 id `h-YYYYMMDD-NN` 会按新排序重新分配。草稿不受影响（它记的是 `candidate.id`，check 按 id 往回找），但**对话里的「#3」会指向新的第三条**。
+- **`hotspot_write` 不建草稿**。它只往已有草稿写正文；没有草稿就先 `hotspot_scaffold`。
 - **digest 不进版本库**（`.hotspot/` 已 gitignore）。它是过程产物；真正要留痕的判断应该写进文章或 commit message。
