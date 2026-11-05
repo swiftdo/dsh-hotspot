@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { renderMarkdown } from '../core/digest.js';
 
@@ -65,6 +65,46 @@ export function createFsStore(config) {
       const files = (await readdir(digestDir)).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().reverse();
       const picked = files.slice(0, limit);
       return Promise.all(picked.map(async (f) => JSON.parse(await readFile(path.join(digestDir, f), 'utf8'))));
+    },
+
+    /**
+     * 清理过期的 digest 与 raw。
+     *
+     * 为什么要有：raw 存的是每个源的完整正文（每条 ≤4000 字），一天几 MB 很正常，
+     * 而 `check` 只往回找最近 14 天的候选 —— 更早的原文除了占磁盘没有别的用途。
+     *
+     * 只删 `YYYY-MM-DD.json|md` 这种按日期命名的文件：`latest.*`、`writer/`、
+     * `jobs/`、`deploy-history.json` 都不动（它们是当前状态，不是历史）。
+     *
+     * @param {{ keepDays?: number, now?: Date }} [options]
+     * @returns {Promise<string[]>} 被删掉的文件名（相对 digestDir）
+     */
+    async prune({ keepDays = 30, now = new Date() } = {}) {
+      const keep = Number(keepDays);
+      if (!Number.isFinite(keep) || keep <= 0) return [];
+      const cutoff = new Date(now.getTime() - keep * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const removed = [];
+
+      for (const [folder, pattern] of [[digestDir, /^(\d{4}-\d{2}-\d{2})\.(json|md)$/], [rawDir, /^(\d{4}-\d{2}-\d{2})\.json$/]]) {
+        let names = [];
+        try {
+          names = await readdir(folder);
+        } catch {
+          continue;
+        }
+        for (const name of names) {
+          const matched = name.match(pattern);
+          if (!matched) continue;
+          if (matched[1] >= cutoff) continue;
+          try {
+            await rm(path.join(folder, name), { force: true });
+            removed.push(path.relative(dir, path.join(folder, name)));
+          } catch {
+            /* 删不掉的留到下次，不影响本次抓取 */
+          }
+        }
+      }
+      return removed;
     },
 
     async loadState(name, fallback) {

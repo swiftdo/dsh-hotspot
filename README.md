@@ -670,6 +670,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
+- **`.hotspot/raw` 会自动清理**。每次抓取结束后删掉超过 `store.keepDays`（默认 30 天）的 digest 与 raw，`latest.*` / `writer/` / `jobs/` / 部署历史都不动。`check` 只往回找 14 天，30 天够用；要留更久就把它调大。
 - **`promote` 是硬闸门，没有 force**。要放行只有两条路：把正文改到证据边界内，或把真正读过的页面登记成补料。MCP/宿主级强行改文件当然绕过它——闸门防的是流程上的惯性，不是防有磁盘权限的人。
 - **同时只允许一次抓取**。两次并发 run 会互相覆盖当天的 digest 与 raw，所以入口用单飞挡掉：第二次直接回 409 `ERR_SCAN_BUSY`，不排队——排队会把「点两下」变成「跑两次」。
 - **同一天重跑 `run` 会覆盖当天 digest**（`<date>.json` 与 `latest.json`），候选 id `h-YYYYMMDD-NN` 会按新排序重新分配。草稿不受影响（它记的是 `candidate.id`，check 按 id 往回找），但**对话里的「#3」会指向新的第三条**。

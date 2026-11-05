@@ -149,7 +149,9 @@ async function cmdInit() {
 }
 
 async function buildPipeline(target, store, rank) {
-  const config = JSON.parse(await readFile(path.join(cwd, 'hotspot.config.json'), 'utf8'));
+  const file = configFileIn();
+  if (!file) fail('找不到 dsh-hotspot.config.json 或 hotspot.config.json，先跑 hotspot init');
+  const config = JSON.parse(await readFile(file, 'utf8'));
   if (!Array.isArray(config.sources) || config.sources.length === 0) {
     fail('config.sources 是空的，先填几个源');
   }
@@ -202,7 +204,14 @@ async function cmdRun() {
     log('排序依据：3.0×log2(1+源数) + 1.5×新鲜度 + 2.0×关键词命中 − 5.0×黑名单');
   }
 
-  if (!dryRun) log(`\n→ ${path.relative(cwd, outPath)}`);
+  if (!dryRun) {
+    log(`\n→ ${path.relative(cwd, outPath)}`);
+    // 顺手清掉过期的 digest / raw：raw 是完整正文，留太多只会占磁盘
+    if (typeof store.prune === 'function') {
+      const removed = await store.prune({ keepDays: config.store?.keepDays ?? 30 }).catch(() => []);
+      if (removed.length > 0) log(`  已清理 ${removed.length} 个过期文件（保留最近 ${config.store?.keepDays ?? 30} 天）`);
+    }
+  }
   if (s.degraded) {
     log('\n✖ 存活源不足一半，这份候选不可信，不要据此发布');
     process.exitCode = 2;

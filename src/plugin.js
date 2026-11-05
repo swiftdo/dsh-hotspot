@@ -232,6 +232,15 @@ export function apply(ctx, config = {}) {
       sinceHours: projectConfig.rank?.sinceHours ?? 36,
       clusterThreshold: projectConfig.rank?.clusterThreshold ?? 0.6,
     });
+    // 抓完顺手清掉过期的 digest / raw（raw 是完整正文，一天几 MB）
+    if (typeof activeStore().prune === 'function') {
+      try {
+        await activeStore().prune({ keepDays: projectConfig.store?.keepDays ?? config.keepDays ?? 30 });
+      } catch {
+        /* 清理失败不影响本次抓取 */
+      }
+    }
+
     return { ...result, persisted: bound, projectRoot };
   }
 
