@@ -1603,6 +1603,290 @@ window.__ModuleLoader__.load({
         color: #8c909e;
       }
 
+      /* ── 博客正文查看：按站点暗色主题的排版近似渲染 ──────────────
+         数值对着站点自己的版式令牌（docs/.vitepress/theme/custom.css：
+         40rem 行宽、16px 正文、1.8 行高、h2 1.5rem / h3 1.1875rem）。
+         目的不是像素级还原，而是「结构对不对」一眼看得出来。 */
+      .hs-bp-modal {
+        display: flex;
+        flex-direction: column;
+        width: 900px;
+        max-width: 94vw;
+        max-height: 88vh;
+        background: #16161a;
+        border: 1px solid #2e2e32;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.65);
+      }
+      .hs-bp-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 20px;
+        border-bottom: 1px solid #2e2e32;
+        background: #1b1b1f;
+      }
+      .hs-bp-header-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #dfdfd6;
+      }
+      .hs-bp-header-sub {
+        font-size: 11px;
+        color: #8c909e;
+        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hs-bp-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 40px 40px 56px;
+      }
+      .hs-bp {
+        max-width: 40rem;
+        margin: 0 auto;
+        font-size: 16px;
+        line-height: 1.8;
+        letter-spacing: 0.012em;
+        color: rgba(255, 255, 245, 0.86);
+        word-break: break-word;
+      }
+      .hs-bp-title {
+        margin: 0 0 12px;
+        font-size: 2rem;
+        line-height: 1.22;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: #dfdfd6;
+      }
+      .hs-bp-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+        margin: 0 0 32px;
+        font-size: 12.5px;
+        color: rgba(235, 235, 245, 0.6);
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-bp-tag {
+        padding: 2px 8px;
+        border: 1px solid #2e2e32;
+        border-radius: 999px;
+        font-size: 11.5px;
+      }
+      .hs-bp h1,
+      .hs-bp h2,
+      .hs-bp h3,
+      .hs-bp h4,
+      .hs-bp h5,
+      .hs-bp h6 {
+        color: #dfdfd6;
+        letter-spacing: -0.014em;
+        scroll-margin-top: 80px;
+      }
+      .hs-bp h2 {
+        margin: 48px 0 16px;
+        font-size: 1.5rem;
+        line-height: 1.35;
+        font-weight: 600;
+      }
+      .hs-bp h2::before {
+        content: "";
+        display: block;
+        width: 2.25rem;
+        height: 1px;
+        margin-bottom: 16px;
+        background: rgba(255, 255, 255, 0.24);
+      }
+      .hs-bp h3 {
+        margin: 36px 0 12px;
+        font-size: 1.1875rem;
+        line-height: 1.5;
+        font-weight: 600;
+      }
+      .hs-bp h4 {
+        margin: 28px 0 10px;
+        font-size: 1.0625rem;
+        font-weight: 600;
+      }
+      .hs-bp p {
+        margin: 20px 0;
+        line-height: 1.8;
+      }
+      .hs-bp a {
+        color: #a8b1ff;
+        text-decoration: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+        text-decoration-color: rgba(168, 177, 255, 0.45);
+      }
+      .hs-bp a:hover {
+        text-decoration-color: currentColor;
+      }
+      .hs-bp strong {
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .hs-bp ul,
+      .hs-bp ol {
+        margin: 20px 0;
+        padding-left: 1.5rem;
+      }
+      .hs-bp li {
+        margin: 8px 0;
+        line-height: 1.8;
+      }
+      .hs-bp li::marker {
+        color: rgba(235, 235, 245, 0.38);
+      }
+      .hs-bp li > ul,
+      .hs-bp li > ol {
+        margin: 8px 0 0;
+      }
+      .hs-bp-task {
+        list-style: none;
+        margin-left: -1.3rem;
+      }
+      .hs-bp-check {
+        display: inline-block;
+        width: 15px;
+        height: 15px;
+        margin-right: 8px;
+        border: 1px solid #3a3e4d;
+        border-radius: 4px;
+        font-size: 10px;
+        line-height: 14px;
+        text-align: center;
+        color: transparent;
+        vertical-align: -2px;
+      }
+      .hs-bp-check.on {
+        border-color: rgba(168, 177, 255, 0.6);
+        background: rgba(168, 177, 255, 0.22);
+        color: #cfd4ff;
+      }
+      .hs-bp blockquote {
+        margin: 28px 0;
+        padding: 2px 0 2px 20px;
+        border-left: 2px solid rgba(168, 177, 255, 0.4);
+        color: rgba(235, 235, 245, 0.6);
+      }
+      .hs-bp blockquote > p {
+        margin: 0;
+        font-size: 0.9375rem;
+        line-height: 1.75;
+      }
+      .hs-bp hr {
+        margin: 40px 0;
+        border: 0;
+        border-top: 1px solid #2e2e32;
+      }
+      .hs-bp img {
+        display: block;
+        max-width: 100%;
+        margin: 24px 0;
+        border-radius: 8px;
+      }
+      .hs-bp :not(pre) > code {
+        padding: 0.15em 0.4em;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 0.875em;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #dfdfd6;
+      }
+      .hs-bp-code {
+        position: relative;
+        margin: 28px 0;
+        border: 1px solid #2e2e32;
+        border-radius: 10px;
+        background: #101014;
+        overflow: hidden;
+      }
+      .hs-bp-code pre {
+        margin: 0;
+        padding: 18px 20px;
+        overflow-x: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        line-height: 1.7;
+        color: #c9cdd8;
+      }
+      .hs-bp-code-lang {
+        position: absolute;
+        top: 6px;
+        right: 12px;
+        font-size: 11px;
+        color: #5d6170;
+        text-transform: lowercase;
+      }
+      .hs-bp-table-wrap {
+        margin: 28px 0;
+        overflow-x: auto;
+      }
+      .hs-bp table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9375rem;
+      }
+      .hs-bp th,
+      .hs-bp td {
+        padding: 8px 12px;
+        border: 1px solid #2e2e32;
+        text-align: left;
+        line-height: 1.6;
+      }
+      .hs-bp th {
+        background: rgba(255, 255, 255, 0.03);
+        font-weight: 600;
+      }
+      .hs-bp-container {
+        margin: 24px 0;
+        padding: 12px 16px;
+        border-left: 3px solid #64748b;
+        border-radius: 8px;
+        background: rgba(148, 163, 184, 0.08);
+      }
+      .hs-bp-container-title {
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .hs-bp-container p {
+        margin: 8px 0;
+        font-size: 0.9375rem;
+      }
+      .hs-bp-tip {
+        border-left-color: #a8b1ff;
+        background: rgba(168, 177, 255, 0.09);
+      }
+      .hs-bp-tip .hs-bp-container-title { color: #cfd4ff; }
+      .hs-bp-info {
+        border-left-color: #60a5fa;
+        background: rgba(96, 165, 250, 0.09);
+      }
+      .hs-bp-info .hs-bp-container-title { color: #93c5fd; }
+      .hs-bp-warning {
+        border-left-color: #fbbf24;
+        background: rgba(245, 158, 11, 0.09);
+      }
+      .hs-bp-warning .hs-bp-container-title { color: #fcd34d; }
+      .hs-bp-danger {
+        border-left-color: #f87171;
+        background: rgba(239, 68, 68, 0.09);
+      }
+      .hs-bp-danger .hs-bp-container-title { color: #fca5a5; }
+      .hs-bp-empty {
+        padding: 32px 0;
+        font-size: 13px;
+        color: #8c909e;
+      }
+
       /* ── 空正文引导（草稿 scaffold 只有标题与来源，正文待写） ── */
       .hs-body-empty {
         display: flex;
@@ -1821,186 +2105,220 @@ window.__ModuleLoader__.load({
     }
 
     // ── Markdown 渲染辅助工具 ───────────────────────────────────────
+    /**
+     * 行内 markdown：图片 / 链接 / 行内代码 / 粗体 / 删除线 / 斜体。
+     *
+     * 用一个正则从左到右扫，而不是「找最早匹配」几次 —— 后者遇到
+     * `**粗体里有 `代码`**` 这种嵌套就只剩一种生效。
+     */
     function parseInlineMarkdown(text) {
-      if (!text) return '';
+      const source = String(text ?? '');
+      if (!source) return '';
       const parts = [];
-      let remaining = String(text);
-      let keyIdx = 0;
-
-      while (remaining) {
-        const linkMatch = remaining.match(/\[([^\]]+)\]\(([^)]+)\)/);
-        const codeMatch = remaining.match(/`([^`]+)`/);
-        const boldMatch = remaining.match(/\*\*([^*]+)\*\*/);
-
-        let firstMatch = null;
-        let matchType = null;
-        let earliestIndex = remaining.length;
-
-        if (linkMatch && linkMatch.index < earliestIndex) {
-          earliestIndex = linkMatch.index;
-          firstMatch = linkMatch;
-          matchType = 'link';
-        }
-        if (codeMatch && codeMatch.index < earliestIndex) {
-          earliestIndex = codeMatch.index;
-          firstMatch = codeMatch;
-          matchType = 'code';
-        }
-        if (boldMatch && boldMatch.index < earliestIndex) {
-          earliestIndex = boldMatch.index;
-          firstMatch = boldMatch;
-          matchType = 'bold';
-        }
-
-        if (!firstMatch) {
-          parts.push(remaining);
-          break;
-        }
-
-        if (firstMatch.index > 0) {
-          parts.push(remaining.slice(0, firstMatch.index));
-        }
-
-        if (matchType === 'link') {
+      const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|~~([^~]+)~~|\*([^*]+)\*/g;
+      let last = 0;
+      let key = 0;
+      let matched;
+      while ((matched = pattern.exec(source))) {
+        if (matched.index > last) parts.push(source.slice(last, matched.index));
+        if (matched[1] !== undefined) {
+          parts.push(h('img', { key: `img-${key++}`, src: matched[2], alt: matched[1], loading: 'lazy' }));
+        } else if (matched[3] !== undefined) {
           parts.push(h('a', {
-            key: `link-${keyIdx++}`,
-            href: firstMatch[2],
+            key: `a-${key++}`,
+            href: matched[4],
             target: '_blank',
             rel: 'noopener noreferrer'
-          }, firstMatch[1]));
-        } else if (matchType === 'code') {
-          parts.push(h('code', { key: `code-${keyIdx++}` }, firstMatch[1]));
-        } else if (matchType === 'bold') {
-          parts.push(h('strong', { key: `bold-${keyIdx++}` }, firstMatch[1]));
+          }, matched[3]));
+        } else if (matched[5] !== undefined) {
+          parts.push(h('code', { key: `c-${key++}` }, matched[5]));
+        } else if (matched[6] !== undefined) {
+          parts.push(h('strong', { key: `b-${key++}` }, matched[6]));
+        } else if (matched[7] !== undefined) {
+          parts.push(h('del', { key: `s-${key++}` }, matched[7]));
+        } else {
+          parts.push(h('em', { key: `i-${key++}` }, matched[8]));
         }
-
-        remaining = remaining.slice(firstMatch.index + firstMatch[0].length);
+        last = matched.index + matched[0].length;
       }
-
+      if (last < source.length) parts.push(source.slice(last));
       return parts;
     }
 
-    function renderMarkdownAst(content) {
-      if (!content) return null;
-      const lines = String(content).split(/\r?\n/);
+    /** `| a | b |` → ['a', 'b']；表格与分隔行共用。 */
+    function splitTableRow(line) {
+      return String(line).trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+    }
+
+    const BLOCK_START = /^\s*(?:```|:::|>|#{1,6}\s|[-*+]\s|\d+[.)]\s|\|)/;
+    const CONTAINER_LABEL = { tip: '提示', info: '说明', warning: '注意', danger: '警告', details: '展开' };
+
+    /**
+     * 极简 markdown → React 元素树。两处共用：
+     * - 编辑器里的实时预览（边打字边看，必须同步、不能往返服务端）
+     * - 草稿的「博客正文查看」（套博客主题的排版，看发布后大概长什么样）
+     *
+     * 刻意不做的：完整 CommonMark、脚注、引用式链接、内嵌 HTML。面板只负责
+     * 「看起来对不对」，真正的渲染永远以 VitePress 构建结果为准。
+     *
+     * @param {string} content
+     * @param {{ frontmatter?: boolean }} [options] frontmatter 为 false 时不渲染元数据框
+     */
+    function renderMarkdownAst(content, options = {}) {
+      const showFrontmatter = options.frontmatter !== false;
+      const lines = String(content ?? '').split(/\r?\n/);
       const elements = [];
-      let inFrontmatter = false;
-      const frontmatterLines = [];
-      let inCodeBlock = false;
-      const codeBlockLines = [];
-      let inList = false;
-      let listItems = [];
-      let listType = 'ul';
+      let key = 0;
+      let i = 0;
 
-      const flushList = () => {
-        if (inList && listItems.length > 0) {
-          elements.push(h(listType, { key: `list-${elements.length}` }, listItems.map((li, idx) => h('li', { key: idx }, parseInlineMarkdown(li)))));
-          listItems = [];
-          inList = false;
+      // frontmatter：无论渲不渲染元数据框，都不能让它变成正文
+      if (lines[0] && lines[0].trim() === '---') {
+        const block = [];
+        let j = 1;
+        for (; j < lines.length; j += 1) {
+          if (lines[j].trim() === '---') break;
+          block.push(lines[j]);
         }
-      };
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // Frontmatter
-        if (i === 0 && line.trim() === '---') {
-          inFrontmatter = true;
-          continue;
-        }
-        if (inFrontmatter) {
-          if (line.trim() === '---') {
-            inFrontmatter = false;
-            elements.push(h('div', { className: 'hs-preview-frontmatter', key: 'fm' }, [
+        if (j < lines.length) {
+          if (showFrontmatter) {
+            elements.push(h('div', { className: 'hs-preview-frontmatter', key: `fm-${key++}` }, [
               h('div', { style: { fontWeight: 600, marginBottom: 4, color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, '📋 Frontmatter 元数据'),
-              ...frontmatterLines.map((fml, idx) => h('div', { key: idx }, fml))
+              ...block.map((line, idx) => h('div', { key: idx }, line))
             ]));
-          } else {
-            frontmatterLines.push(line);
           }
+          i = j + 1;
+        }
+      }
+
+      while (i < lines.length) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        if (!trimmed) {
+          i += 1;
           continue;
         }
 
-        // Codeblock
-        if (line.trim().startsWith('```')) {
-          if (!inCodeBlock) {
-            flushList();
-            inCodeBlock = true;
-            codeBlockLines.length = 0;
-          } else {
-            inCodeBlock = false;
-            elements.push(h('pre', { key: `code-${elements.length}` }, [
-              h('code', null, codeBlockLines.join('\n'))
-            ]));
-            codeBlockLines.length = 0;
+        // 代码块：带上语言标签，和博客里的高亮块外形一致
+        const fence = line.match(/^\s*```\s*([\w+#-]*)\s*$/);
+        if (fence) {
+          const lang = fence[1] || '';
+          const code = [];
+          i += 1;
+          while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+            code.push(lines[i]);
+            i += 1;
           }
-          continue;
-        }
-        if (inCodeBlock) {
-          codeBlockLines.push(line);
-          continue;
-        }
-
-        // 标题
-        const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
-        if (headerMatch) {
-          flushList();
-          const level = headerMatch[1].length;
-          elements.push(h(`h${level}`, { key: `h-${elements.length}` }, parseInlineMarkdown(headerMatch[2])));
-          continue;
-        }
-
-        // 分割线
-        if (/^(\*\*\*|---|___)$/.test(line.trim())) {
-          flushList();
-          elements.push(h('hr', { key: `hr-${elements.length}` }));
-          continue;
-        }
-
-        // 引用块
-        if (line.trim().startsWith('>')) {
-          flushList();
-          const quoteText = line.replace(/^>\s?/, '');
-          elements.push(h('blockquote', { key: `quote-${elements.length}` }, [
-            h('p', null, parseInlineMarkdown(quoteText))
+          i += 1;
+          elements.push(h('div', { className: 'hs-bp-code', key: `pre-${key++}` }, [
+            lang && h('span', { className: 'hs-bp-code-lang' }, lang),
+            h('pre', null, h('code', null, code.join('\n')))
           ]));
           continue;
         }
 
-        // 列表
-        const ulMatch = line.match(/^[-*+]\s+(.*)$/);
-        if (ulMatch) {
-          if (!inList || listType !== 'ul') {
-            flushList();
-            inList = true;
-            listType = 'ul';
+        // VitePress 容器 ::: tip / warning / danger …
+        const container = trimmed.match(/^:::\s*(tip|info|warning|danger|details)\s*(.*)$/);
+        if (container) {
+          const kind = container[1];
+          const title = container[2].trim() || CONTAINER_LABEL[kind];
+          const body = [];
+          i += 1;
+          while (i < lines.length && !/^:::\s*$/.test(lines[i].trim())) {
+            body.push(lines[i]);
+            i += 1;
           }
-          listItems.push(ulMatch[1]);
-          continue;
-        }
-        const olMatch = line.match(/^(\d+)\.\s+(.*)$/);
-        if (olMatch) {
-          if (!inList || listType !== 'ol') {
-            flushList();
-            inList = true;
-            listType = 'ol';
-          }
-          listItems.push(olMatch[2]);
+          i += 1;
+          elements.push(h('div', { className: `hs-bp-container hs-bp-${kind}`, key: `box-${key++}` }, [
+            h('div', { className: 'hs-bp-container-title' }, title),
+            ...renderMarkdownAst(body.join('\n'), { frontmatter: false })
+          ]));
           continue;
         }
 
-        // 空行
-        if (!line.trim()) {
-          flushList();
+        const heading = line.match(/^(#{1,6})\s+(.*)$/);
+        if (heading) {
+          const level = heading[1].length;
+          elements.push(h(`h${level}`, { key: `h-${key++}` }, parseInlineMarkdown(heading[2])));
+          i += 1;
           continue;
         }
 
-        // 段落
-        flushList();
-        elements.push(h('p', { key: `p-${elements.length}` }, parseInlineMarkdown(line)));
+        if (/^(?:---+|\*\*\*+|___+)$/.test(trimmed)) {
+          elements.push(h('hr', { key: `hr-${key++}` }));
+          i += 1;
+          continue;
+        }
+
+        // 表格：表头 + 分隔行（|---|---|）才认，否则当成普通段落
+        if (/^\|/.test(trimmed) && /^\|?[\s:-]*-{2,}[\s:|-]*$/.test((lines[i + 1] || '').trim())) {
+          const header = splitTableRow(trimmed);
+          i += 2;
+          const rows = [];
+          while (i < lines.length && /^\|/.test(lines[i].trim())) {
+            rows.push(splitTableRow(lines[i].trim()));
+            i += 1;
+          }
+          elements.push(h('div', { className: 'hs-bp-table-wrap', key: `tbl-${key++}` }, h('table', null, [
+            h('thead', null, h('tr', null, header.map((cell, idx) => h('th', { key: idx }, parseInlineMarkdown(cell))))),
+            h('tbody', null, rows.map((row, rIdx) => h('tr', { key: rIdx },
+              row.map((cell, cIdx) => h('td', { key: cIdx }, parseInlineMarkdown(cell))))))
+          ])));
+          continue;
+        }
+
+        // 引用块：连续的 > 行合成一块，块内继续按 markdown 渲染
+        if (/^>/.test(trimmed)) {
+          const quote = [];
+          while (i < lines.length && /^>/.test(lines[i].trim())) {
+            quote.push(lines[i].trim().replace(/^>\s?/, ''));
+            i += 1;
+          }
+          elements.push(h('blockquote', { key: `q-${key++}` }, renderMarkdownAst(quote.join('\n'), { frontmatter: false })));
+          continue;
+        }
+
+        // 列表：支持任务清单与一层嵌套（缩进 ≥2 空格算子项）
+        const listMatch = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        if (listMatch) {
+          const ordered = /\d/.test(listMatch[2]);
+          const items = [];
+          while (i < lines.length) {
+            const item = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+            if (!item) break;
+            const text = item[3];
+            if (item[1].length >= 2 && items.length > 0) {
+              items[items.length - 1].children.push(text);
+            } else {
+              const task = text.match(/^\[([ xX])\]\s+(.*)$/);
+              items.push({ text: task ? task[2] : text, done: task ? task[1].toLowerCase() === 'x' : null, children: [] });
+            }
+            i += 1;
+          }
+          elements.push(h(ordered ? 'ol' : 'ul', { key: `list-${key++}` }, items.map((item, idx) => h('li', {
+            key: idx,
+            className: item.done === null ? undefined : 'hs-bp-task'
+          }, [
+            item.done !== null && h('span', { className: `hs-bp-check${item.done ? ' on' : ''}` }, item.done ? '✓' : ''),
+            ...parseInlineMarkdown(item.text),
+            item.children.length > 0 && h('ul', null, item.children.map((child, cIdx) => h('li', { key: cIdx }, parseInlineMarkdown(child))))
+          ]))));
+          continue;
+        }
+
+        // 段落：连续的普通行合成一段（markdown 里换行不等于换段）
+        const para = [];
+        while (i < lines.length && lines[i].trim() && !BLOCK_START.test(lines[i])
+          && !/^(?:---+|\*\*\*+|___+)$/.test(lines[i].trim())) {
+          para.push(lines[i].trim());
+          i += 1;
+        }
+        if (para.length === 0) {
+          para.push(trimmed);
+          i += 1;
+        }
+        elements.push(h('p', { key: `p-${key++}` }, parseInlineMarkdown(para.join(' '))));
       }
 
-      flushList();
       return elements;
     }
 
@@ -2106,6 +2424,8 @@ window.__ModuleLoader__.load({
       const descriptionToken = useRef(0);
       // 进度弹窗：按 slug 看一条后台写作任务的六步链路
       const [progressSlug, setProgressSlug] = useState(null);
+      // 博客正文查看：按草稿读出正文，套博客排版看发布后大概长什么样
+      const [blogPreview, setBlogPreview] = useState(null);
 
       // ── 文章与草稿编辑器状态 ──
       const [editModalItem, setEditModalItem] = useState(null); // { slug, title, file, isDraft }
@@ -2333,6 +2653,27 @@ window.__ModuleLoader__.load({
           }
         } catch (err) {
           showToast(`打开失败: ${err.message}`, true);
+        }
+      };
+
+      /**
+       * 打开「博客正文查看」：读草稿正文，用博客的排版渲染一遍。
+       *
+       * 为什么要它：草稿默认落在站点目录之外（`.drafts/`），VitePress 根本看不到，
+       * 于是「正文长啥样」只能等发布之后才知道。这里不启 dev server，只把
+       * markdown 按博客的排版渲染 —— 近似，但足以在建草稿到转正之间发现结构问题。
+       */
+      const openBlogPreview = async (item) => {
+        setBlogPreview({ item, content: '', loading: true, error: '' });
+        try {
+          const filePath = item.file || item.path || '';
+          if (!filePath) throw new Error('这条草稿没有文件路径');
+          const res = await fetch(`${API_BASE}/article?file=${encodeURIComponent(filePath)}`);
+          const data = await res.json();
+          if (!data.ok || !data.value) throw new Error(data.error || data.message || '读取正文失败');
+          setBlogPreview({ item, content: data.value.content || '', loading: false, error: '' });
+        } catch (err) {
+          setBlogPreview({ item, content: '', loading: false, error: err.message || String(err) });
         }
       };
 
@@ -4366,6 +4707,15 @@ window.__ModuleLoader__.load({
                             h('button', {
                               className: 'hs-btn sm',
                               style: { padding: '3px 8px', fontSize: 11 },
+                              title: '按博客的排版看一遍正文',
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                openBlogPreview(item);
+                              }
+                            }, '👀 看正文'),
+                            h('button', {
+                              className: 'hs-btn sm',
+                              style: { padding: '3px 8px', fontSize: 11 },
                               onClick: (e) => {
                                 e.stopPropagation();
                                 openEditor(item);
@@ -5180,6 +5530,46 @@ window.__ModuleLoader__.load({
 
         // ── 进度弹窗：生成草稿后的六步链路（可关掉，后台照跑） ──
         renderProgressModal(),
+
+        // ── 博客正文查看：套博客排版的只读预览 ──
+        blogPreview && h('div', { className: 'hs-modal-mask', key: 'blog-preview-modal', style: { zIndex: 1150 } }, [
+          h('div', { className: 'hs-bp-modal' }, [
+            h('div', { className: 'hs-bp-header' }, [
+              h('div', { style: { minWidth: 0 } }, [
+                h('div', { className: 'hs-bp-header-title' }, '博客正文查看'),
+                h('div', { className: 'hs-bp-header-sub' },
+                  `${blogPreview.item?.slug || ''} · 只读预览，排版近似站点，最终以构建结果为准`)
+              ]),
+              h('button', {
+                className: 'hs-btn ghost',
+                style: { padding: '4px 8px' },
+                onClick: () => setBlogPreview(null)
+              }, '✕')
+            ]),
+            h('div', { className: 'hs-bp-scroll' }, [
+              h('article', { className: 'hs-bp' }, [
+                h('h1', { className: 'hs-bp-title' }, blogPreview.item?.title || blogPreview.item?.slug || '未命名'),
+                h('div', { className: 'hs-bp-meta' }, [
+                  blogPreview.item?.date && h('span', null, blogPreview.item.date),
+                  ...(Array.isArray(blogPreview.item?.tags) ? blogPreview.item.tags : [])
+                    .slice(0, 8)
+                    .map((tag) => h('span', { key: `bp-tag-${tag}`, className: 'hs-bp-tag' }, `#${tag}`)),
+                  blogPreview.item?.bodyChars ? h('span', null, `${blogPreview.item.bodyChars} 字`) : null
+                ]),
+                blogPreview.loading && h('div', { className: 'hs-bp-empty' }, '正在读取正文…'),
+                blogPreview.error && h('div', { className: 'hs-bp-empty', style: { color: '#f87171' } }, blogPreview.error),
+                !blogPreview.loading && !blogPreview.error && (() => {
+                  const body = String(blogPreview.content || '');
+                  const hasBody = body.split('\n').slice(1).join('\n').trim().length > 0;
+                  if (!hasBody) {
+                    return h('div', { className: 'hs-bp-empty' }, '正文还是空的（只有标题与来源引用），先在编辑器里写或点「AI 写正文」');
+                  }
+                  return renderMarkdownAst(body, { frontmatter: false });
+                })()
+              ])
+            ])
+          ])
+        ]),
 
         // ── 在线文章与草稿编辑器 / 预览全屏模态框 ──
         editModalItem && h('div', { className: 'hs-modal-mask', key: 'edit-modal', style: { zIndex: 1050 } }, [

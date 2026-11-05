@@ -116,3 +116,22 @@ test('诊断页能识别「进程里的代码比磁盘旧」', () => {
   assert.ok(plugin.includes('staleSources'), '插件要能判断哪些源码比载入时间新');
   assert.ok(plugin.includes('runtimeInfo'), '通过 deps.runtimeInfo 暴露给面板');
 });
+
+test('草稿的「博客正文查看」：只读预览走 /api/article，排版近似站点', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(client.includes('openBlogPreview'), '草稿卡片要有看正文的入口');
+  assert.ok(client.includes('/article?file='), '正文从 /api/article 读，不另开接口');
+  assert.ok(client.includes('hs-bp'), '预览要套博客排版样式');
+  assert.ok(client.includes('hs-bp-container'), '::: tip 这类容器要能渲染');
+  assert.ok(client.includes('hs-bp-table-wrap'), '表格要能渲染');
+  assert.ok(client.includes('hs-bp-code-lang'), '代码块要标出语言');
+  assert.ok(client.includes('最终以构建结果为准'), '要说明这是近似预览，不是真站');
+});
+
+test('部署实时日志：弹窗读 /api/deploy/status，关掉不中断部署', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(client.includes('/deploy/status'), '实时日志走状态接口');
+  assert.ok(client.includes('查看部署日志'), '部署中按钮要能接回日志弹窗');
+  assert.ok(client.includes('关掉不影响部署'), '要讲清关闭不中断');
+  assert.ok(!client.includes('/deploy/cancel'), '不提供取消部署');
+});
