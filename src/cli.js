@@ -9,9 +9,12 @@ import { createPipeline } from './core/pipeline.js';
 import { rankClusters } from './core/rank.js';
 import { renderMarkdown } from './core/digest.js';
 import { checkDraft } from './core/checks.js';
+import { describeViolations, promoteChecked } from './core/promote.js';
 import { dateLabel } from './core/normalize.js';
 import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
+import { createMemoryStore } from './adapters/store-memory.js';
+import { pickCandidate } from './core/candidates.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
 
 const USAGE = `
@@ -96,28 +99,6 @@ async function loadConfig() {
   };
 }
 
-function memoryStore() {
-  let latest = null;
-  return {
-    dir: '(memory)',
-    async saveDigest(digest) {
-      latest = digest;
-      return '(memory)';
-    },
-    async saveRaw() {},
-    async loadRaw() {
-      return [];
-    },
-    async loadDigest() {
-      return latest;
-    },
-    async loadState(_name, fallback) {
-      return fallback;
-    },
-    async saveState() {},
-  };
-}
-
 async function cmdInit() {
   const target = createVitePressTarget({ root: cwd });
   if (!existsSync(path.join(cwd, 'docs'))) fail(`${cwd} 下没有 docs/，这不是一个 VitePress 项目`);
@@ -175,7 +156,7 @@ async function buildPipeline(target, store, rank) {
 async function cmdRun() {
   const { target, store, rank } = await loadConfig();
   const dryRun = Boolean(flags.get('dry-run'));
-  const effectiveStore = dryRun ? memoryStore() : store;
+  const effectiveStore = dryRun ? createMemoryStore() : store;
   const { pipeline, config } = await buildPipeline(target, effectiveStore, rank);
   const profile = await target.profile();
 
@@ -222,18 +203,8 @@ async function cmdShow() {
   const { store } = await loadConfig();
   const date = positional[1] ?? 'latest';
   const digest = await store.loadDigest(date);
+  if (!digest) fail(`没有 ${date} 的 digest，先跑 hotspot run`);
   log(renderMarkdown(digest));
-}
-
-function pickCandidate(digest, rawId) {
-  const key = String(rawId).replace(/^#/, '');
-  const byId = digest.items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`));
-  if (byId) return byId;
-  const byIndex = Number(key);
-  if (Number.isInteger(byIndex) && byIndex >= 1 && byIndex <= digest.items.length) {
-    return digest.items[byIndex - 1];
-  }
-  return null;
 }
 
 async function cmdScaffold() {
@@ -241,6 +212,7 @@ async function cmdScaffold() {
   if (!id) fail('用法：hotspot scaffold <id|#3> [--slug s] [--title t] [--description d] [--body-file 正文.md]');
   const { target, store } = await loadConfig();
   const digest = await store.loadDigest(String(flags.get('date') ?? 'latest'));
+  if (!digest) fail('还没有 digest，先跑 hotspot run');
   const candidate = pickCandidate(digest, id);
   if (!candidate) fail(`digest 里找不到候选 ${id}`);
 
@@ -378,9 +350,24 @@ async function cmdSupplement() {
 async function cmdPromote() {
   const slug = positional[1];
   if (!slug) fail('用法：hotspot promote <slug>');
-  const { target } = await loadConfig();
-  const result = await target.promote(slug);
-  log(`✓ ${path.relative(cwd, result.from)} → ${path.relative(cwd, result.to)}`);
+  const { target, store, publish } = await loadConfig();
+  // 转正必须过闸：由 core/promote.js 统一，面板与插件工具走的是同一段。
+  const outcome = await promoteChecked({
+    target,
+    store,
+    slug,
+    allowedHosts: publish.allowedHosts ?? [],
+    allowNumbers: String(flags.get('allow') ?? '').split(',').filter(Boolean),
+  });
+  if (!outcome.ok) {
+    for (const v of outcome.violations) log(`✖ [${v.code}] ${v.message}`);
+    fail(
+      `校验未通过（${describeViolations(outcome.violations)}），草稿仍在 docs/draft/${slug}；` +
+        `先改稿或登记补料，再 hotspot promote ${slug}`,
+    );
+  }
+  const { promoted } = outcome;
+  log(`✓ ${path.relative(cwd, promoted.from)} → ${path.relative(cwd, promoted.to)}`);
   log('  已移除 sitemap: false，文章会进博客列表与 sitemap');
 }
 

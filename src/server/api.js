@@ -7,6 +7,7 @@ import { createVitePressTarget } from '../adapters/target-vitepress.js';
 import { canonicalUrl } from '../core/normalize.js';
 import { buildFeedItems, buildRssXml } from '../core/rss.js';
 import { BUILTIN_SOURCES, configuredSources, resolveSources } from '../core/sources.js';
+import { describeViolations } from '../core/promote.js';
 
 /**
  * 管理界面的服务端。
@@ -1120,9 +1121,29 @@ function sourceLabel(source) {
           sendJson(res, 400, { ok: false, error: '缺少必需字段 slug' });
           return;
         }
+        // 转正必须过闸：闸门在 core/promote.js，CLI 与插件工具走的是同一段。
+        if (typeof deps.promoteChecked !== 'function') {
+          sendJson(res, 501, {
+            ok: false,
+            code: 'ERR_NO_GATE',
+            error: '当前环境没有接入校验闸门，拒绝转正',
+          });
+          return;
+        }
         try {
-          const resPromote = await target.promote(slug);
-          sendJson(res, 200, { ok: true, message: '草稿已成功转正发布', value: resPromote });
+          const outcome = await deps.promoteChecked({ target, store: currentStore, slug });
+          if (!outcome.ok) {
+            const message = `校验未通过：${describeViolations(outcome.violations)}`;
+            sendJson(res, 409, {
+              ok: false,
+              code: 'ERR_CHECK_FAILED',
+              message,
+              error: message,
+              violations: outcome.violations.map((item) => ({ code: item.code, message: item.message })),
+            });
+            return;
+          }
+          sendJson(res, 200, { ok: true, message: '草稿已成功转正发布', value: outcome.promoted });
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
         }

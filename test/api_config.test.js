@@ -365,6 +365,12 @@ test('API 路由：支持在线读取、修改与转正发布文章 /dsh-hotspot
         return { slug, dest: `docs/article/${slug}/index.md` };
       }
     },
+    // 转正走注入的闸门（实际实现是 core/promote.js）；这一段测的是路由接线
+    promoteChecked: async ({ target, slug }) => ({
+      ok: true,
+      violations: [],
+      promoted: await target.promote(slug),
+    }),
     runScan: async () => ({ digest: null, status: {} })
   };
 
