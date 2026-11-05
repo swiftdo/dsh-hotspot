@@ -725,6 +725,170 @@ window.__ModuleLoader__.load({
         background: rgba(255, 255, 255, 0.08);
       }
 
+      /* ── Markdown 在线编辑器与预览全屏模态框 ── */
+      .hs-editor-modal {
+        width: 94vw;
+        max-width: 1380px;
+        height: 88vh;
+        max-height: 920px;
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 12px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65), 0 4px 16px rgba(0, 0, 0, 0.35);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        animation: hs-scale-up 200ms var(--hs-ease-spring) forwards;
+      }
+      .hs-editor-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--dsw-alias-border-l1, #282a34);
+        background: var(--dsw-alias-bg-layer-2, #1c1d26);
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      .hs-editor-tabs {
+        display: inline-flex;
+        background: rgba(0, 0, 0, 0.25);
+        padding: 3px;
+        border-radius: 6px;
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        gap: 2px;
+      }
+      .hs-editor-tab-btn {
+        background: transparent;
+        border: none;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        font-size: 12px;
+        font-weight: 500;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: color 120ms ease, background 120ms ease;
+      }
+      .hs-editor-tab-btn.active {
+        background: var(--dsw-alias-bg-layer-1, #242632);
+        color: var(--dsw-alias-label-primary, #ffffff);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      }
+      .hs-editor-body {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+        min-height: 0;
+      }
+      .hs-editor-textarea {
+        flex: 1;
+        height: 100%;
+        background: var(--dsw-alias-bg-base, #121319);
+        color: var(--dsw-alias-label-primary, #e6edf3);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 18px;
+        border: none;
+        outline: none;
+        resize: none;
+        overflow-y: auto;
+        tab-size: 2;
+      }
+      .hs-preview-pane {
+        flex: 1;
+        height: 100%;
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border-left: 1px solid var(--dsw-alias-border-l1, #282a34);
+        padding: 24px 28px;
+        overflow-y: auto;
+        color: var(--dsw-alias-label-primary, #e6edf3);
+        line-height: 1.7;
+        font-size: 14px;
+      }
+      .hs-preview-pane h1 {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0 0 16px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--dsw-alias-border-l1, #282a34);
+      }
+      .hs-preview-pane h2 {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 20px 0 12px;
+      }
+      .hs-preview-pane h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 16px 0 8px;
+      }
+      .hs-preview-pane p {
+        margin: 0 0 14px;
+      }
+      .hs-preview-pane blockquote {
+        margin: 14px 0;
+        padding: 8px 16px;
+        border-left: 3px solid var(--dsw-alias-brand-primary, #4db6a0);
+        background: rgba(77, 182, 160, 0.06);
+        border-radius: 0 6px 6px 0;
+        color: var(--dsw-alias-label-secondary, #a8abb6);
+      }
+      .hs-preview-pane blockquote p {
+        margin: 0;
+      }
+      .hs-preview-pane pre {
+        background: var(--dsw-alias-bg-base, #111218);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        padding: 12px 16px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 14px 0;
+      }
+      .hs-preview-pane code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 2px 5px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .hs-preview-pane pre code {
+        background: transparent;
+        padding: 0;
+      }
+      .hs-preview-pane ul, .hs-preview-pane ol {
+        margin: 0 0 14px 20px;
+        padding: 0;
+      }
+      .hs-preview-pane li {
+        margin-bottom: 4px;
+      }
+      .hs-preview-pane hr {
+        border: none;
+        border-top: 1px solid var(--dsw-alias-border-l1, #282a34);
+        margin: 20px 0;
+      }
+      .hs-preview-pane a {
+        color: var(--dsw-alias-brand-primary, #4db6a0);
+        text-decoration: none;
+      }
+      .hs-preview-pane a:hover {
+        text-decoration: underline;
+      }
+      .hs-preview-frontmatter {
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px dashed var(--dsw-alias-border-l1, #282a34);
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin-bottom: 18px;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        color: #8c909e;
+      }
+
       /* ── 动画关键帧（遵守 Emil 规范：入场 scale 从 0.96 开始，退出迅捷） ── */
       @keyframes hs-fade-mask {
         from { opacity: 0; }
@@ -781,6 +945,190 @@ window.__ModuleLoader__.load({
       ]);
     }
 
+    // ── Markdown 渲染辅助工具 ───────────────────────────────────────
+    function parseInlineMarkdown(text) {
+      if (!text) return '';
+      const parts = [];
+      let remaining = String(text);
+      let keyIdx = 0;
+
+      while (remaining) {
+        const linkMatch = remaining.match(/\[([^\]]+)\]\(([^)]+)\)/);
+        const codeMatch = remaining.match(/`([^`]+)`/);
+        const boldMatch = remaining.match(/\*\*([^*]+)\*\*/);
+
+        let firstMatch = null;
+        let matchType = null;
+        let earliestIndex = remaining.length;
+
+        if (linkMatch && linkMatch.index < earliestIndex) {
+          earliestIndex = linkMatch.index;
+          firstMatch = linkMatch;
+          matchType = 'link';
+        }
+        if (codeMatch && codeMatch.index < earliestIndex) {
+          earliestIndex = codeMatch.index;
+          firstMatch = codeMatch;
+          matchType = 'code';
+        }
+        if (boldMatch && boldMatch.index < earliestIndex) {
+          earliestIndex = boldMatch.index;
+          firstMatch = boldMatch;
+          matchType = 'bold';
+        }
+
+        if (!firstMatch) {
+          parts.push(remaining);
+          break;
+        }
+
+        if (firstMatch.index > 0) {
+          parts.push(remaining.slice(0, firstMatch.index));
+        }
+
+        if (matchType === 'link') {
+          parts.push(h('a', {
+            key: `link-${keyIdx++}`,
+            href: firstMatch[2],
+            target: '_blank',
+            rel: 'noopener noreferrer'
+          }, firstMatch[1]));
+        } else if (matchType === 'code') {
+          parts.push(h('code', { key: `code-${keyIdx++}` }, firstMatch[1]));
+        } else if (matchType === 'bold') {
+          parts.push(h('strong', { key: `bold-${keyIdx++}` }, firstMatch[1]));
+        }
+
+        remaining = remaining.slice(firstMatch.index + firstMatch[0].length);
+      }
+
+      return parts;
+    }
+
+    function renderMarkdownAst(content) {
+      if (!content) return null;
+      const lines = String(content).split(/\r?\n/);
+      const elements = [];
+      let inFrontmatter = false;
+      const frontmatterLines = [];
+      let inCodeBlock = false;
+      const codeBlockLines = [];
+      let inList = false;
+      let listItems = [];
+      let listType = 'ul';
+
+      const flushList = () => {
+        if (inList && listItems.length > 0) {
+          elements.push(h(listType, { key: `list-${elements.length}` }, listItems.map((li, idx) => h('li', { key: idx }, parseInlineMarkdown(li)))));
+          listItems = [];
+          inList = false;
+        }
+      };
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Frontmatter
+        if (i === 0 && line.trim() === '---') {
+          inFrontmatter = true;
+          continue;
+        }
+        if (inFrontmatter) {
+          if (line.trim() === '---') {
+            inFrontmatter = false;
+            elements.push(h('div', { className: 'hs-preview-frontmatter', key: 'fm' }, [
+              h('div', { style: { fontWeight: 600, marginBottom: 4, color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, '📋 Frontmatter 元数据'),
+              ...frontmatterLines.map((fml, idx) => h('div', { key: idx }, fml))
+            ]));
+          } else {
+            frontmatterLines.push(line);
+          }
+          continue;
+        }
+
+        // Codeblock
+        if (line.trim().startsWith('```')) {
+          if (!inCodeBlock) {
+            flushList();
+            inCodeBlock = true;
+            codeBlockLines.length = 0;
+          } else {
+            inCodeBlock = false;
+            elements.push(h('pre', { key: `code-${elements.length}` }, [
+              h('code', null, codeBlockLines.join('\n'))
+            ]));
+            codeBlockLines.length = 0;
+          }
+          continue;
+        }
+        if (inCodeBlock) {
+          codeBlockLines.push(line);
+          continue;
+        }
+
+        // 标题
+        const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+        if (headerMatch) {
+          flushList();
+          const level = headerMatch[1].length;
+          elements.push(h(`h${level}`, { key: `h-${elements.length}` }, parseInlineMarkdown(headerMatch[2])));
+          continue;
+        }
+
+        // 分割线
+        if (/^(\*\*\*|---|___)$/.test(line.trim())) {
+          flushList();
+          elements.push(h('hr', { key: `hr-${elements.length}` }));
+          continue;
+        }
+
+        // 引用块
+        if (line.trim().startsWith('>')) {
+          flushList();
+          const quoteText = line.replace(/^>\s?/, '');
+          elements.push(h('blockquote', { key: `quote-${elements.length}` }, [
+            h('p', null, parseInlineMarkdown(quoteText))
+          ]));
+          continue;
+        }
+
+        // 列表
+        const ulMatch = line.match(/^[-*+]\s+(.*)$/);
+        if (ulMatch) {
+          if (!inList || listType !== 'ul') {
+            flushList();
+            inList = true;
+            listType = 'ul';
+          }
+          listItems.push(ulMatch[1]);
+          continue;
+        }
+        const olMatch = line.match(/^(\d+)\.\s+(.*)$/);
+        if (olMatch) {
+          if (!inList || listType !== 'ol') {
+            flushList();
+            inList = true;
+            listType = 'ol';
+          }
+          listItems.push(olMatch[2]);
+          continue;
+        }
+
+        // 空行
+        if (!line.trim()) {
+          flushList();
+          continue;
+        }
+
+        // 段落
+        flushList();
+        elements.push(h('p', { key: `p-${elements.length}` }, parseInlineMarkdown(line)));
+      }
+
+      flushList();
+      return elements;
+    }
+
     // ── 主面板视图组件 ───────────────────────────────────────────
     function HotspotMainPanel(props) {
       ensureStyles();
@@ -824,6 +1172,14 @@ window.__ModuleLoader__.load({
       const [scaffoldProjectRoot, setScaffoldProjectRoot] = useState('');
       const [scaffolding, setScaffolding] = useState(false);
       const [pickingDir, setPickingDir] = useState(false);
+
+      // ── 文章与草稿编辑器状态 ──
+      const [editModalItem, setEditModalItem] = useState(null); // { slug, title, file, isDraft }
+      const [editContent, setEditContent] = useState('');
+      const [editOriginalContent, setEditOriginalContent] = useState('');
+      const [editViewMode, setEditViewMode] = useState('split'); // 'split' | 'edit' | 'preview'
+      const [isSavingArticle, setIsSavingArticle] = useState(false);
+      const [isPromotingArticle, setIsPromotingArticle] = useState(false);
 
       const handlePickDirectory = async () => {
         if (pickingDir) return null;
@@ -902,6 +1258,78 @@ window.__ModuleLoader__.load({
       const showToast = (message, isError = false) => {
         setToast({ message, isError });
         setTimeout(() => setToast(null), 3500);
+      };
+
+      const openArticleEditor = async (item) => {
+        try {
+          const filePath = item.file || item.path || (item.isDraft ? `docs/draft/${item.slug}/index.md` : `docs/article/${item.slug}/index.md`);
+          const res = await fetch(`${API_BASE}/article?file=${encodeURIComponent(filePath)}`);
+          const data = await res.json();
+          if (data.ok && data.value) {
+            setEditContent(data.value.content || '');
+            setEditOriginalContent(data.value.content || '');
+            setEditModalItem({
+              ...item,
+              file: data.value.file || filePath
+            });
+            setEditViewMode('split');
+          } else {
+            showToast(data.error || '读取文章内容失败', true);
+          }
+        } catch (err) {
+          showToast(`打开失败: ${err.message}`, true);
+        }
+      };
+
+      const handleSaveArticle = async () => {
+        if (!editModalItem || !editModalItem.file) return;
+        try {
+          setIsSavingArticle(true);
+          const res = await fetch(`${API_BASE}/article`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              file: editModalItem.file,
+              content: editContent
+            })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            setEditOriginalContent(editContent);
+            showToast('✅ 文章内容已成功保存！');
+            await loadState();
+          } else {
+            showToast(data.error || '保存失败', true);
+          }
+        } catch (err) {
+          showToast(`保存出错: ${err.message}`, true);
+        } finally {
+          setIsSavingArticle(false);
+        }
+      };
+
+      const handlePromoteArticle = async (slug) => {
+        if (!slug) return;
+        try {
+          setIsPromotingArticle(true);
+          const res = await fetch(`${API_BASE}/article-promote`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ slug })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showToast(`🚀 草稿 ${slug} 已转正发布！`);
+            setEditModalItem(null);
+            await loadState();
+          } else {
+            showToast(data.error || '转正失败', true);
+          }
+        } catch (err) {
+          showToast(`转正失败: ${err.message}`, true);
+        } finally {
+          setIsPromotingArticle(false);
+        }
       };
 
       const handleRun = async () => {
@@ -1794,14 +2222,28 @@ window.__ModuleLoader__.load({
                           h('span', { style: { fontFamily: 'monospace', color: '#6e7382' } }, `slug: ${item.slug}`),
 
                           // 标签
-                          (item.tags || []).length > 0 && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 'auto' } },
+                          (item.tags || []).length > 0 && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
                             item.tags.map(t => h('span', {
                               key: t,
                               className: 'hs-tag-pill',
                               style: { cursor: 'pointer' },
                               onClick: () => setArticleTagFilter(t)
                             }, `#${t}`))
-                          )
+                          ),
+
+                          // 操作按钮区
+                          h('div', { style: { display: 'flex', gap: 6, marginLeft: 'auto', alignItems: 'center' } }, [
+                            h('button', {
+                              className: 'hs-btn sm',
+                              style: { padding: '3px 8px', fontSize: 11 },
+                              onClick: () => openArticleEditor({ ...item, file: filePath, isDraft })
+                            }, '✏️ 预览与修改'),
+                            isDraft && h('button', {
+                              className: 'hs-btn sm primary',
+                              style: { padding: '3px 8px', fontSize: 11 },
+                              onClick: () => handlePromoteArticle(item.slug)
+                            }, '🚀 转正发布')
+                          ])
                         ])
                       ]);
                     }))
@@ -2093,6 +2535,103 @@ window.__ModuleLoader__.load({
                 },
                 disabled: scaffolding
               }, scaffolding ? '正在生成草稿...' : '确认并生成草稿')
+            ])
+          ])
+        ]),
+
+        // ── 在线文章与草稿编辑器 / 预览全屏模态框 ──
+        editModalItem && h('div', { className: 'hs-modal-mask', key: 'edit-modal', style: { zIndex: 1050 } }, [
+          h('div', { className: 'hs-editor-modal' }, [
+            // 头部 Header
+            h('div', { className: 'hs-editor-header' }, [
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 } }, [
+                h('span', {
+                  className: 'hs-tag-pill',
+                  style: {
+                    background: editModalItem.isDraft ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                    color: editModalItem.isDraft ? '#fbbf24' : '#34d399',
+                    borderColor: editModalItem.isDraft ? 'rgba(245, 158, 11, 0.3)' : 'rgba(16, 185, 129, 0.3)'
+                  }
+                }, editModalItem.isDraft ? '草稿编辑' : '已发布文章'),
+                h('span', {
+                  style: {
+                    fontWeight: 600,
+                    fontSize: 14,
+                    color: 'var(--dsw-alias-label-primary, #ffffff)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }
+                }, editModalItem.title || editModalItem.slug),
+                h('span', {
+                  style: {
+                    fontSize: 11,
+                    color: 'var(--dsw-alias-label-secondary, #8c909e)',
+                    fontFamily: 'monospace'
+                  }
+                }, `(${editModalItem.file})`)
+              ]),
+
+              // 中间模式切换 Tabs
+              h('div', { className: 'hs-editor-tabs' }, [
+                h('button', {
+                  className: `hs-editor-tab-btn ${editViewMode === 'split' ? 'active' : ''}`,
+                  onClick: () => setEditViewMode('split')
+                }, '双栏并排'),
+                h('button', {
+                  className: `hs-editor-tab-btn ${editViewMode === 'edit' ? 'active' : ''}`,
+                  onClick: () => setEditViewMode('edit')
+                }, '纯编辑'),
+                h('button', {
+                  className: `hs-editor-tab-btn ${editViewMode === 'preview' ? 'active' : ''}`,
+                  onClick: () => setEditViewMode('preview')
+                }, '纯预览')
+              ]),
+
+              // 右侧操作
+              h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
+                editModalItem.isDraft && h('button', {
+                  className: 'hs-btn sm primary',
+                  disabled: isPromotingArticle || isSavingArticle,
+                  onClick: () => handlePromoteArticle(editModalItem.slug)
+                }, isPromotingArticle ? '转正中...' : '🚀 转正发布'),
+                h('button', {
+                  className: 'hs-btn sm primary',
+                  disabled: isSavingArticle || editContent === editOriginalContent,
+                  onClick: handleSaveArticle
+                }, isSavingArticle ? '保存中...' : (editContent !== editOriginalContent ? '💾 保存修改 *' : '✓ 已保存')),
+                h('button', {
+                  className: 'hs-btn sm',
+                  onClick: () => {
+                    if (editContent !== editOriginalContent) {
+                      if (!confirm('您有未保存的修改，确定要关闭吗？')) return;
+                    }
+                    setEditModalItem(null);
+                  }
+                }, '✕ 关闭')
+              ])
+            ]),
+
+            // 主体 Body
+            h('div', { className: 'hs-editor-body' }, [
+              // 左侧/纯编辑区
+              (editViewMode === 'split' || editViewMode === 'edit') && h('textarea', {
+                className: 'hs-editor-textarea',
+                value: editContent,
+                placeholder: '在此输入 Markdown 内容...',
+                onChange: (e) => setEditContent(e.target.value),
+                onKeyDown: (e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                    e.preventDefault();
+                    handleSaveArticle();
+                  }
+                }
+              }),
+
+              // 右侧/纯预览区
+              (editViewMode === 'split' || editViewMode === 'preview') && h('div', {
+                className: 'hs-preview-pane'
+              }, renderMarkdownAst(editContent))
             ])
           ])
         ]),

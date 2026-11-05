@@ -348,5 +348,47 @@ export function createVitePressTarget(config) {
       }
       return out.sort((a, b) => b.slug.localeCompare(a.slug));
     },
+
+    /** 读取指定文章或草稿的 Markdown 原文 */
+    async readArticle(targetFile) {
+      const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
+      const normRoot = path.normalize(root);
+      if (!full.startsWith(normRoot)) {
+        throw new Error('路径不合法：超出项目根目录范围');
+      }
+      const content = await readIfExists(full);
+      if (content === null) {
+        throw new Error(`文件不存在：${path.relative(root, full)}`);
+      }
+      const { data, body } = parseFrontmatter(content);
+      return {
+        file: path.relative(root, full),
+        fullPath: full,
+        content,
+        body,
+        data,
+      };
+    },
+
+    /** 保存修改后的文章或草稿内容 */
+    async saveArticle(targetFile, newContent) {
+      if (typeof newContent !== 'string') {
+        throw new Error('保存内容必须为字符串');
+      }
+      const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
+      const normRoot = path.normalize(root);
+      if (!full.startsWith(normRoot)) {
+        throw new Error('路径不合法：超出项目根目录范围');
+      }
+      await mkdir(path.dirname(full), { recursive: true });
+      await writeFile(full, newContent, 'utf8');
+      const { data, body } = parseFrontmatter(newContent);
+      return {
+        file: path.relative(root, full),
+        fullPath: full,
+        data,
+        body,
+      };
+    },
   };
 }

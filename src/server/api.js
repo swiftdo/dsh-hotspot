@@ -580,6 +580,96 @@ export function createRoutes(deps) {
         });
       },
     },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/article`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET', 'POST'])) return;
+        const target = currentTarget;
+        if (!target) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            error: '尚未配置博客项目根目录',
+          });
+          return;
+        }
+
+        if (req.method === 'GET') {
+          const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+          const file = parsedUrl.searchParams.get('file');
+          if (!file) {
+            sendJson(res, 400, { ok: false, error: '缺少必需参数 file' });
+            return;
+          }
+          try {
+            const data = await target.readArticle(file);
+            const val = typeof data === 'string'
+              ? { file, content: data }
+              : (data || { file, content: '' });
+            sendJson(res, 200, { ok: true, value: val });
+          } catch (err) {
+            sendJson(res, 404, { ok: false, error: err.message });
+          }
+          return;
+        }
+
+        if (req.method === 'POST') {
+          let body;
+          try {
+            body = await readJson(req);
+          } catch (e) {
+            sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
+            return;
+          }
+          const { file, content } = body || {};
+          if (!file || typeof content !== 'string') {
+            sendJson(res, 400, { ok: false, error: '缺少必需字段 file 或 content' });
+            return;
+          }
+          try {
+            const result = await target.saveArticle(file, content);
+            sendJson(res, 200, { ok: true, message: '文章保存成功', value: result });
+          } catch (err) {
+            sendJson(res, 500, { ok: false, error: err.message });
+          }
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/article-promote`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        const target = currentTarget;
+        if (!target) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            error: '尚未配置博客项目根目录',
+          });
+          return;
+        }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        const { slug } = body || {};
+        if (!slug) {
+          sendJson(res, 400, { ok: false, error: '缺少必需字段 slug' });
+          return;
+        }
+        try {
+          const resPromote = await target.promote(slug);
+          sendJson(res, 200, { ok: true, message: '草稿已成功转正发布', value: resPromote });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
   ];
 
   const allRoutes = [];

@@ -300,3 +300,81 @@ test('API 路由：支持获取所有文章列表 /dsh-hotspot/api/articles 与�
   assert.equal(sData.value.articles.length, 2);
   assert.equal(sData.value.articles[0].title, 'Swift 6 发布');
 });
+
+test('API 路由：支持在线读取、修改与转正发布文章 /dsh-hotspot/api/article[s]', async (t) => {
+  let savedFile = null;
+  let savedContent = null;
+  let promotedSlug = null;
+
+  const deps = {
+    projectRoot: '/mock/path',
+    store: { loadDigest: async () => null },
+    target: {
+      articleDir: 'docs/article',
+      draftDir: 'docs/draft',
+      profile: async () => ({ tagVocabulary: [], keywords: [] }),
+      listArticles: async () => [],
+      listDrafts: async () => [],
+      readArticle: async (file) => {
+        if (file === 'docs/draft/my-draft/index.md') {
+          return '# 初始草稿标题\n\n草稿正文内容';
+        }
+        return null;
+      },
+      saveArticle: async (file, content) => {
+        savedFile = file;
+        savedContent = content;
+        return { file, bytes: content.length };
+      },
+      promote: async (slug) => {
+        promotedSlug = slug;
+        return { slug, dest: `docs/article/${slug}/index.md` };
+      }
+    },
+    runScan: async () => ({ digest: null, status: {} })
+  };
+
+  const routes = createRoutes(deps);
+
+  // 1. 测试 GET /dsh-hotspot/api/article 读取文件
+  const getArticleRoute = routes.find((r) => r.path === '/dsh-hotspot/api/article');
+  assert.ok(getArticleRoute, 'GET /dsh-hotspot/api/article 应当存在');
+
+  const { req: gReq, res: gRes, result: gResult } = mockReqRes(
+    'GET',
+    '/dsh-hotspot/api/article?file=docs/draft/my-draft/index.md'
+  );
+  await getArticleRoute.handler(gReq, gRes);
+  const gData = gResult().json();
+  assert.equal(gData.ok, true);
+  assert.equal(gData.value.content, '# 初始草稿标题\n\n草稿正文内容');
+
+  // 2. 测试 POST /dsh-hotspot/api/article 保存修改
+  const postArticleRoute = routes.find((r) => r.path === '/dsh-hotspot/api/article');
+  assert.ok(postArticleRoute, 'POST /dsh-hotspot/api/article 应当存在');
+
+  const { req: pReq, res: pRes, result: pResult } = mockReqRes(
+    'POST',
+    '/dsh-hotspot/api/article',
+    { file: 'docs/draft/my-draft/index.md', content: '# 修订后的草稿标题\n\n更新后的内容' }
+  );
+  await postArticleRoute.handler(pReq, pRes);
+  const pData = pResult().json();
+  assert.equal(pData.ok, true);
+  assert.equal(savedFile, 'docs/draft/my-draft/index.md');
+  assert.equal(savedContent, '# 修订后的草稿标题\n\n更新后的内容');
+
+  // 3. 测试 POST /dsh-hotspot/api/article-promote 草稿转正
+  const promoteRoute = routes.find((r) => r.path === '/dsh-hotspot/api/article-promote');
+  assert.ok(promoteRoute, 'POST /dsh-hotspot/api/article-promote 应当存在');
+
+  const { req: prReq, res: prRes, result: prResult } = mockReqRes(
+    'POST',
+    '/dsh-hotspot/api/article-promote',
+    { slug: 'my-draft' }
+  );
+  await promoteRoute.handler(prReq, prRes);
+  const prData = prResult().json();
+  assert.equal(prData.ok, true);
+  assert.equal(promotedSlug, 'my-draft');
+});
