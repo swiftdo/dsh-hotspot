@@ -54,11 +54,12 @@
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { color: var(--muted); font-weight: 400; font-size: 12px; }
-  input, select {
+  input, select, textarea {
     font: inherit; color: var(--text); background: var(--panel-2);
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0;
   }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { width: 100%; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
   .item { border-bottom: 1px solid var(--line); padding: 10px 0; }
   .item:last-child { border-bottom: 0; }
@@ -82,6 +83,7 @@
   <h1>dsh-hotspot</h1>
   <span class="path" id="projectPath"></span>
   <button class="ghost" id="reload">刷新</button>
+  <button class="ghost" id="deploy" style="display:none">部署站点</button>
   <button class="primary" id="run">立即抓取</button>
 </header>
 
@@ -130,6 +132,17 @@
   <section id="content">
     <div class="card">
       <strong style="font-weight:500">草稿（docs/draft）</strong>
+      <div class="writer-bar">
+        <label>写作方式
+          <select id="writerMode">
+            <option value="agent">联网搜索（子代理）</option>
+            <option value="direct">只用手头证据（选中模型）</option>
+          </select>
+        </label>
+        <label>模型
+          <select id="writerModel"><option value="">（未接入模型目录）</option></select>
+        </label>
+      </div>
       <div id="draftList" class="muted" style="margin-top:8px">—</div>
     </div>
     <div class="card">
@@ -153,6 +166,19 @@
         <button class="primary" id="saveConfig">保存设置</button>
         <span class="muted" id="configHint"></span>
       </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <strong style="font-weight:500">站点部署</strong>
+        <span class="muted" id="deployHint"></span>
+      </div>
+      <div class="muted" style="margin-top:6px">绑定后页头才出现「部署站点」按钮；留空保存即解绑。</div>
+      <textarea id="cfgDeploy" rows="3" style="margin-top:8px" placeholder="npm run build && ./deploy.sh --no-git --skip-build"></textarea>
+      <div class="muted" style="margin-top:6px">在博客项目根目录下由 /bin/sh -c 执行，单次最长 10 分钟，输出保留末尾 64KB。</div>
+      <div class="row" style="margin-top:10px">
+        <button id="deployNow" disabled>立即部署</button>
+      </div>
+      <pre id="deployOut" style="display:none"></pre>
     </div>
     <div class="card">
       <strong style="font-weight:500">选题画像</strong>
@@ -275,6 +301,55 @@ function renderItems() {
   });
 }
 
+let writerCatalog = { providers: [], selection: { provider: '', model: '', mode: 'agent' } };
+
+function modelKey(provider, model) { return provider + '\u0000' + model; }
+
+function renderWriterBar() {
+  const modeSelect = $('writerMode');
+  const modelSelect = $('writerModel');
+  modeSelect.value = writerCatalog.selection.mode === 'direct' ? 'direct' : 'agent';
+
+  const options = [];
+  for (const provider of writerCatalog.providers) {
+    for (const model of provider.models) {
+      const selected = provider.provider === writerCatalog.selection.provider && model.id === writerCatalog.selection.model;
+      options.push('<option value="' + esc(modelKey(provider.provider, model.id)) + '"' + (selected ? ' selected' : '') + '>' +
+        esc(provider.label + ' / ' + model.name) + '</option>');
+    }
+  }
+  modelSelect.innerHTML = options.length ? options.join('') : '<option value="">（未接入模型目录）</option>';
+  modelSelect.disabled = options.length === 0;
+}
+
+async function loadWriterCatalog() {
+  try {
+    const value = await api('/models');
+    writerCatalog = {
+      providers: value.providers || [],
+      selection: value.selection || { provider: '', model: '', mode: 'agent' },
+    };
+  } catch {
+    writerCatalog = { providers: [], selection: { provider: '', model: '', mode: 'agent' } };
+  }
+  renderWriterBar();
+}
+
+async function saveWriterSelection() {
+  const [provider, model] = ($('writerModel').value || '').split('\u0000');
+  const mode = $('writerMode').value === 'direct' ? 'direct' : 'agent';
+  try {
+    const value = await api('/models', {
+      method: 'POST',
+      body: JSON.stringify({ provider: provider || '', model: model || '', mode }),
+    });
+    writerCatalog.selection = { provider: value.provider, model: value.model, mode: value.mode || mode };
+    toast(mode === 'direct' ? '写作方式：只用手头证据' : '写作方式：联网搜索');
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
 function renderContent() {
   $('draftList').innerHTML = state.drafts.length
     ? state.drafts.map((d) => '<div class="item"><div class="row">' +
@@ -293,11 +368,17 @@ function renderContent() {
       button.disabled = true;
       button.textContent = '写作中…';
       try {
-        const value = await api('/generate', { method: 'POST', body: JSON.stringify({ slug }) });
+        const mode = $('writerMode').value === 'direct' ? 'direct' : 'agent';
+        const [provider, model] = ($('writerModel').value || '').split('\u0000');
+        const value = await api('/generate', {
+          method: 'POST',
+          body: JSON.stringify({ slug, mode, provider: provider || '', model: model || '' }),
+        });
         const violations = value.checks && value.checks.ok === false ? value.checks.violations : [];
         toast(violations.length
           ? '正文已写入，但没过闸门：' + violations[0].message
-          : '正文已写入：' + value.bodyChars + ' 字 · 补料 ' + value.registered + ' 条');
+          : '正文已写入：' + value.bodyChars + ' 字 · 补料 ' + value.registered + ' 条' +
+            (value.model ? ' · ' + value.model : ''));
         await load();
       } catch (error) {
         toast(error.message, true);
@@ -321,6 +402,13 @@ function renderConfig() {
   $('cfgHalf').value = rank.halfLifeHours ?? 24;
   $('cfgThreshold').value = rank.clusterThreshold ?? 0.6;
   $('cfgHosts').value = (state.config.publish?.allowedHosts || []).join(', ');
+  const deployConfigured = Boolean(state.config.deploy?.configured);
+  $('cfgDeploy').value = state.config.deploy?.script || '';
+  $('deploy').style.display = deployConfigured ? '' : 'none';
+  $('deployNow').disabled = !deployConfigured;
+  $('deployHint').textContent = deployConfigured
+    ? '已绑定：' + state.config.deploy.script
+    : '未绑定，页头不显示部署按钮';
 
   $('tagCloud').innerHTML = state.profile.tags.map((t) => '<span class="tag">' + esc(t) + '</span>').join('') || '<span class="muted">—</span>';
   $('keywordCloud').innerHTML = state.profile.keywords.map((t) => '<span class="tag">' + esc(t) + '</span>').join('') || '<span class="muted">—</span>';
@@ -338,6 +426,7 @@ async function load() {
   } catch (error) {
     toast('加载失败：' + error.message, true);
   }
+  await loadWriterCatalog();
 }
 
 document.querySelectorAll('nav button').forEach((button) => {
@@ -348,6 +437,8 @@ document.querySelectorAll('nav button').forEach((button) => {
 });
 
 $('reload').onclick = load;
+$('writerMode').onchange = saveWriterSelection;
+$('writerModel').onchange = saveWriterSelection;
 
 $('run').onclick = async () => {
   const button = $('run');
@@ -380,6 +471,39 @@ $('addSource').onclick = async () => {
   $('newTarget').value = '';
 };
 
+function renderDeployResult(value) {
+  const out = $('deployOut');
+  const seconds = (Number(value.durationMs || 0) / 1000).toFixed(1);
+  out.style.display = '';
+  out.textContent = [
+    (value.success ? '✅ 部署成功' : '❌ 部署失败') + ' · 退出码 ' + (value.code ?? '无') +
+      (value.timedOut ? ' · 已超时' : '') + ' · ' + seconds + 's',
+    '$ ' + value.script,
+    'cwd: ' + value.cwd,
+    value.stdout?.trim() ? value.stdout : '(stdout 空)',
+    value.stderr?.trim() ? '[stderr]\n' + value.stderr : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+async function handleDeploy(button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '部署中…';
+  try {
+    const value = await api('/deploy', { method: 'POST', body: '{}' });
+    renderDeployResult(value);
+    toast(value.success ? '站点部署完成（' + (Number(value.durationMs || 0) / 1000).toFixed(1) + 's）' : '部署失败：' + (value.code ?? '未知退出码'), !value.success);
+  } catch (error) {
+    toast('部署失败：' + error.message, true);
+  } finally {
+    button.disabled = !(state?.config?.deploy?.configured);
+    button.textContent = label;
+  }
+}
+
+$('deploy').onclick = () => handleDeploy($('deploy'));
+$('deployNow').onclick = () => handleDeploy($('deployNow'));
+
 $('saveConfig').onclick = async () => {
   try {
     await api('/config', {
@@ -393,6 +517,9 @@ $('saveConfig').onclick = async () => {
         },
         publish: {
           allowedHosts: $('cfgHosts').value.split(',').map((s) => s.trim()).filter(Boolean),
+        },
+        deploy: {
+          script: $('cfgDeploy').value.trim(),
         },
       }),
     });

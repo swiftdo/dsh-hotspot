@@ -279,7 +279,23 @@ git push origin HEAD
 
 不用 `git add -A` 是有意的：自动发布时工作区通常有你的半成品，一个 `add -A` 就把它们全提交并发上线了。
 
-⚠️ 构建命令与部署命令目前**写死在 `src/cli.js` 的 `cmdPublish`**（`yarn build` 与 `./deploy.sh --no-git --skip-build`）。这不是通用约定，是作者自己站点的流水线——你的站点若用别的构建/部署方式，要么改这两行，要么别用 `publish`，手动执行上面五步。
+⚠️ `publish` 的构建与部署命令仍**写死在 `src/cli.js` 的 `cmdPublish`**（`yarn build` 与 `./deploy.sh --no-git --skip-build`）。这不是通用约定，是作者自己站点的流水线——命令行发布若用别的构建/部署方式，要么改这两行，要么别用 `publish`，手动执行上面五步。
+
+### 面板里的「部署站点」按钮（可配置）
+
+控制面板与插件页头各有一个「部署站点」按钮，它执行的命令**由配置决定，不写死在代码里**：
+
+```json
+{
+  "deploy": { "script": "npm run build && ./deploy.sh --no-git --skip-build" }
+}
+```
+
+- 在「设置 → 站点部署」里填写脚本，或 POST `/hotspot/api/config` 带 `{"deploy":{"script":"…"}}`。
+- **留空即解绑**：`deploy.script` 为空时页头不渲染按钮，接口返回 `ERR_NO_DEPLOY_SCRIPT`，没有配置就没有入口。
+- 脚本在 `projectRoot`（博客项目根目录）下由 `/bin/sh -c` 执行，单次超时 10 分钟，stdout/stderr 各保留末尾 64KB；结果弹窗展示命令、cwd、退出码、耗时与输出。
+- 并发请求会被 `ERR_DEPLOY_BUSY`（409）挡住，同一时间只跑一次；根目录失效则返回 `ERR_NO_BLOG_ROOT`。
+- 路由和其他面板接口一样只接受 loopback 同源请求，不额外做命令沙箱——**谁能拿到这个面板，谁就能执行这条命令**。
 
 ## 插件原理
 
@@ -453,7 +469,7 @@ dsh plugin --profile <profile> add <本仓库路径>
 | 源 | 增删 RSS / GitHub releases / HN 三种源，保存即写回配置文件 |
 | 候选 | 看当日候选、分数、多个来源的原文摘要，一键生成草稿 |
 | 内容 | 草稿与已发布文章列表，可预览、在线编辑、转正 |
-| 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单；画像 tag 与关键词只读展示 |
+| 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单、部署脚本；画像 tag 与关键词只读展示 |
 
 接口都在 `/hotspot/api/` 下，普通 Node http handler，可直接 curl：
 
@@ -461,12 +477,13 @@ dsh plugin --profile <profile> add <本仓库路径>
 |---|---|---|
 | GET | `/hotspot/api/state` | 一次返回 sources / config / articles / drafts / 最新 digest |
 | POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
-| POST | `/hotspot/api/config` | 局部更新 rank / publish |
+| POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.script |
 | POST | `/hotspot/api/run` | 触发一次抓取 |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿 |
 | GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
 | POST | `/hotspot/api/article` | 保存正文 |
 | POST | `/hotspot/api/article-promote` | 草稿转正 |
+| POST | `/hotspot/api/deploy` | 执行 `deploy.script`（未绑定 → 400，已在跑 → 409），返回退出码与输出 |
 
 **为什么不做 React 客户端插件**：`dsh.client` 需要引入客户端构建链，还要绑定预发布期的客户端 UI API。这几个页面都是表格和表单，单个零依赖 HTML 足够；省下的是一整条会随 DSH 版本失效的耦合。
 
@@ -475,7 +492,7 @@ dsh plugin --profile <profile> add <本仓库路径>
 ## 已知限制
 
 - **只支持 VitePress**。换生成器要写 `Target` 适配器（`src/adapters/target-vitepress.js` 是唯一实现）。
-- **`publish` 的构建/部署命令写死**（`yarn build`、`./deploy.sh --no-git --skip-build`），见上节。
+- **`publish` 的构建/部署命令写死**（`yarn build`、`./deploy.sh --no-git --skip-build`）；面板的「部署站点」按钮不走这套逻辑，只执行配置里的 `deploy.script`。
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。

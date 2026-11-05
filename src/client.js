@@ -1242,6 +1242,9 @@ window.__ModuleLoader__.load({
       const [rankClusterThreshold, setRankClusterThreshold] = useState(0.6);
       const [publishMaxPerDay, setPublishMaxPerDay] = useState(3);
       const [publishAllowedHosts, setPublishAllowedHosts] = useState('');
+      const [deployScript, setDeployScript] = useState('');
+      const [deploying, setDeploying] = useState(false);
+      const [deployResult, setDeployResult] = useState(null);
       const [savingConfig, setSavingConfig] = useState(false);
 
       // 博客根目录快速绑定与生成草稿必填弹窗状态
@@ -1313,6 +1316,7 @@ window.__ModuleLoader__.load({
             setPublishAllowedHosts(cfg.publish.allowedHosts.join('\n'));
           }
         }
+        setDeployScript(cfg.deploy?.script || '');
       };
 
       const loadState = useCallback(async () => {
@@ -1630,6 +1634,9 @@ window.__ModuleLoader__.load({
             publish: {
               maxPerDay: Number(publishMaxPerDay) || 3,
               allowedHosts: allowedList
+            },
+            deploy: {
+              script: deployScript.trim()
             }
           };
 
@@ -1652,6 +1659,34 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const handleDeploy = async () => {
+        if (deploying) return;
+        setDeploying(true);
+        try {
+          const res = await fetch(`${API_BASE}/deploy`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}'
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showToast(data.error || data.message || '部署失败', true);
+            return;
+          }
+          const value = data.value;
+          setDeployResult(value);
+          const seconds = (Number(value.durationMs || 0) / 1000).toFixed(1);
+          showToast(
+            value.success ? `✅ 站点部署完成（${seconds}s）` : `❌ 部署失败：${data.message}（${seconds}s）`,
+            !value.success
+          );
+        } catch (err) {
+          showToast(err.message || '部署请求失败', true);
+        } finally {
+          setDeploying(false);
+        }
+      };
+
       // 筛选候选
       const rawItems = state?.digest?.items || [];
       const items = rawItems.filter(item => {
@@ -1665,6 +1700,24 @@ window.__ModuleLoader__.load({
           item.summary?.toLowerCase().includes(q)
         );
       });
+
+      const deployConfigured = Boolean(state?.config?.deploy?.configured);
+      const savedDeployScript = state?.config?.deploy?.script || '';
+      const deployCodeStyle = {
+        margin: 0,
+        padding: '8px 10px',
+        borderRadius: 6,
+        background: 'rgba(255, 255, 255, 0.04)',
+        border: '1px solid var(--dsw-alias-border-l1, #2d303b)',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: 12,
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        maxHeight: 220,
+        overflow: 'auto',
+        userSelect: 'text'
+      };
 
       return h('div', { className: 'hs-root' }, [
         // ── 顶部 Header ──
@@ -1734,6 +1787,29 @@ window.__ModuleLoader__.load({
                 h('path', { d: 'M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67' })
               ]),
               loading ? '刷新中' : '刷新'
+            ]),
+            (state?.config?.deploy?.configured) && h('button', {
+              className: 'hs-btn',
+              onClick: handleDeploy,
+              disabled: deploying || !isBlogConfigured,
+              title: isBlogConfigured
+                ? `执行部署脚本：${state.config.deploy.script}`
+                : '先在「策略与路径配置」里绑定博客项目根目录'
+            }, [
+              h('svg', {
+                width: 14,
+                height: 14,
+                viewBox: '0 0 24 24',
+                fill: 'none',
+                stroke: 'currentColor',
+                strokeWidth: 2,
+                className: deploying ? 'hs-spinning' : ''
+              }, [
+                h('path', { d: 'M12 3v12' }),
+                h('path', { d: 'm7 8 5-5 5 5' }),
+                h('path', { d: 'M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4' })
+              ]),
+              deploying ? '部署中...' : '部署站点'
             ]),
             h('button', {
               className: 'hs-btn primary',
@@ -2518,7 +2594,53 @@ window.__ModuleLoader__.load({
               ])
             ]),
 
-            // 4. 当前博客画像索引 Card
+            // 4. 站点部署 Card
+            h('div', { className: 'hs-card', key: 'deploy-card' }, [
+              h('div', { className: 'hs-card-header' }, [
+                h('div', null, [
+                  h('div', { className: 'hs-card-title' }, '站点部署'),
+                  h('div', { className: 'hs-card-subtitle' }, '绑定一条部署命令后，页头才会出现「部署站点」按钮；留空即解绑')
+                ]),
+                h('span', {
+                  style: {
+                    fontSize: 11,
+                    padding: '3px 9px',
+                    borderRadius: 999,
+                    whiteSpace: 'nowrap',
+                    background: deployConfigured ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.15)',
+                    color: deployConfigured ? '#34d399' : '#94a3b8'
+                  }
+                }, deployConfigured ? '已绑定' : '未绑定')
+              ]),
+              h('div', { className: 'hs-form-item' }, [
+                h('label', { className: 'hs-form-label' }, '部署脚本 (deploy.script)'),
+                h('textarea', {
+                  className: 'hs-textarea',
+                  style: { height: 86, width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
+                  placeholder: 'npm run build && ./deploy.sh --no-git --skip-build',
+                  value: deployScript,
+                  onChange: (e) => setDeployScript(e.target.value)
+                }),
+                h('div', { className: 'hs-form-hint' }, '在博客项目根目录下由 /bin/sh -c 执行，单次最长 10 分钟，输出保留末尾 64KB。留空保存后，页头按钮即消失。')
+              ]),
+              h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } }, [
+                h('button', {
+                  className: 'hs-btn',
+                  type: 'button',
+                  disabled: deploying || !deployConfigured || !isBlogConfigured,
+                  title: !deployConfigured
+                    ? '先在下方填写并保存部署脚本'
+                    : (!isBlogConfigured ? '先在「博客仓库与文档目录」绑定博客根目录' : '用已保存的脚本立即部署'),
+                  onClick: handleDeploy
+                }, deploying ? '部署中...' : '立即部署'),
+                h('span', { className: 'hs-form-hint', style: { marginTop: 0 } },
+                  deployConfigured ? `已保存：${savedDeployScript}` : '此时页头不显示「部署站点」按钮'),
+                deployConfigured && deployScript.trim() !== savedDeployScript
+                  && h('span', { style: { fontSize: 11, color: '#fbbf24' } }, '（表单已改动，保存后生效）')
+              ])
+            ]),
+
+            // 5. 当前博客画像索引 Card
             h('div', { className: 'hs-card' }, [
               h('div', { className: 'hs-card-header' }, [
                 h('div', { className: 'hs-card-title' }, '当前博客画像索引'),
@@ -2542,7 +2664,7 @@ window.__ModuleLoader__.load({
               ])
             ]),
 
-            // 5. 底部操作按钮栏
+            // 6. 底部操作按钮栏
             h('div', {
               style: {
                 display: 'flex',
@@ -2571,6 +2693,51 @@ window.__ModuleLoader__.load({
                   showToast('已重新探测博客数据');
                 }
               }, '重新探测博客数据')
+            ])
+          ])
+        ]),
+
+        // ── 站点部署结果 Modal ──
+        deployResult && h('div', { className: 'hs-modal-mask', key: 'deploy-modal' }, [
+          h('div', { className: 'hs-modal', style: { width: 760, maxWidth: '92vw' } }, [
+            h('div', { className: 'hs-modal-header' }, [
+              h('h3', { className: 'hs-modal-title' }, deployResult.success ? '✅ 站点部署完成' : '❌ 站点部署失败'),
+              h('button', { className: 'hs-btn ghost', onClick: () => setDeployResult(null) }, '关闭')
+            ]),
+            h('div', { className: 'hs-modal-body', style: { maxHeight: '60vh', overflowY: 'auto' } }, [
+              h('div', {
+                style: {
+                  display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, marginBottom: 12,
+                  color: 'var(--dsw-alias-label-secondary, #8c909e)'
+                }
+              }, [
+                h('span', null, `退出码：${deployResult.code ?? '无'}`),
+                deployResult.signal && h('span', null, `信号：${deployResult.signal}`),
+                h('span', null, `耗时：${(Number(deployResult.durationMs || 0) / 1000).toFixed(1)}s`),
+                deployResult.timedOut && h('span', { style: { color: '#f87171' } }, '已超时并强制结束')
+              ]),
+              h('div', { style: { marginBottom: 12 } }, [
+                h('div', { className: 'hs-form-label' }, '执行命令'),
+                h('div', { style: deployCodeStyle }, deployResult.script),
+                h('div', { className: 'hs-form-label', style: { marginTop: 8 } }, '工作目录'),
+                h('div', { style: deployCodeStyle }, deployResult.cwd)
+              ]),
+              h('div', { style: { marginBottom: 12 } }, [
+                h('div', { className: 'hs-form-label' }, 'stdout'),
+                h('div', { style: deployCodeStyle }, deployResult.stdout?.trim() ? deployResult.stdout : '（无输出）')
+              ]),
+              deployResult.stderr?.trim() && h('div', null, [
+                h('div', { className: 'hs-form-label' }, 'stderr'),
+                h('div', { style: { ...deployCodeStyle, color: '#f87171' } }, deployResult.stderr)
+              ])
+            ]),
+            h('div', { className: 'hs-modal-footer' }, [
+              h('button', { className: 'hs-btn', onClick: () => setDeployResult(null) }, '关闭'),
+              h('button', {
+                className: 'hs-btn primary',
+                disabled: deploying,
+                onClick: handleDeploy
+              }, deploying ? '部署中...' : '重新部署')
             ])
           ])
         ]),

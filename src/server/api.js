@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
 
 /**
@@ -33,6 +33,81 @@ export const BUILTIN_SOURCES = [
 ];
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
+
+// 站点部署：命令来自项目配置里的 deploy.script，在博客根目录下用 /bin/sh 执行。
+// 面板只在 loopback 同源下可达，所以不额外做命令沙箱；真正要防的是「忘记配置也能跑」。
+const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
+const DEPLOY_OUTPUT_LIMIT = 64 * 1024;
+
+function tail(text, limit = DEPLOY_OUTPUT_LIMIT) {
+  if (text.length <= limit) return text;
+  return `…（输出超过 ${limit} 字符，已保留末尾）\n${text.slice(-limit)}`;
+}
+
+/**
+ * 执行部署脚本，永不 reject：失败也把 stdout/stderr/退出码交回给调用方。
+ * @param {string} script
+ * @param {string} cwd
+ * @returns {Promise<{ success: boolean, code: number|null, signal: string|null, stdout: string, stderr: string, durationMs: number, timedOut: boolean }>}
+ */
+export function runDeployScript(script, cwd) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    let timer = null;
+
+    const finish = (code, signal, error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve({
+        success: !timedOut && !error && code === 0,
+        code,
+        signal: signal ?? null,
+        stdout: tail(stdout),
+        stderr: tail(stderr),
+        durationMs: Date.now() - startedAt,
+        timedOut,
+      });
+    };
+
+    let child;
+    try {
+      child = spawn('/bin/sh', ['-c', script], {
+        cwd,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      stderr = error.message;
+      finish(null, null, error);
+      return;
+    }
+
+    timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* 进程可能已经退出 */
+      }
+    }, DEPLOY_TIMEOUT_MS);
+
+    child.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+      if (stdout.length > DEPLOY_OUTPUT_LIMIT * 2) stdout = stdout.slice(-DEPLOY_OUTPUT_LIMIT);
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+      if (stderr.length > DEPLOY_OUTPUT_LIMIT * 2) stderr = stderr.slice(-DEPLOY_OUTPUT_LIMIT);
+    });
+    child.on('error', (error) => finish(null, null, error));
+    child.on('close', (code, signal) => finish(code, signal));
+  });
+}
 
 function sendJson(res, status, value) {
   const body = JSON.stringify(value, null, 2);
@@ -174,6 +249,7 @@ export function createRoutes(deps) {
   let currentStore = deps.store;
   let currentTarget = deps.target;
   let currentRunScan = deps.runScan;
+  let deployInProgress = false;
 
   function getConfigFile() {
     if (!currentProjectRoot) return '';
@@ -258,6 +334,11 @@ export function createRoutes(deps) {
           allowedHosts: ['sopilot.net', 'github.com'],
           autoTiers: ['tier-1', 'tier-2'],
           ...(config.publish ?? {}),
+        },
+        // deploy.script 为空时面板不渲染「部署站点」按钮 —— 没绑定命令就不给入口。
+        deploy: {
+          script: String(config.deploy?.script ?? '').trim(),
+          configured: Boolean(String(config.deploy?.script ?? '').trim()),
         },
       },
       profile: {
@@ -418,6 +499,16 @@ export function createRoutes(deps) {
           config.publish = publish;
         }
 
+        // 4. 站点部署脚本：空字符串视为解绑，面板随之隐藏按钮
+        if (body.deploy && typeof body.deploy === 'object') {
+          const script = String(body.deploy.script ?? '').trim();
+          if (script.length > 4096) {
+            return sendJson(res, 400, { ok: false, message: '部署脚本过长（上限 4096 字符）' });
+          }
+          if (script) config.deploy = { script };
+          else delete config.deploy;
+        }
+
         await writeConfig(config);
 
         // 4. 触发运行时刷新
@@ -442,6 +533,10 @@ export function createRoutes(deps) {
             digestDir: config.digestDir || '.hotspot',
             rank: config.rank ?? {},
             publish: config.publish ?? {},
+            deploy: {
+              script: String(config.deploy?.script ?? '').trim(),
+              configured: Boolean(String(config.deploy?.script ?? '').trim()),
+            },
           },
         });
       },
@@ -759,6 +854,55 @@ export function createRoutes(deps) {
       },
     },
     {
+      kind: 'exact',
+      path: `${PREFIX}/api/models`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET'])) return;
+        if (typeof deps.listModels !== 'function') {
+          sendJson(res, 200, {
+            ok: true,
+            message: '当前环境没有接入模型目录',
+            value: { providers: [], selection: { provider: '', model: '' } },
+          });
+          return;
+        }
+        try {
+          const value = await deps.listModels();
+          sendJson(res, 200, { ok: true, value });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
+    {
+      method: 'POST',
+      kind: 'exact',
+      path: `${PREFIX}/api/models`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (typeof deps.saveModels !== 'function') {
+          sendJson(res, 501, { ok: false, code: 'ERR_NO_MODELS', error: '当前环境无法保存模型选择' });
+          return;
+        }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        try {
+          const value = await deps.saveModels({
+            provider: body?.provider ? String(body.provider) : '',
+            model: body?.model ? String(body.model) : '',
+          });
+          sendJson(res, 200, { ok: true, message: '写作模型已保存', value });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
+    {
       method: 'POST',
       kind: 'exact',
       path: `${PREFIX}/api/generate`,
@@ -800,6 +944,8 @@ export function createRoutes(deps) {
             target,
             projectRoot: currentProjectRoot,
             provider: body?.provider ? String(body.provider) : undefined,
+            model: body?.model ? String(body.model) : undefined,
+            mode: body?.mode === 'direct' ? 'direct' : 'agent',
           });
           // 生成完立刻用同一套闸门验一遍 —— 面板直接显示违规，不必再切回终端。
           let checks = null;
@@ -818,6 +964,59 @@ export function createRoutes(deps) {
           });
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/deploy`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (deployInProgress) {
+          sendJson(res, 409, {
+            ok: false,
+            code: 'ERR_DEPLOY_BUSY',
+            message: '已有部署任务在执行，请等它结束',
+            error: '已有部署任务在执行，请等它结束',
+          });
+          return;
+        }
+        const config = await readConfig();
+        const script = String(config.deploy?.script ?? '').trim();
+        if (!script) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_DEPLOY_SCRIPT',
+            message: '尚未绑定部署脚本，先在「策略与路径配置」里填写 deploy.script',
+            error: '尚未绑定部署脚本，先在「策略与路径配置」里填写 deploy.script',
+          });
+          return;
+        }
+        const rootRaw = config.projectRoot || currentProjectRoot;
+        const root = rootRaw ? path.resolve(rootRaw) : '';
+        if (!root || !existsSync(root)) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            message: '尚未配置有效的博客项目根目录，部署脚本没有可执行的工作目录',
+            error: '尚未配置有效的博客项目根目录，部署脚本没有可执行的工作目录',
+          });
+          return;
+        }
+
+        deployInProgress = true;
+        try {
+          const value = await runDeployScript(script, root);
+          sendJson(res, 200, {
+            ok: true,
+            success: value.success,
+            message: value.success
+              ? '站点部署完成'
+              : (value.timedOut ? '部署脚本超时' : `部署脚本退出码 ${value.code ?? '未知'}`),
+            value: { ...value, script, cwd: root },
+          });
+        } finally {
+          deployInProgress = false;
         }
       },
     },
