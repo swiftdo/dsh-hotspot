@@ -760,6 +760,35 @@ window.__ModuleLoader__.load({
       const [scaffoldModalItem, setScaffoldModalItem] = useState(null);
       const [scaffoldProjectRoot, setScaffoldProjectRoot] = useState('');
       const [scaffolding, setScaffolding] = useState(false);
+      const [pickingDir, setPickingDir] = useState(false);
+
+      const handlePickDirectory = async () => {
+        if (pickingDir) return null;
+        setPickingDir(true);
+        try {
+          // 1. 优先尝试 DSH 宿主客户端提供的原生目录选择器
+          if (typeof props.pickDirectory === 'function') {
+            try {
+              const res = await props.pickDirectory();
+              if (res) return res;
+            } catch (err) {
+              console.warn('[dsh-hotspot] props.pickDirectory error:', err);
+            }
+          }
+          // 2. 降级尝试服务端原生目录选择器 API
+          const res = await fetch(`${API_BASE}/pick-dir`, { method: 'POST' });
+          const json = await res.json();
+          if (json.ok && json.path) {
+            return json.path;
+          }
+          return null;
+        } catch (e) {
+          console.warn('[dsh-hotspot] handlePickDirectory error:', e);
+          return null;
+        } finally {
+          setPickingDir(false);
+        }
+      };
 
       const isBlogConfigured = Boolean(state?.blog?.configured && state?.blog?.projectRoot);
 
@@ -1170,14 +1199,27 @@ window.__ModuleLoader__.load({
               h('div', { className: 'hs-alert-desc' },
                 'dsh-hotspot 保持零假设与环境解耦，默认不预设任何博客路径。在落地草稿或发布前，必须提供有效的博客项目绝对路径（如 VitePress 博客根目录）。'
               ),
-              h('div', { style: { display: 'flex', gap: 10, marginTop: 4 } }, [
+              h('div', { style: { display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' } }, [
                 h('input', {
                   className: 'hs-input',
-                  style: { flex: 1 },
-                  placeholder: '输入博客根目录绝对路径，如 /Users/username/Code/my-blog',
+                  style: { flex: '1 1 260px' },
+                  placeholder: '选择或输入博客根目录路径，如 /Users/username/Code/my-blog',
                   value: quickBlogRoot,
                   onChange: (e) => setQuickBlogRoot(e.target.value)
                 }),
+                h('button', {
+                  className: 'hs-btn',
+                  type: 'button',
+                  disabled: pickingDir,
+                  title: '调起系统原生文件夹选择器',
+                  onClick: async () => {
+                    const dir = await handlePickDirectory();
+                    if (dir) setQuickBlogRoot(dir);
+                  }
+                }, [
+                  h('span', { style: { marginRight: 4 } }, '📁'),
+                  pickingDir ? '选择中...' : '选择文件夹'
+                ]),
                 h('button', {
                   className: 'hs-btn primary',
                   onClick: handleSaveQuickBlog,
@@ -1567,13 +1609,28 @@ window.__ModuleLoader__.load({
               ]),
               h('div', { style: { marginBottom: 14 } }, [
                 h('label', { className: 'hs-form-label' }, '博客项目根目录绝对路径 (projectRoot)'),
-                h('input', {
-                  className: 'hs-input',
-                  style: { width: '100%' },
-                  placeholder: '/Users/you/Code/my-blog',
-                  value: blogProjectRoot,
-                  onChange: (e) => setBlogProjectRoot(e.target.value)
-                }),
+                h('div', { style: { display: 'flex', gap: 8 } }, [
+                  h('input', {
+                    className: 'hs-input',
+                    style: { flex: 1 },
+                    placeholder: '选择或输入博客根目录绝对路径，如 /Users/you/Code/my-blog',
+                    value: blogProjectRoot,
+                    onChange: (e) => setBlogProjectRoot(e.target.value)
+                  }),
+                  h('button', {
+                    className: 'hs-btn',
+                    type: 'button',
+                    disabled: pickingDir,
+                    title: '调起系统原生文件夹选择器',
+                    onClick: async () => {
+                      const dir = await handlePickDirectory();
+                      if (dir) setBlogProjectRoot(dir);
+                    }
+                  }, [
+                    h('span', { style: { marginRight: 4 } }, '📁'),
+                    pickingDir ? '选择中...' : '选择文件夹'
+                  ])
+                ]),
                 h('div', { className: 'hs-form-hint' }, `当前生效路径: ${state?.blog?.projectRoot || '未配置'}`)
               ]),
               h('div', { className: 'hs-form-grid' }, [
@@ -1773,14 +1830,29 @@ window.__ModuleLoader__.load({
               ]),
               h('div', { className: 'hs-form-item' }, [
                 h('label', { className: 'hs-form-label' }, '博客项目根目录（绝对路径 · 必填）'),
-                h('input', {
-                  className: 'hs-input',
-                  style: { width: '100%' },
-                  placeholder: '/Users/username/Code/my-blog',
-                  value: scaffoldProjectRoot,
-                  onChange: (e) => setScaffoldProjectRoot(e.target.value),
-                  autoFocus: true
-                })
+                h('div', { style: { display: 'flex', gap: 8 } }, [
+                  h('input', {
+                    className: 'hs-input',
+                    style: { flex: 1 },
+                    placeholder: '选择或输入博客根目录路径，如 /Users/username/Code/my-blog',
+                    value: scaffoldProjectRoot,
+                    onChange: (e) => setScaffoldProjectRoot(e.target.value),
+                    autoFocus: true
+                  }),
+                  h('button', {
+                    className: 'hs-btn',
+                    type: 'button',
+                    disabled: pickingDir,
+                    title: '调起系统原生文件夹选择器',
+                    onClick: async () => {
+                      const dir = await handlePickDirectory();
+                      if (dir) setScaffoldProjectRoot(dir);
+                    }
+                  }, [
+                    h('span', { style: { marginRight: 4 } }, '📁'),
+                    pickingDir ? '选择中...' : '选择文件夹'
+                  ])
+                ])
               ])
             ]),
             h('div', { className: 'hs-modal-footer' }, [
@@ -1817,7 +1889,7 @@ window.__ModuleLoader__.load({
     }
 
     // ── cordis 插件扩展定义 ─────────────────────────────────────────
-    const inject = ['slots', 'layout'];
+    const inject = ['slots', 'layout', 'uiWorkspace'];
 
     function apply(ctx) {
       // 1. 注册左侧栏入口 (sidebar.panellist)
@@ -1841,6 +1913,17 @@ window.__ModuleLoader__.load({
               if (layout && typeof layout.selectPanel === 'function') {
                 layout.selectPanel(null);
               }
+            },
+            pickDirectory: async () => {
+              const uiWs = ctx.get('uiWorkspace');
+              if (uiWs && typeof uiWs.pickDirectory === 'function') {
+                try {
+                  return await uiWs.pickDirectory();
+                } catch (e) {
+                  console.warn('[dsh-hotspot] uiWorkspace.pickDirectory error', e);
+                }
+              }
+              return null;
             }
           })
         }, HotspotMainPanel);

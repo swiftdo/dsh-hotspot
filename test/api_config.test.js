@@ -219,3 +219,40 @@ test('未配置博客路径时拦截草稿落地，且提供 projectRoot 时可�
   assert.ok(scaffoldCalledWith, 'target.scaffold 应被调用');
   assert.equal(scaffoldCalledWith.candidate.id, 'h-20261105-01');
 });
+
+test('API 路由：支持文件夹选择器 pick-dir 路由与双前缀兼容', async () => {
+  const customPickedPath = '/Users/tester/Documents/my-custom-blog';
+  const deps = {
+    pickDirectory: async () => customPickedPath,
+  };
+  const routes = createRoutes(deps);
+
+  // 1. 验证主路由 /dsh-hotspot/api/pick-dir
+  const pickMain = routes.find((r) => r.path === '/dsh-hotspot/api/pick-dir');
+  assert.ok(pickMain, '应注册 /dsh-hotspot/api/pick-dir 路由');
+  const { req: pReq, res: pRes, result: pResult } = mockReqRes('POST', '/dsh-hotspot/api/pick-dir');
+  await pickMain.handler(pReq, pRes);
+  const pJson = pResult().json();
+  assert.equal(pJson.ok, true);
+  assert.equal(pJson.path, customPickedPath);
+
+  // 2. 验证兼容路由 /hotspot/api/pick-dir
+  const pickLegacy = routes.find((r) => r.path === '/hotspot/api/pick-dir');
+  assert.ok(pickLegacy, '应注册 /hotspot/api/pick-dir 兼容路由');
+  const { req: lReq, res: lRes, result: lResult } = mockReqRes('POST', '/hotspot/api/pick-dir');
+  await pickLegacy.handler(lReq, lRes);
+  const lJson = lResult().json();
+  assert.equal(lJson.ok, true);
+  assert.equal(lJson.path, customPickedPath);
+
+  // 3. 用户取消选择或返回 null 的情况
+  const cancelDeps = {
+    pickDirectory: async () => null,
+  };
+  const cancelRoutes = createRoutes(cancelDeps);
+  const cancelRoute = cancelRoutes.find((r) => r.path === '/dsh-hotspot/api/pick-dir');
+  const { req: cReq, res: cRes, result: cResult } = mockReqRes('POST', '/dsh-hotspot/api/pick-dir');
+  await cancelRoute.handler(cReq, cRes);
+  assert.equal(cResult().json().ok, true);
+  assert.equal(cResult().json().path, null);
+});

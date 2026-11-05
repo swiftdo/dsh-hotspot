@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
 
 /**
@@ -106,6 +107,39 @@ function guard(req, res, methods) {
     return false;
   }
   return true;
+}
+
+export async function pickNativeDirectory() {
+  const platform = process.platform;
+  return new Promise((resolve) => {
+    if (platform === 'darwin') {
+      const script = 'POSIX path of (choose folder with prompt "请选择博客项目根目录")';
+      execFile('osascript', ['-e', script], { timeout: 60000 }, (error, stdout) => {
+        if (error) return resolve(null);
+        const dir = (stdout || '').trim();
+        resolve(dir || null);
+      });
+    } else if (platform === 'win32') {
+      const psCmd =
+        '[System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = "请选择博客项目根目录"; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){ Write-Output $f.SelectedPath }';
+      execFile('powershell', ['-NoProfile', '-Command', psCmd], { timeout: 60000 }, (error, stdout) => {
+        if (error) return resolve(null);
+        const dir = (stdout || '').trim();
+        resolve(dir || null);
+      });
+    } else {
+      execFile(
+        'zenity',
+        ['--file-selection', '--directory', '--title=请选择博客项目根目录'],
+        { timeout: 60000 },
+        (error, stdout) => {
+          if (error) return resolve(null);
+          const dir = (stdout || '').trim();
+          resolve(dir || null);
+        }
+      );
+    }
+  });
 }
 
 function validateSource(input) {
@@ -495,6 +529,24 @@ export function createRoutes(deps) {
           if (existing.exists) return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
           const result = await effectiveTarget.scaffold(item, { draft: true, slug: body.slug });
           sendJson(res, 200, { ok: true, value: result });
+        } catch (error) {
+          sendJson(res, 500, { ok: false, message: error.message });
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/pick-dir`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET', 'POST'])) return;
+        try {
+          let picked = null;
+          if (typeof deps.pickDirectory === 'function') {
+            picked = await deps.pickDirectory();
+          } else {
+            picked = await pickNativeDirectory();
+          }
+          sendJson(res, 200, { ok: true, path: picked });
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
         }
