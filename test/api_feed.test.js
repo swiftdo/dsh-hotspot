@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -174,4 +174,48 @@ test('feed 最多返回 300 条', async (t) => {
 
   const value = await readState(makeDeps(tempDir, store));
   assert.equal(value.feed.items.length, 300);
+});
+
+test('feed 条目的 sourceName 把源 id 翻成可读名字，未知源退回 id', async (t) => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'hotspot-feed-test-'));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+  writeFileSync(path.join(tempDir, 'dsh-hotspot.config.json'), JSON.stringify({
+    sources: [
+      { id: 'swift-releases', kind: 'github-release', repo: 'apple/swift' },
+      { id: 'swift-blog', kind: 'rss', url: 'https://www.swift.org/atom.xml' },
+    ],
+  }));
+
+  const store = {
+    loadDigest: async () => digest(),
+    loadRaw: async () => [
+      rawItem({ id: 'raw-gh', source: 'swift-releases', url: 'https://example.com/gh' }),
+      rawItem({ id: 'raw-blog', source: 'swift-blog', url: 'https://example.com/blog' }),
+      rawItem({ id: 'raw-unknown', source: 's9', url: 'https://example.com/unknown' }),
+    ],
+  };
+
+  const value = await readState(makeDeps(tempDir, store));
+  const byUrl = Object.fromEntries(value.feed.items.map((item) => [item.url, item]));
+  assert.equal(byUrl['https://example.com/gh'].sourceName, 'GitHub · apple/swift', 'github-release 没配 name 时按 repo 拼名字');
+  assert.equal(byUrl['https://example.com/blog'].sourceName, 'swift.org', 'rss 没配 name 时退回域名');
+  assert.equal(byUrl['https://example.com/unknown'].sourceName, 's9', '未知源不编造名字，退回 id');
+});
+
+test('配置里给内置源改名时，以配置为准', async (t) => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'hotspot-feed-test-'));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+  writeFileSync(path.join(tempDir, 'dsh-hotspot.config.json'), JSON.stringify({
+    sources: [{ id: 'sopilot-hottweets', kind: 'rss', url: 'https://sopilot.net/rss/hottweets', name: '我的推特源' }],
+  }));
+
+  const store = {
+    loadDigest: async () => digest(),
+    loadRaw: async () => [rawItem({ id: 'raw-sp', source: 'sopilot-hottweets' })],
+  };
+
+  const value = await readState(makeDeps(tempDir, store));
+  assert.equal(value.feed.items[0].sourceName, '我的推特源');
 });

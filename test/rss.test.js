@@ -114,7 +114,30 @@ test('buildFeedItems：候选描述带排名与得分，分类带源名与标签
   assert.match(items[0].description, /3 源共现/);
   assert.match(items[0].description, /候选 A 的摘要/);
   assert.deepEqual(items[0].categories, ['候选 #1', 'Swift.org', 'Hacker News', 'swift', 'ai']);
-  assert.equal(items[1].description, '候选 #2 · 得分 100.0');
+  // 候选是多源共现的，描述里把每个源都写出来，阅读器不展示 category 也看得到出处。
+  assert.match(items[0].description, /来源：Swift\.org、Hacker News/);
+  assert.equal(items[1].description, '候选 #2 · 得分 100.0\n来源：sopilot-hottweets');
+});
+
+test('buildFeedItems：文章条目带来源名与源地址，描述首行写来源', () => {
+  const items = buildFeedItems({
+    digest,
+    articles,
+    sourceNames: { 'swift-org': 'Swift.org', 'hn-popular': 'Hacker News' },
+    sourceUrls: { 'swift-org': 'https://www.swift.org/atom.xml' },
+  });
+  const article = items.find((item) => item.title === '早上那篇');
+  assert.equal(article.sourceName, 'Swift.org');
+  assert.equal(article.sourceUrl, 'https://www.swift.org/atom.xml');
+  assert.ok(article.description.startsWith('来源：Swift.org'));
+  assert.match(article.description, /旧文章/);
+
+  const xml = buildRssXml({ title: 't', link: 'http://x/', items });
+  assert.match(xml, /<source url="https:\/\/www\.swift\.org\/atom\.xml">Swift\.org<\/source>/);
+  // 没有源地址时不写 <source>（RSS 2.0 的 source 必须带 url 才合法），但 category 仍保留来源名。
+  const hn = items.find((item) => item.title === '新一点的那篇');
+  assert.equal(hn.sourceUrl, '');
+  assert.ok(hn.categories.includes('Hacker News'));
 });
 
 test('buildFeedItems：没有 digest 时只出文章，且遵守条数上限', () => {

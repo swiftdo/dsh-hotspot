@@ -2264,7 +2264,10 @@ window.__ModuleLoader__.load({
                       ]),
                       h('div', { className: 'hs-candidate-meta' }, [
                         h('span', { style: { color: isHighRank ? 'var(--dsw-alias-brand-primary, #4db6a0)' : 'inherit', fontWeight: 500 } },
-                          `共现源：${item.sourceCount} 个`
+                          `来源：${
+                            [...new Set((item.sources || []).map((s) => sourceLabelOf(s.source)).filter(Boolean))].join('、') ||
+                            (item.sourceCount > 1 ? `${item.sourceCount} 个源` : '未知')
+                          }${item.sourceCount > 1 ? ` · ${item.sourceCount} 源共现` : ''}`
                         ),
                         item.slugHint && h('span', { className: 'hs-tag-pill' }, `slug: ${item.slugHint}`),
                         (item.tags || []).map(t => {
@@ -2288,7 +2291,7 @@ window.__ModuleLoader__.load({
                             h('span', {
                               className: 'hs-tag-pill',
                               style: { marginRight: 6, fontSize: 10 }
-                            }, s.sourceId || 'source'),
+                            }, sourceLabelOf(s.source) || s.sourceId || 'source'),
                             h('a', {
                               href: s.url,
                               target: '_blank',
@@ -2358,7 +2361,7 @@ window.__ModuleLoader__.load({
                   const whenText = when && !Number.isNaN(when.getTime())
                     ? when.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
                     : '';
-                  const sourceName = sourceLabelOf(item.source);
+                  const sourceName = item.sourceName || sourceLabelOf(item.source);
                   return h('div', {
                     key: item.id || `${item.url}-${idx}`,
                     className: 'hs-feed-row',

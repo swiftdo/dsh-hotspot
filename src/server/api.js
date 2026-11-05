@@ -437,6 +437,28 @@ export function createRoutes(deps) {
     return primary;
   }
 
+/**
+ * 源的展示名：配置里有 name 就用 name；github-release / hn 没有 name，
+ * 按 kind 拼一个可读的名字，实在不行退回域名，避免页面和 RSS 里直接出现源 id。
+ *
+ * @param {any} source
+ * @returns {string}
+ */
+function sourceLabel(source) {
+  if (!source) return '';
+  if (source.name) return String(source.name);
+  if (source.kind === 'github-release' && source.repo) return `GitHub · ${source.repo}`;
+  if (source.kind === 'hn') return 'Hacker News';
+  if (source.url) {
+    try {
+      return new URL(String(source.url)).hostname.replace(/^www\./, '');
+    } catch {
+      /* 非法 url 退回 id */
+    }
+  }
+  return String(source.id || '');
+}
+
   async function buildState() {
     const config = await readConfig();
     const hasConfiguredRoot = Boolean(
@@ -462,6 +484,13 @@ export function createRoutes(deps) {
     const rawItems = digest && typeof currentStore?.loadRaw === 'function'
       ? await currentStore.loadRaw(digest.date).catch(() => [])
       : [];
+    // 源的 id → 展示名 / 源地址：面板与 RSS 都要标「这条来自哪个源」。
+    const sourceNames = Object.fromEntries(
+      // 配置里的源排在后面：同名 id 时以用户的配置为准，内置源只做兜底。
+      [...BUILTIN_SOURCES, ...activeSources]
+        .filter((source) => source && source.id)
+        .map((source) => [source.id, sourceLabel(source)]),
+    );
     const candidateUrls = new Set();
     for (const item of digest?.items ?? []) {
       candidateUrls.add(canonicalUrl(item.url));
@@ -478,6 +507,7 @@ export function createRoutes(deps) {
           title: item.title ?? '',
           url: item.url ?? '',
           source: item.source ?? '',
+          sourceName: sourceNames[item.source] || item.source || '',
           sourceKind: item.sourceKind ?? '',
           publishedAt: item.publishedAt ?? '',
           summary: String(item.summary ?? '').slice(0, 200),
@@ -594,15 +624,20 @@ export function createRoutes(deps) {
           const host = String(req.headers.host || '127.0.0.1').trim();
           const selfUrl = `${proto}://${host}${PREFIX}/rss.xml`;
 
+          const allSources = [...(state.config.sources ?? []), ...state.builtinSources];
           const sourceNames = Object.fromEntries(
-            [...(state.config.sources ?? []), ...state.builtinSources]
-              .filter((source) => source && source.id)
-              .map((source) => [source.id, source.name || source.id]),
+            allSources.filter((source) => source && source.id).map((source) => [source.id, sourceLabel(source)]),
+          );
+          const sourceUrls = Object.fromEntries(
+            allSources
+              .filter((source) => source && source.id && source.url)
+              .map((source) => [source.id, String(source.url)]),
           );
           const items = buildFeedItems({
             digest: state.digest,
             articles: state.feed?.items ?? [],
             sourceNames,
+            sourceUrls,
           });
           const candidateCount = items.filter((item) => item.kind === 'candidate').length;
           const articleCount = items.length - candidateCount;

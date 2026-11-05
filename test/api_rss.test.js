@@ -136,6 +136,29 @@ test('GET /dsh-hotspot/rss.xml 返回候选在前、今日文章在后的可解�
   const last = body.match(/<item>[\s\S]*?原文标题[\s\S]*?<\/item>/)[0];
   assert.match(last, /<guid isPermaLink="true">https:\/\/example\.com\/b<\/guid>/);
   assert.match(last, /<pubDate>Thu, 05 Nov 2026 09:00:00 GMT<\/pubDate>/);
+  assert.match(last, /来源：s1/, '文章描述里写明来自哪个源');
+  assert.ok(!last.includes('<source url='), '源没有地址时不写 <source>，避免非法 RSS');
+});
+
+test('文章来自内置订阅源时，RSS 的 <source> 带源地址与显示名', async (t) => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'hotspot-rss-test-'));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+  const store = {
+    loadDigest: async () => digest(),
+    loadRaw: async () => [
+      rawItem({ id: 'raw-4', url: 'https://example.com/sopilot', title: '爆款推文', source: 'sopilot-hottweets' }),
+    ],
+  };
+
+  const route = rssRoute(makeDeps(tempDir, store));
+  const mock = mockReqRes('GET', '/dsh-hotspot/rss.xml');
+  await route.handler(mock.req, mock.res);
+
+  const { status, body } = mock.result();
+  assert.equal(status, 200);
+  assert.match(body, /<source url="https:\/\/sopilot\.net\/rss\/hottweets">SoPilot AI 爆款推文<\/source>/);
+  assert.match(body, /来源：SoPilot AI 爆款推文/);
 });
 
 test('没有 digest 时订阅源返回空 items 而不是报错', async (t) => {

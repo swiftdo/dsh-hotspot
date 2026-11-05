@@ -284,6 +284,13 @@ function rssUrl() {
   return location.origin + (state?.feed?.rssPath || '/dsh-hotspot/rss.xml');
 }
 
+function sourceLabelOf(id) {
+  if (!id) return '';
+  const all = [...(state?.config?.sources || []), ...(state?.builtinSources || [])];
+  const hit = all.find((source) => source.id === id);
+  return hit?.name || id;
+}
+
 function fmtTime(value) {
   const when = value ? new Date(value) : null;
   if (!when || Number.isNaN(when.getTime())) return '';
@@ -373,7 +380,8 @@ function renderItems() {
       '<span class="title" style="flex:1">' + esc(item.title) + '</span>' +
       '<a class="link-btn" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">原文</a>' +
       '<button class="ghost" data-scaffold="' + esc(item.id) + '">生成草稿</button></div>' +
-      '<div class="meta">' + tags + item.sourceCount + ' 个源 · ' + esc(item.id) + '</div>' +
+      '<div class="meta">' + tags + '来源：' + esc([...new Set((item.sources || []).map((src) => sourceLabelOf(src.source)))].join('、') || '未知') +
+        (item.sourceCount > 1 ? ' · ' + item.sourceCount + ' 源共现' : '') + '</div>' +
       '<details><summary>查看来源与摘要</summary>' + sources +
       '<pre>' + esc(item.summary || '（无摘要）') + '</pre></details>' +
       '</div>';
@@ -388,7 +396,7 @@ function renderItems() {
       const summary = String(item.summary || '').trim();
       return '<div class="feed-row">' +
         '<div class="title"><a href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.title || item.url) + '</a></div>' +
-        '<div class="meta">' + (item.source ? '<span class="tag">' + esc(item.source) + '</span>' : '') +
+        '<div class="meta">' + ((item.sourceName || item.source) ? '<span class="tag">' + esc(item.sourceName || item.source) + '</span>' : '') +
         esc(when) + (summary ? (when ? ' · ' : '') + esc(summary) : '') + '</div>' +
         '</div>';
     }).join('');

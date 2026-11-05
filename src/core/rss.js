@@ -76,6 +76,7 @@ function isHttpUrl(key) {
  *   digest?: { date?: string, generatedAt?: string, items?: any[] } | null,
  *   articles?: any[],
  *   sourceNames?: Record<string, string>,
+ *   sourceUrls?: Record<string, string>,
  *   limit?: number,
  * }} input
  * @returns {Array<{
@@ -87,9 +88,17 @@ function isHttpUrl(key) {
  *   pubDate: string,
  *   description: string,
  *   categories: string[],
+ *   sourceName: string,
+ *   sourceUrl: string,
  * }>}
  */
-export function buildFeedItems({ digest, articles = [], sourceNames = {}, limit = RSS_ITEM_LIMIT }) {
+export function buildFeedItems({
+  digest,
+  articles = [],
+  sourceNames = {},
+  sourceUrls = {},
+  limit = RSS_ITEM_LIMIT,
+}) {
   const candidates = Array.isArray(digest?.items) ? digest.items : [];
   const channelDate = digest?.date ?? '';
   const candidatePubDate = toRfc822(digest?.generatedAt) || toRfc822(channelDate ? `${channelDate}T00:00:00Z` : '');
@@ -123,9 +132,12 @@ export function buildFeedItems({ digest, articles = [], sourceNames = {}, limit 
       sourceCount > 1 ? `${sourceCount} 源共现` : '',
     ].filter(Boolean).join(' · ');
     const summary = plainSummary(item?.summary);
-    const sourceLabels = (Array.isArray(item?.sources) ? item.sources : [])
-      .map((source) => sourceNames[source?.source] || source?.source)
-      .filter(Boolean);
+    const sourceLabels = [...new Set(
+      (Array.isArray(item?.sources) ? item.sources : [])
+        .map((source) => sourceNames[source?.source] || source?.source)
+        .filter(Boolean),
+    )];
+    const sourceLine = sourceLabels.length ? `来源：${sourceLabels.join('、')}` : '';
 
     entries.push({
       kind: 'candidate',
@@ -134,8 +146,10 @@ export function buildFeedItems({ digest, articles = [], sourceNames = {}, limit 
       link,
       guid: `hotspot:${channelDate}:candidate:${item?.id || canonicalUrl(link)}`,
       pubDate: candidatePubDate,
-      description: [meta, summary].filter(Boolean).join('\n'),
+      description: [meta, sourceLine, summary].filter(Boolean).join('\n'),
       categories: [`候选 #${rank}`, ...sourceLabels, ...tags],
+      sourceName: sourceLabels[0] || '',
+      sourceUrl: '',
     });
   }
 
@@ -159,6 +173,8 @@ export function buildFeedItems({ digest, articles = [], sourceNames = {}, limit 
   for (const { item, link, pubDate } of rest) {
     if (entries.length >= limit) break;
     const sourceLabel = sourceNames[item?.source] || item?.source || '';
+    const summary = plainSummary(item?.summary);
+    // 文章只有一个来源，订阅条目里明确写出「来源：…」，阅读器不展示 category 时也能看见。
     entries.push({
       kind: 'article',
       rank: 0,
@@ -166,8 +182,10 @@ export function buildFeedItems({ digest, articles = [], sourceNames = {}, limit 
       link,
       guid: link,
       pubDate,
-      description: plainSummary(item?.summary),
+      description: [sourceLabel ? `来源：${sourceLabel}` : '', summary].filter(Boolean).join('\n'),
       categories: sourceLabel ? [sourceLabel] : [],
+      sourceName: sourceLabel,
+      sourceUrl: sourceUrls[item?.source] || '',
     });
   }
 
@@ -226,6 +244,10 @@ export function buildRssXml({
     const permalink = item.kind === 'article' ? 'true' : 'false';
     lines.push(`<guid isPermaLink="${permalink}">${escapeXml(item.guid)}</guid>`);
     if (item.pubDate) lines.push(`<pubDate>${item.pubDate}</pubDate>`);
+    // RSS 2.0 的 <source> 专门用来标「这条来自哪个订阅源」，必须带 url 属性才合法。
+    if (item.sourceUrl) {
+      lines.push(`<source url="${escapeXml(item.sourceUrl)}">${escapeXml(item.sourceName)}</source>`);
+    }
     for (const category of item.categories ?? []) {
       if (!category) continue;
       lines.push(`<category>${escapeXml(category)}</category>`);
