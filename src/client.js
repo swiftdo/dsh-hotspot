@@ -1050,6 +1050,67 @@ window.__ModuleLoader__.load({
         color: #8c909e;
       }
 
+      /* ── 空正文引导（草稿 scaffold 只有标题与来源，正文待写） ── */
+      .hs-body-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 18px 0 0;
+        padding: 20px 22px;
+        border-radius: 10px;
+        border: 1px dashed rgba(245, 158, 11, 0.32);
+        background: linear-gradient(180deg, rgba(245, 158, 11, 0.09), rgba(245, 158, 11, 0.03));
+      }
+      .hs-body-empty-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--dsw-alias-label-primary, #f4f4f7);
+      }
+      .hs-body-empty-desc {
+        max-width: 52ch;
+        font-size: 12.5px;
+        line-height: 1.7;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+      }
+      .hs-body-empty-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .hs-body-empty-hint {
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-tertiary, #7c8192);
+      }
+      /* ── 生成正文进行中：顶部条带提示 ── */
+      .hs-body-writing {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        padding: 9px 18px;
+        font-size: 12px;
+        color: #fcd34d;
+        background: rgba(245, 158, 11, 0.12);
+        border-bottom: 1px solid rgba(245, 158, 11, 0.24);
+      }
+      .hs-body-writing-spinner {
+        width: 12px;
+        height: 12px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        border: 2px solid rgba(252, 211, 77, 0.28);
+        border-top-color: #fcd34d;
+        animation: hs-spin 800ms linear infinite;
+      }
+      .hs-body-writing-sub {
+        opacity: 0.72;
+      }
+
       /* ── 动画关键帧（遵守 Emil 规范：入场 scale 从 0.96 开始，退出迅捷） ── */
       @keyframes hs-fade-mask {
         from { opacity: 0; }
@@ -1305,7 +1366,7 @@ window.__ModuleLoader__.load({
       const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '');
       const meaningful = body
         .split(/\r?\n/)
-        .filter((line) => !/^\s*(?:#|>|[-*+]\s|```|\d+\.\s|$)/.test(line))
+        .filter((line) => !/^\s*(?:#|>|$)/.test(line))
         .join('')
         .replace(/\s/g, '');
       return meaningful.length === 0;
@@ -1370,6 +1431,7 @@ window.__ModuleLoader__.load({
       const [isSavingArticle, setIsSavingArticle] = useState(false);
       const [isPromotingArticle, setIsPromotingArticle] = useState(false);
       const [isDeletingArticle, setIsDeletingArticle] = useState(false);
+      const [isWritingBody, setIsWritingBody] = useState(false);
 
       const handlePickDirectory = async () => {
         if (pickingDir) return null;
@@ -1472,6 +1534,64 @@ window.__ModuleLoader__.load({
           }
         } catch (err) {
           showToast(`打开失败: ${err.message}`, true);
+        }
+      };
+
+      /**
+       * 让写作子代理替当前草稿补全正文。
+       *
+       * scaffold 出来的草稿只有 frontmatter + 标题 + 来源引用，正文是「（正文待写）」。
+       * 这里直接复用面板已有的 POST /api/generate（写盘 + 校验都在服务端做），
+       * 成功后再把磁盘上的最新内容读回编辑器，避免用户看到的是写之前的旧正文。
+       */
+      const handleWriteBody = async () => {
+        if (!editModalItem || isWritingBody) return;
+        const item = editModalItem;
+        const label = item.title || item.slug;
+        const dirty = editContent !== editOriginalContent;
+        const empty = isDraftBodyEmpty(editContent);
+        const lines = [
+          `让写作子代理为「${label}」${empty ? '完成正文' : '重写正文'}？`,
+          '会联网搜索并登记证据，通常 1–3 分钟，最长 8 分钟，请保持面板打开。',
+        ];
+        if (dirty) lines.push('当前有未保存的修改：生成会以磁盘内容为底稿，这些修改会丢失。');
+        if (!window.confirm(lines.join('\n\n'))) return;
+
+        setIsWritingBody(true);
+        try {
+          const res = await fetch(`${API_BASE}/generate`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ slug: item.slug })
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || data.message || '生成失败');
+
+          // 读回写盘结果：正文、证据账本、frontmatter 时间戳都可能变了
+          const reread = await fetch(`${API_BASE}/article?file=${encodeURIComponent(item.file)}`);
+          const article = await reread.json();
+          if (article.ok && article.value) {
+            setEditContent(article.value.content || '');
+            setEditOriginalContent(article.value.content || '');
+            setEditSupplements(article.value.supplements || null);
+          }
+
+          const value = data.value || {};
+          const checks = value.checks;
+          const violations = checks && Array.isArray(checks.violations) ? checks.violations : null;
+          if (checks && checks.ok === false) {
+            showToast(`正文已生成 ${value.bodyChars || 0} 字，但校验有 ${violations ? violations.length : '若干'} 条违规，请逐条检查`, true);
+          } else {
+            const reg = value.registered
+              ? `，登记证据 ${value.registered} 条`
+              : (value.registerFailed ? '，证据登记失败（正文已写盘）' : '');
+            showToast(`✅ 正文已完成：${value.bodyChars || 0} 字${reg}`);
+          }
+          await loadState();
+        } catch (err) {
+          showToast(`完成正文失败：${err.message || err}`, true);
+        } finally {
+          setIsWritingBody(false);
         }
       };
 
@@ -1909,6 +2029,9 @@ window.__ModuleLoader__.load({
         overflow: 'auto',
         userSelect: 'text'
       };
+
+      // 编辑器里的正文是否仍为空（scaffold 只写了标题与来源）
+      const draftBodyEmpty = isDraftBodyEmpty(editContent);
 
       return h('div', { className: 'hs-root' }, [
         // ── 顶部 Header ──
@@ -3341,8 +3464,16 @@ window.__ModuleLoader__.load({
               // 右侧操作
               h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
                 editModalItem.isDraft && h('button', {
+                  className: 'hs-btn sm',
+                  title: draftBodyEmpty
+                    ? '草稿正文还是空的：让写作子代理联网补料并补全正文'
+                    : '用写作子代理重写正文（会覆盖当前正文）',
+                  disabled: isWritingBody || isPromotingArticle || isSavingArticle || isDeletingArticle,
+                  onClick: handleWriteBody
+                }, isWritingBody ? '✍️ 写作中...' : (draftBodyEmpty ? '✨ 完成正文' : '✨ 重写正文')),
+                editModalItem.isDraft && h('button', {
                   className: 'hs-btn sm primary',
-                  disabled: isPromotingArticle || isSavingArticle || isDeletingArticle,
+                  disabled: isWritingBody || isPromotingArticle || isSavingArticle || isDeletingArticle,
                   onClick: () => handlePromoteArticle(editModalItem.slug)
                 }, isPromotingArticle ? '转正中...' : '🚀 转正发布'),
                 h('button', {
@@ -3366,6 +3497,13 @@ window.__ModuleLoader__.load({
                   }
                 }, '✕ 关闭')
               ])
+            ]),
+
+            // 生成正文进行中：写作子代理最长要跑 8 分钟，明确告诉用户别关面板
+            isWritingBody && h('div', { className: 'hs-body-writing' }, [
+              h('span', { className: 'hs-body-writing-spinner' }),
+              h('span', null, '正在生成正文：联网补料 → 写正文 → 登记证据'),
+              h('span', { className: 'hs-body-writing-sub' }, '通常 1–3 分钟，最长 8 分钟，请保持面板打开'),
             ]),
 
             // 证据账本：写正文时联网补料登记过什么，转正后仍能追溯
@@ -3416,7 +3554,29 @@ window.__ModuleLoader__.load({
               // 右侧/纯预览区
               (editViewMode === 'split' || editViewMode === 'preview') && h('div', {
                 className: 'hs-preview-pane'
-              }, renderMarkdownAst(editContent))
+              }, [
+                renderMarkdownAst(editContent),
+                // 正文为空时给一个就地入口，不用先去头部找按钮
+                editModalItem.isDraft && draftBodyEmpty && h('div', { className: 'hs-body-empty' }, [
+                  h('div', { className: 'hs-body-empty-title' }, [
+                    h('span', null, '✍️'),
+                    h('span', null, '这篇草稿还没有正文')
+                  ]),
+                  h('div', { className: 'hs-body-empty-desc' },
+                    'scaffold 只写了标题、摘要和来源，正文是空的。点下面的按钮，写作子代理会先联网补料、把来源登记进证据账本，再按这些材料把正文写完；结果直接写进这个文件，你可以继续手动修改。'),
+                  h('div', { className: 'hs-body-empty-actions' }, [
+                    h('button', {
+                      className: 'hs-btn primary',
+                      disabled: isWritingBody,
+                      onClick: handleWriteBody
+                    }, isWritingBody ? '✍️ 正在生成正文...' : '✨ 完成正文'),
+                    h('span', { className: 'hs-body-empty-hint' },
+                      isWritingBody
+                        ? '最长 8 分钟，请勿关闭面板'
+                        : '通常 1–3 分钟 · 使用设置里已保存的写作模式')
+                  ])
+                ])
+              ])
             ])
           ])
         ]),
