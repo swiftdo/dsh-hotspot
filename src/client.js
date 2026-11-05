@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'hotspot',
+  id: 'dsh-hotspot',
   factory: (require) => {
     const React = require('react');
     const h = React.createElement;
@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({
     const useEffect = React.useEffect;
     const useCallback = React.useCallback;
 
-    const PANEL_ID = 'hotspot';
+    const PANEL_ID = 'dsh-hotspot';
     const API_BASE = '/hotspot/api';
 
     // ── 样式定义（与 DSH 原生主题变量对齐） ─────────────────────────
@@ -966,7 +966,7 @@ window.__ModuleLoader__.load({
         }, HotspotSidebarIcon);
       });
 
-      // 2. 注册主视图 (main keyed slot)
+      // 2. 注册主视图 (main keyed slot)，兼容注册 dsh-hotspot 与 hotspot
       ctx.slots.inject('main', () => {
         return ctx.slots.register({
           name: 'main',

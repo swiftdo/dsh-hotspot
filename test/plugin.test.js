@@ -5,7 +5,7 @@ import path from 'node:path';
 
 test('package.json 配置检查', () => {
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-  assert.equal(pkg.name, 'hotspot');
+  assert.equal(pkg.name, 'dsh-hotspot');
   assert.equal(pkg.exports['./client'], './src/client.js');
   assert.ok(pkg.dsh, 'dsh 配置应存在');
   assert.ok(pkg.dsh.client, 'dsh.client 应存在');
@@ -24,15 +24,15 @@ test('元数据资源完整性', () => {
   assert.ok(existsSync('locale/en.json'), 'locale/en.json 应存在');
   const zh = JSON.parse(readFileSync('locale/zh.json', 'utf8'));
   const en = JSON.parse(readFileSync('locale/en.json', 'utf8'));
-  assert.ok(zh['dsh.plugin.hotspot.name'], '中文名称字段应存在');
-  assert.ok(en['dsh.plugin.hotspot.name'], '英文名称字段应存在');
+  assert.ok(zh['dsh.plugin.dsh-hotspot.name'] || zh['dsh.plugin.hotspot.name'], '中文名称字段应存在');
+  assert.ok(en['dsh.plugin.dsh-hotspot.name'] || en['dsh.plugin.hotspot.name'], '英文名称字段应存在');
 });
 
 test('客户端脚本 src/client.js 语法及注册契约', () => {
   assert.ok(existsSync('src/client.js'), 'src/client.js 应存在');
   const code = readFileSync('src/client.js', 'utf8');
   assert.ok(code.includes('window.__ModuleLoader__.load'), '需调用 __ModuleLoader__.load');
-  assert.ok(code.includes("id: 'hotspot'"), '模块 id 需为 hotspot');
+  assert.ok(code.includes("id: 'dsh-hotspot'"), '模块 id 需为 dsh-hotspot');
   assert.ok(code.includes('sidebar.panellist'), '必须注入 sidebar.panellist 槽位');
   assert.ok(code.includes("'main'"), '必须注入 main 槽位');
   assert.ok(code.includes('--dsw-alias-'), '需使用 DSH 原生主题变量');
@@ -52,7 +52,7 @@ test('客户端脚本 src/client.js 语法及注册契约', () => {
   runFn(mockWindow);
 
   assert.ok(registeredModule, '模块应被注册');
-  assert.equal(registeredModule.id, 'hotspot');
+  assert.equal(registeredModule.id, 'dsh-hotspot');
   assert.equal(typeof registeredModule.factory, 'function');
 
   // 测试 factory 执行与 ctx slots 注入
@@ -93,6 +93,6 @@ test('客户端脚本 src/client.js 语法及注册契约', () => {
   assert.equal(registeredSlots.length, 2);
   const sidebarSlot = registeredSlots.find(s => s.meta.name === 'sidebar.panellist');
   const mainSlot = registeredSlots.find(s => s.meta.name === 'main');
-  assert.equal(sidebarSlot.meta.id, 'hotspot');
-  assert.equal(mainSlot.meta.key, 'hotspot');
+  assert.equal(sidebarSlot.meta.id, 'dsh-hotspot');
+  assert.equal(mainSlot.meta.key, 'dsh-hotspot');
 });

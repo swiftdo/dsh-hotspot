@@ -1,4 +1,6 @@
 {
+  "dsh.plugin.dsh-hotspot.name": "热点草稿",
+  "dsh.plugin.dsh-hotspot.description": "热点采集、去重、确定性打分与草稿一键脚手架",
   "dsh.plugin.hotspot.name": "热点草稿",
   "dsh.plugin.hotspot.description": "热点采集、去重、确定性打分与草稿一键脚手架",
   "meta": {

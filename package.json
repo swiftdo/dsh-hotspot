@@ -1,9 +1,10 @@
 {
-  "name": "hotspot",
+  "name": "dsh-hotspot",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "热点采集、去重、确定性排序与草稿落地；同时是 DeepSeek Harness 插件",
+  "repository": "git@github.com:swiftdo/dsh-hotspot.git",
   "main": "./src/plugin.js",
   "exports": {
     ".": "./src/plugin.js",
@@ -19,6 +20,7 @@
     "README.md"
   ],
   "bin": {
+    "dsh-hotspot": "./src/cli.js",
     "hotspot": "./src/cli.js"
   },
   "engines": {

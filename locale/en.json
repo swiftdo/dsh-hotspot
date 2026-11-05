@@ -1,4 +1,6 @@
 {
+  "dsh.plugin.dsh-hotspot.name": "Hotspot Digest",
+  "dsh.plugin.dsh-hotspot.description": "Hotspot aggregation, deduplication, deterministic scoring, and draft scaffolding",
   "dsh.plugin.hotspot.name": "Hotspot Digest",
   "dsh.plugin.hotspot.description": "Hotspot aggregation, deduplication, deterministic scoring, and draft scaffolding",
   "meta": {

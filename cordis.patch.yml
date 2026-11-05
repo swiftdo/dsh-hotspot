@@ -7,8 +7,8 @@
 # 路径不存在时会退回进程 cwd 并打一条告警，不会静默变成"零个源"。
 # articleDir / draftDir 省略时用默认值 docs/article 与 docs/draft。
 - insert:
-    - id: hotspot
-      name: hotspot
+    - id: dsh-hotspot
+      name: dsh-hotspot
       config:
         projectRoot: /Users/laijihua/Desktop/Code/blog/swiftdo.github.io
         digestDir: .hotspot
