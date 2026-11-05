@@ -99,6 +99,15 @@ test('API 路由：支持获取与配置博客路径及参数', async (t) => {
   assert.equal(sData.value.projectRoot, tempDir);
   assert.equal(sData.value.blog.articleDir, 'docs');
   assert.equal(sData.value.config.rank.limit, 15);
+  assert.ok(Array.isArray(sData.value.builtinSources), 'builtinSources 应当是数组');
+  assert.ok(
+    sData.value.builtinSources.some((s) => s.id === 'sopilot-hottweets' && s.url === 'https://sopilot.net/rss/hottweets'),
+    '应当包含内置源 sopilot-hottweets'
+  );
+  assert.ok(
+    sData.value.config.sources.some((s) => s.id === 'sopilot-hottweets'),
+    '默认配置源中应包含 sopilot-hottweets'
+  );
 
   // 2. 测试 POST config - 错误目录拦截
   const { req: errReq, res: errRes, result: errResult } = mockReqRes('POST', '/hotspot/api/config', {

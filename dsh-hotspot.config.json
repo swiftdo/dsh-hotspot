@@ -5,6 +5,12 @@
   "digestDir": ".hotspot",
   "sources": [
     {
+      "id": "sopilot-hottweets",
+      "name": "SoPilot AI 爆款推文",
+      "kind": "rss",
+      "url": "https://sopilot.net/rss/hottweets"
+    },
+    {
       "id": "swift-org",
       "kind": "rss",
       "url": "https://www.swift.org/atom.xml"
@@ -29,6 +35,7 @@
   "publish": {
     "maxPerDay": 3,
     "allowedHosts": [
+      "sopilot.net",
       "github.com",
       "swift.org",
       "news.ycombinator.com"

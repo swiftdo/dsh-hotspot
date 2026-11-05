@@ -21,6 +21,16 @@ export const PREFIX = '/dsh-hotspot';
 export const LEGACY_PREFIX = '/hotspot';
 const MAX_BODY = 64 * 1024;
 
+export const BUILTIN_SOURCES = [
+  {
+    id: 'sopilot-hottweets',
+    name: 'SoPilot AI 爆款推文',
+    kind: 'rss',
+    url: 'https://sopilot.net/rss/hottweets',
+    description: '追踪 Twitter/X 今日 AI 起爆帖，自动洞察技术前沿讨论',
+  },
+];
+
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
 
 function sendJson(res, status, value) {
@@ -181,9 +191,14 @@ export function createRoutes(deps) {
       currentStore?.loadDigest('latest').catch(() => null),
     ]);
 
+    const activeSources = (Array.isArray(config.sources) && config.sources.length > 0)
+      ? config.sources
+      : BUILTIN_SOURCES.map(({ id, name, kind, url }) => ({ id, name, kind, url }));
+
     return {
       configured: hasConfiguredRoot,
       projectRoot: activeProjectRoot,
+      builtinSources: BUILTIN_SOURCES,
       blog: {
         configured: hasConfiguredRoot,
         projectRoot: activeProjectRoot,
@@ -196,7 +211,7 @@ export function createRoutes(deps) {
         articleDir: config.articleDir || 'docs',
         draftDir: config.draftDir || 'docs/draft',
         digestDir: config.digestDir || '.hotspot',
-        sources: config.sources ?? [],
+        sources: activeSources,
         rank: {
           limit: 15,
           sinceHours: 36,
@@ -206,7 +221,7 @@ export function createRoutes(deps) {
         },
         publish: {
           maxPerDay: 3,
-          allowedHosts: [],
+          allowedHosts: ['sopilot.net', 'github.com'],
           autoTiers: ['tier-1', 'tier-2'],
           ...(config.publish ?? {}),
         },

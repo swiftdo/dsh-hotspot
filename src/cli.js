@@ -120,11 +120,12 @@ async function cmdInit() {
   const config = {
     target: { kind: 'vitepress', articleDir: 'docs/article', draftDir: 'docs/draft' },
     sources: [
+      { id: 'sopilot-hottweets', kind: 'rss', url: 'https://sopilot.net/rss/hottweets' },
       { id: 'dsh-releases', kind: 'github-release', repo: 'deepseek-ai/deepseek-harness' },
     ],
     rank: { halfLifeHours: 24, limit: 15, sinceHours: 36, clusterThreshold: 0.6 },
     store: { dir: '.hotspot' },
-    publish: { maxPerDay: 1, autoTiers: [], allowedHosts: ['github.com'] },
+    publish: { maxPerDay: 1, autoTiers: [], allowedHosts: ['sopilot.net', 'github.com'] },
   };
 
   if (existsSync(configFile)) {

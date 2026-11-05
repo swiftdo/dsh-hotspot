@@ -576,6 +576,30 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const handleAddPresetSource = async (preset) => {
+        const currentSources = state?.config?.sources || [];
+        if (currentSources.some((s) => s.url === preset.url || s.id === preset.id)) {
+          showToast('该订阅源已在列表中');
+          return;
+        }
+        try {
+          const res = await fetch(`${API_BASE}/sources`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sources: [...currentSources, preset] })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showToast('已成功添加内置订阅源');
+            await loadState();
+          } else {
+            showToast(data.message || '添加订阅源失败', true);
+          }
+        } catch (err) {
+          showToast(err.message, true);
+        }
+      };
+
       const handleDeleteSource = async (id) => {
         const currentSources = (state?.config?.sources || []).filter(s => s.id !== id);
         try {
@@ -797,6 +821,47 @@ window.__ModuleLoader__.load({
 
           // ── TAB: 订阅源 ──
           tab === 'sources' && h('div', { key: 'sources-panel' }, [
+            h('div', {
+              className: 'hs-card',
+              style: {
+                borderLeft: '4px solid var(--dsw-alias-brand-primary)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 12
+              }
+            }, [
+              h('div', null, [
+                h('div', { style: { fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 } }, [
+                  '🔥 内置推荐源：SoPilot AI 爆款推文',
+                  h('span', { className: 'hs-badge', style: { fontSize: 10 } }, 'RSS')
+                ]),
+                h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginTop: 4 } },
+                  '实时追踪 Twitter/X 爆款 AI 技术贴，自动提炼海外第一手热点与观点。'
+                ),
+                h('div', { style: { fontSize: 11, fontFamily: 'monospace', color: 'var(--dsw-alias-label-secondary)', marginTop: 2 } },
+                  'https://sopilot.net/rss/hottweets'
+                )
+              ]),
+              h('div', null, [
+                (state?.config?.sources || []).some(
+                  (s) => s.url === 'https://sopilot.net/rss/hottweets' || s.id === 'sopilot-hottweets'
+                )
+                  ? h('span', { className: 'hs-badge', style: { background: 'rgba(34, 197, 94, 0.15)', color: '#16a34a' } }, '✓ 已在订阅列表')
+                  : h('button', {
+                      className: 'hs-btn primary',
+                      style: { padding: '4px 12px', fontSize: 12 },
+                      onClick: () => handleAddPresetSource({
+                        id: 'sopilot-hottweets',
+                        name: 'SoPilot AI 爆款推文',
+                        kind: 'rss',
+                        url: 'https://sopilot.net/rss/hottweets'
+                      })
+                    }, '+ 一键启用')
+              ])
+            ]),
+
             h('div', { className: 'hs-card' }, [
               h('div', { style: { fontWeight: 500, marginBottom: 10 } }, '新增订阅源'),
               h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 } }, [
