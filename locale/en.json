@@ -1,0 +1,27 @@
+{
+  "dsh.plugin.hotspot.name": "Hotspot Digest",
+  "dsh.plugin.hotspot.description": "Hotspot aggregation, deduplication, deterministic scoring, and draft scaffolding",
+  "meta": {
+    "title": "Hotspot Digest",
+    "description": "Hotspot aggregation, deduplication, deterministic scoring, and draft scaffolding"
+  },
+  "nav": "Hotspots",
+  "back": "Back to chat",
+  "refresh": "Refresh",
+  "run": "Scan Now",
+  "running": "Scanning...",
+  "tabs": {
+    "candidates": "Candidates",
+    "sources": "Sources",
+    "articles": "Articles & Drafts",
+    "config": "Settings"
+  },
+  "scaffold": "Scaffold Draft",
+  "scaffolded": "Draft Scaffolded",
+  "emptyCandidates": "No candidates found. Click 'Scan Now' to run aggregation.",
+  "score": "pts",
+  "sourcesCount": "sources co-occurring",
+  "filterPlaceholder": "Filter candidate title or tags...",
+  "addSource": "Add Source",
+  "saveConfig": "Save Settings"
+}

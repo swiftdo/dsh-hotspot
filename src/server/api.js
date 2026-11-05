@@ -317,7 +317,9 @@ export function createRoutes(deps) {
         if (!digest) return sendJson(res, 400, { ok: false, message: '还没有 digest，先跑一次抓取' });
 
         const key = String(body.id ?? '').replace(/^#/, '');
-        const item = digest.items.find((it) => it.id === key || it.id.endsWith(key));
+        const item =
+          digest.items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`)) ??
+          (Number(key) >= 1 && Number(key) <= digest.items.length ? digest.items[Number(key) - 1] : null);
         if (!item) return sendJson(res, 404, { ok: false, message: `没有候选 ${body.id}` });
 
         try {

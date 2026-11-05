@@ -1,0 +1,27 @@
+{
+  "dsh.plugin.hotspot.name": "热点草稿",
+  "dsh.plugin.hotspot.description": "热点采集、去重、确定性打分与草稿一键脚手架",
+  "meta": {
+    "title": "热点草稿",
+    "description": "热点采集、去重、确定性打分与草稿一键脚手架"
+  },
+  "nav": "热点草稿",
+  "back": "返回对话",
+  "refresh": "刷新",
+  "run": "立即抓取",
+  "running": "正在抓取...",
+  "tabs": {
+    "candidates": "热点候选",
+    "sources": "订阅源",
+    "articles": "博文与草稿",
+    "config": "配置设置"
+  },
+  "scaffold": "生成草稿",
+  "scaffolded": "已生成草稿",
+  "emptyCandidates": "暂无候选，请点击「立即抓取」运行最新扫描",
+  "score": "分",
+  "sourcesCount": "个源共现",
+  "filterPlaceholder": "过滤候选标题或标签...",
+  "addSource": "添加源",
+  "saveConfig": "保存设置"
+}
