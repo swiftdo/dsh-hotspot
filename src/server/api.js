@@ -265,21 +265,12 @@ export function createRoutes(deps) {
         keywords: (profile?.keywords || []).slice(0, 30).map((k) => k.term),
         articleCount: (profile?.articles || []).length,
       },
-      articles: (profile?.articles || [])
-        .map((a) => ({
-          slug: a.slug,
-          title: a.title,
-          tags: a.tags || [],
-          date: a.date || '',
-          description: a.description || '',
-          file: a.file || '',
-          mtime: a.mtime || 0,
-        }))
-        .sort((a, b) => {
-          if (a.date && b.date && a.date !== b.date) return b.date.localeCompare(a.date);
-          if (b.mtime !== a.mtime) return b.mtime - a.mtime;
-          return a.slug.localeCompare(b.slug);
-        }),
+      // 插件管辖范围明确收敛至草稿（生成、修改、转正、删除），不将已发布文章作为管理对象
+      articles: (drafts || []).map((d) => ({
+        ...d,
+        isDraft: true,
+        status: 'draft',
+      })),
       drafts: drafts || [],
       digest: digest
         ? {
@@ -566,16 +557,32 @@ export function createRoutes(deps) {
     },
     {
       kind: 'exact',
+      path: `${PREFIX}/api/drafts`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET'])) return;
+        const state = await buildState();
+        sendJson(res, 200, {
+          ok: true,
+          value: state.drafts,
+          drafts: state.drafts,
+          articles: state.drafts,
+          total: state.drafts.length,
+          draftTotal: state.drafts.length,
+        });
+      },
+    },
+    {
+      kind: 'exact',
       path: `${PREFIX}/api/articles`,
       handler: async (req, res) => {
         if (!guard(req, res, ['GET'])) return;
         const state = await buildState();
         sendJson(res, 200, {
           ok: true,
-          value: state.articles,
-          articles: state.articles,
+          value: state.drafts,
           drafts: state.drafts,
-          total: state.articles.length,
+          articles: state.drafts,
+          total: state.drafts.length,
           draftTotal: state.drafts.length,
         });
       },
@@ -655,9 +662,18 @@ export function createRoutes(deps) {
             sendJson(res, 400, { ok: false, error: '缺少必需字段 file 或 content' });
             return;
           }
+          const normalizedFile = String(file).replace(/\\/g, '/');
+          if (!normalizedFile.includes('draft') && !normalizedFile.includes('docs/draft')) {
+            sendJson(res, 403, {
+              ok: false,
+              code: 'ERR_ARTICLE_PROTECTED',
+              error: '超出管辖范围：已发布文章受保护，插件仅支持修改草稿（docs/draft）下的文件',
+            });
+            return;
+          }
           try {
             const result = await target.saveArticle(file, content);
-            sendJson(res, 200, { ok: true, message: '文章保存成功', value: result });
+            sendJson(res, 200, { ok: true, message: '草稿保存成功', value: result });
           } catch (err) {
             sendJson(res, 500, { ok: false, error: err.message });
           }
@@ -725,9 +741,81 @@ export function createRoutes(deps) {
           sendJson(res, 400, { ok: false, error: '缺少必需字段 file' });
           return;
         }
+        const normalizedFile = String(file).replace(/\\/g, '/');
+        if (!normalizedFile.includes('draft') && !normalizedFile.includes('docs/draft')) {
+          sendJson(res, 403, {
+            ok: false,
+            code: 'ERR_ARTICLE_PROTECTED',
+            error: '超出管辖范围：已发布文章受保护，插件仅支持删除草稿（docs/draft）下的文件',
+          });
+          return;
+        }
         try {
           const resDelete = await target.deleteArticle(file);
-          sendJson(res, 200, { ok: true, message: '文件已成功删除', value: resDelete });
+          sendJson(res, 200, { ok: true, message: '草稿已成功删除', value: resDelete });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
+    {
+      method: 'POST',
+      kind: 'exact',
+      path: `${PREFIX}/api/generate`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (typeof deps.generate !== 'function') {
+          sendJson(res, 501, {
+            ok: false,
+            code: 'ERR_NO_WRITER',
+            error: '当前环境没有接入写作子代理，无法在面板里生成正文',
+          });
+          return;
+        }
+        const target = currentTarget;
+        if (!target) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            error: '尚未配置博客项目根目录',
+          });
+          return;
+        }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        const slug = String(body?.slug ?? '').trim();
+        if (!slug) {
+          sendJson(res, 400, { ok: false, error: '缺少必需字段 slug' });
+          return;
+        }
+        try {
+          const value = await deps.generate({
+            slug,
+            store: currentStore,
+            target,
+            projectRoot: currentProjectRoot,
+            provider: body?.provider ? String(body.provider) : undefined,
+          });
+          // 生成完立刻用同一套闸门验一遍 —— 面板直接显示违规，不必再切回终端。
+          let checks = null;
+          if (typeof deps.checkDraft === 'function') {
+            try {
+              const report = await deps.checkDraft({ target, store: currentStore, slug });
+              checks = { ok: report.result.ok, violations: report.result.violations };
+            } catch {
+              checks = null;
+            }
+          }
+          sendJson(res, 200, {
+            ok: true,
+            message: `已生成 ${value.bodyChars} 字正文`,
+            value: { ...value, checks },
+          });
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
         }

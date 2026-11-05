@@ -277,8 +277,36 @@ function renderItems() {
 
 function renderContent() {
   $('draftList').innerHTML = state.drafts.length
-    ? state.drafts.map((d) => '<div class="item"><div class="title">' + esc(d.title) + '</div><div class="meta">' + esc(d.file) + ' · ' + esc(d.date) + '</div></div>').join('')
+    ? state.drafts.map((d) => '<div class="item"><div class="row">' +
+      '<div class="title" style="flex:1">' + esc(d.title) + '</div>' +
+      '<button class="ghost" data-generate="' + esc(d.slug || '') + '">AI 写正文</button></div>' +
+      '<div class="meta">' + esc(d.file) + ' · ' + esc(d.date) + '</div></div>').join('')
     : '没有草稿';
+
+  // 正文由宿主的子代理写（联网查证 → 落盘 JSON → 宿主登记补料并写正文 → 跑闸门）。
+  // 一次几秒到几分钟，按钮期间保持禁用，避免重复起代理。
+  $('draftList').querySelectorAll('[data-generate]').forEach((button) => {
+    button.onclick = async () => {
+      const slug = button.dataset.generate;
+      if (!slug) return toast('这条草稿没有可用的 slug，无法定位候选', true);
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = '写作中…';
+      try {
+        const value = await api('/generate', { method: 'POST', body: JSON.stringify({ slug }) });
+        const violations = value.checks && value.checks.ok === false ? value.checks.violations : [];
+        toast(violations.length
+          ? '正文已写入，但没过闸门：' + violations[0].message
+          : '正文已写入：' + value.bodyChars + ' 字 · 补料 ' + value.registered + ' 条');
+        await load();
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    };
+  });
 
   $('articleList').innerHTML = state.articles.length
     ? state.articles.map((a) => '<div class="item"><div class="title">' + esc(a.title) + '</div><div class="meta"><a href="/' + 'article/' + esc(a.slug) + '/" target="_blank" style="color:var(--muted)">/article/' + esc(a.slug) + '/</a>' +

@@ -414,19 +414,56 @@ export function createVitePressTarget(config) {
     async listDrafts() {
       const slugs = await listDirs(draftDir);
       const out = [];
-      for (const slug of slugs) {
-        const text = await readIfExists(path.join(draftDir, slug, 'index.md'));
-        if (!text) continue;
+      const seenFiles = new Set();
+
+      async function processDraftFile(fullPath, fallbackSlug) {
+        if (seenFiles.has(fullPath)) return;
+        seenFiles.add(fullPath);
+        const text = await readIfExists(fullPath);
+        if (!text) return;
         const { data } = parseFrontmatter(text);
+        let fileStat = null;
+        try {
+          fileStat = await stat(fullPath);
+        } catch {}
+
         out.push({
-          slug,
-          title: String(data.title ?? slug),
-          date: String(data.date ?? ''),
+          slug: fallbackSlug,
+          title: String(data.title ?? fallbackSlug),
+          date: String(data.date ?? (fileStat ? new Date(fileStat.mtimeMs).toISOString().slice(0, 10) : '')),
           tags: Array.isArray(data.tags) ? data.tags : [],
-          file: path.relative(root, path.join(draftDir, slug, 'index.md')),
+          description: String(data.description ?? ''),
+          file: path.relative(root, fullPath),
+          mtime: fileStat ? fileStat.mtimeMs : 0,
+          isDraft: true,
+          status: 'draft',
         });
       }
-      return out.sort((a, b) => b.slug.localeCompare(a.slug));
+
+      // 1. 标准子目录形式：draftDir/<slug>/index.md
+      for (const slug of slugs) {
+        if (slug.startsWith('.') || slug === 'node_modules') continue;
+        const indexFile = path.join(draftDir, slug, 'index.md');
+        await processDraftFile(indexFile, slug);
+      }
+
+      // 2. 单文件形式：draftDir/<slug>.md
+      try {
+        const files = await readdir(draftDir, { withFileTypes: true });
+        for (const f of files) {
+          if (f.isFile() && f.name.endsWith('.md') && f.name !== 'index.md' && !f.name.startsWith('.')) {
+            const slug = f.name.slice(0, -3);
+            const fullPath = path.join(draftDir, f.name);
+            await processDraftFile(fullPath, slug);
+          }
+        }
+      } catch {}
+
+      return out.sort((a, b) => {
+        if (a.date && b.date && a.date !== b.date) return b.date.localeCompare(a.date);
+        if (b.mtime !== a.mtime) return b.mtime - a.mtime;
+        return b.slug.localeCompare(a.slug);
+      });
     },
 
     /** 读取指定文章或草稿的 Markdown 原文 */
@@ -450,7 +487,7 @@ export function createVitePressTarget(config) {
       };
     },
 
-    /** 保存修改后的文章或草稿内容 */
+    /** 保存修改后的草稿内容（安全防御：仅限在草稿目录 docs/draft 范围内，禁止跨界修改已发布文章） */
     async saveArticle(targetFile, newContent) {
       if (typeof newContent !== 'string') {
         throw new Error('保存内容必须为字符串');
@@ -459,6 +496,10 @@ export function createVitePressTarget(config) {
       const normRoot = path.normalize(root);
       if (!full.startsWith(normRoot)) {
         throw new Error('路径不合法：超出项目根目录范围');
+      }
+      const normDraft = path.normalize(draftDir);
+      if (!full.startsWith(normDraft)) {
+        throw new Error('超出管辖范围：已发布文章受保护，插件仅支持修改草稿目录（docs/draft）下的文件');
       }
       await mkdir(path.dirname(full), { recursive: true });
       await writeFile(full, newContent, 'utf8');
@@ -471,12 +512,46 @@ export function createVitePressTarget(config) {
       };
     },
 
-    /** 删除指定的草稿或文章文件（安全防御：仅限在 projectRoot 范围内） */
+    /**
+     * 把生成好的正文写进草稿，保留 scaffold 写好的 frontmatter。
+     * 只认草稿目录 —— 已发布文章不在这里改（改已发布的走 saveArticle 的越权拦截）。
+     */
+    async writeBody(slug, body) {
+      const clean = String(slug ?? '').trim();
+      if (!clean) throw new Error('缺少 slug');
+      const text = String(body ?? '').trim();
+      if (!text) throw new Error('正文是空的');
+
+      const candidates = [path.join(draftDir, clean, 'index.md'), path.join(draftDir, `${clean}.md`)];
+      let file = null;
+      for (const candidate of candidates) {
+        const st = await stat(candidate).catch(() => null);
+        if (st?.isFile()) {
+          file = candidate;
+          break;
+        }
+      }
+      if (!file) throw new Error(`找不到草稿：${clean}`);
+
+      const raw = await readFile(file, 'utf8');
+      const { data } = parseFrontmatter(raw);
+      const head = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+      const title = String(data.title ?? clean).replace(/"/g, "'");
+      const section = /^#\s/m.test(text) ? text : `# ${title}\n\n${text}`;
+      await writeFile(file, `${head ? head[0] : ''}${section}\n`, 'utf8');
+      return { file: path.relative(root, file), title, chars: [...text].length };
+    },
+
+    /** 删除指定的草稿文件（安全防御：仅限在草稿目录 docs/draft 范围内，禁止跨界删除已发布文章） */
     async deleteArticle(targetFile) {
       const full = path.isAbsolute(targetFile) ? path.normalize(targetFile) : path.normalize(path.join(root, targetFile));
       const normRoot = path.normalize(root);
       if (!full.startsWith(normRoot)) {
         throw new Error('路径不合法：超出项目根目录范围');
+      }
+      const normDraft = path.normalize(draftDir);
+      if (!full.startsWith(normDraft)) {
+        throw new Error('超出管辖范围：已发布文章受保护，插件仅支持删除草稿目录（docs/draft）下的文件');
       }
       const st = await stat(full).catch(() => null);
       if (!st || !st.isFile()) {
@@ -484,8 +559,7 @@ export function createVitePressTarget(config) {
       }
       await rm(full, { force: true });
       const parentDir = path.dirname(full);
-      const isDraftOrArticleSubdir = parentDir.startsWith(path.normalize(draftDir)) || parentDir.startsWith(path.normalize(articleDir));
-      if (isDraftOrArticleSubdir && parentDir !== path.normalize(draftDir) && parentDir !== path.normalize(articleDir)) {
+      if (parentDir.startsWith(normDraft) && parentDir !== normDraft) {
         const remaining = await readdir(parentDir).catch(() => []);
         const onlySupplements = remaining.every((f) => f === SUPPLEMENT_FILE || f.startsWith('.'));
         if (onlySupplements) {
@@ -496,6 +570,12 @@ export function createVitePressTarget(config) {
         ok: true,
         file: path.relative(root, full),
       };
+    },
+    saveDraft(targetFile, newContent) {
+      return this.saveArticle(targetFile, newContent);
+    },
+    deleteDraft(targetFile) {
+      return this.deleteArticle(targetFile);
     },
   };
 }

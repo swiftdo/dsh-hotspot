@@ -257,10 +257,10 @@ test('API 路由：支持文件夹选择器 pick-dir 路由与双前缀兼容', 
   assert.equal(cResult().json().path, null);
 });
 
-test('API 路由：支持获取所有文章列表 /dsh-hotspot/api/articles 与双前缀兼容', async (t) => {
-  const mockArticles = [
-    { slug: 'swift-6', title: 'Swift 6 发布', date: '2026-11-01', tags: ['swift'] },
-    { slug: 'rust-2024', title: 'Rust 2024 路线图', date: '2026-10-28', tags: ['rust'] },
+test('API 路由：管辖收敛至草稿箱，/dsh-hotspot/api/drafts 与 articles 均返回草稿，已发布博文受保护', async (t) => {
+  const mockDrafts = [
+    { slug: 'draft-1', title: '草稿1', date: '2026-11-05', tags: ['hotspot'] },
+    { slug: 'draft-2', title: '草稿2', date: '2026-11-05', tags: ['ai'] },
   ];
 
   const deps = {
@@ -269,36 +269,66 @@ test('API 路由：支持获取所有文章列表 /dsh-hotspot/api/articles 与�
     target: {
       articleDir: 'docs/article',
       draftDir: 'docs/draft',
-      profile: async () => ({ tagVocabulary: ['swift', 'rust'], keywords: [], articles: mockArticles }),
-      listArticles: async () => mockArticles,
-      listDrafts: async () => [{ slug: 'draft-1', title: '草稿1' }],
+      profile: async () => ({ tagVocabulary: ['hotspot'], keywords: [], articles: [] }),
+      listDrafts: async () => mockDrafts,
+      saveArticle: async (file, content) => {
+        if (!file.includes('docs/draft/')) {
+          const err = new Error('只能修改草稿');
+          err.code = 'ERR_ARTICLE_PROTECTED';
+          throw err;
+        }
+        return { file, bytes: content.length };
+      },
+      deleteArticle: async (file) => {
+        if (!file.includes('docs/draft/')) {
+          const err = new Error('只能删除草稿');
+          err.code = 'ERR_ARTICLE_PROTECTED';
+          throw err;
+        }
+        return { file, deleted: true };
+      }
     },
     runScan: async () => ({ digest: null, status: {} }),
   };
 
   const routes = createRoutes(deps);
+  const dshDraftsRoute = routes.find((r) => r.path === '/dsh-hotspot/api/drafts');
   const dshArticlesRoute = routes.find((r) => r.path === '/dsh-hotspot/api/articles');
   const legacyArticlesRoute = routes.find((r) => r.path === '/hotspot/api/articles');
 
+  assert.ok(dshDraftsRoute, '/dsh-hotspot/api/drafts 路由应存在');
   assert.ok(dshArticlesRoute, '/dsh-hotspot/api/articles 主路由应存在');
   assert.ok(legacyArticlesRoute, '/hotspot/api/articles 兼容路由应存在');
 
-  const { req, res, result } = mockReqRes('GET', '/dsh-hotspot/api/articles');
-  await dshArticlesRoute.handler(req, res);
+  const { req, res, result } = mockReqRes('GET', '/dsh-hotspot/api/drafts');
+  await dshDraftsRoute.handler(req, res);
   assert.equal(result().status, 200);
   const data = result().json();
   assert.equal(data.ok, true);
   assert.equal(data.value.length, 2);
-  assert.equal(data.value[0].slug, 'swift-6');
+  assert.equal(data.value[0].slug, 'draft-1');
 
-  // 同时验证 state 中包含了 articles 列表
+  // 同时验证 state 中仅聚合 drafts
   const stateRoute = routes.find((r) => r.path === '/dsh-hotspot/api/state');
   const { req: sReq, res: sRes, result: sResult } = mockReqRes('GET', '/dsh-hotspot/api/state');
   await stateRoute.handler(sReq, sRes);
   const sData = sResult().json();
   assert.equal(sData.ok, true);
+  assert.equal(sData.value.drafts.length, 2);
   assert.equal(sData.value.articles.length, 2);
-  assert.equal(sData.value.articles[0].title, 'Swift 6 发布');
+
+  // 验证保存已发布博文被拦截保护
+  const saveRoute = routes.find((r) => r.path === '/dsh-hotspot/api/article');
+  const { req: pReq, res: pRes, result: pResult } = mockReqRes(
+    'POST',
+    '/dsh-hotspot/api/article',
+    { file: 'docs/article/swift-6/index.md', content: 'new content' }
+  );
+  await saveRoute.handler(pReq, pRes);
+  assert.equal(pResult().status, 403);
+  const pJson = pResult().json();
+  assert.equal(pJson.ok, false);
+  assert.equal(pJson.code, 'ERR_ARTICLE_PROTECTED');
 });
 
 test('API 路由：支持在线读取、修改与转正发布文章 /dsh-hotspot/api/article[s]', async (t) => {

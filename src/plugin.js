@@ -9,6 +9,8 @@ import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
 import { registerCandidateSources } from './core/supplement.js';
+import { checkDraft } from './core/checks.js';
+import { createWriter } from './server/generate.js';
 import { createRoutes, PREFIX } from './server/api.js';
 
 /**
@@ -62,6 +64,7 @@ export function apply(ctx, config = {}) {
   }
 
   const baseDigestDir = config.digestDir ?? '.hotspot';
+  let currentDigestDir = baseDigestDir;
   let store = createFsStore({
     dir: projectRoot ? path.join(projectRoot, baseDigestDir) : path.join(process.cwd(), baseDigestDir),
   });
@@ -78,6 +81,7 @@ export function apply(ctx, config = {}) {
       projectRoot = '';
     }
     const digestDir = newConfig.digestDir || config.digestDir || '.hotspot';
+    currentDigestDir = digestDir;
     const articleDir = newConfig.articleDir || config.articleDir || 'docs';
     const draftDir = newConfig.draftDir || config.draftDir || 'docs/draft';
     store = createFsStore({
@@ -452,12 +456,24 @@ export function apply(ctx, config = {}) {
   ctx.inject(['webServer'], (sctx) => {
     sctx.effect(() => {
       const disposers = [];
+      // 面板的「AI 生成正文」走宿主的子代理：模型能力、工具面、上下文都由宿主给，
+      // 插件只负责编排与落盘。宿主没装 subagents 时 generate 会抛错，面板照常可用。
+      const writer = createWriter({
+        getSubagents: () => (typeof ctx.get === 'function' ? ctx.get('subagents') : null),
+        digestDir: () => currentDigestDir,
+        log,
+      });
       for (const route of createRoutes({
         projectRoot,
         store,
         target,
         runScan,
         onConfigUpdated: updateRuntime,
+        generate: writer,
+        checkDraft: async (opts) => {
+          const cfg = await readProjectConfig();
+          return checkDraft({ ...opts, allowedHosts: cfg.publish?.allowedHosts ?? [] });
+        },
       })) {
         try {
           disposers.push(sctx.webServer.register(route));

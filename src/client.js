@@ -1775,12 +1775,12 @@ window.__ModuleLoader__.load({
             h('span', { className: 'hs-tab-count' }, state?.config?.sources?.length || 0)
           ]),
           h('button', {
-            className: `hs-tab ${tab === 'articles' ? 'active' : ''}`,
-            onClick: () => setTab('articles'),
-            key: 'tab-a'
+            className: `hs-tab ${tab === 'drafts' || tab === 'articles' ? 'active' : ''}`,
+            onClick: () => setTab('drafts'),
+            key: 'tab-d'
           }, [
-            '所有文章',
-            h('span', { className: 'hs-tab-count' }, (state?.articles?.length || 0) + (state?.drafts?.length || 0))
+            '草稿箱',
+            h('span', { className: 'hs-tab-count' }, state?.drafts?.length || 0)
           ]),
           h('button', {
             className: `hs-tab ${tab === 'config' ? 'active' : ''}`,
@@ -2122,20 +2122,16 @@ window.__ModuleLoader__.load({
             ])
           ]),
 
-          // ── TAB: 所有文章列表 ──
-          tab === 'articles' && (() => {
-            const rawArticles = (state?.articles || []).map(a => ({ ...a, isDraft: false }));
-            const rawDrafts = (state?.drafts || []).map(d => ({
+          // ── TAB: 草稿箱（专注待发布草稿的管理、在线润色、转正与删除，不干预已发布博文） ──
+          (tab === 'drafts' || tab === 'articles') && (() => {
+            const drafts = (state?.drafts || []).map(d => ({
               ...d,
               isDraft: true,
               file: d.file || d.path || `docs/draft/${d.slug}/index.md`
             }));
-            const allItems = [...rawDrafts, ...rawArticles];
 
-            // 搜索过滤与分类过滤
-            const filteredArticles = allItems.filter(item => {
-              if (articleTabFilter === 'published' && item.isDraft) return false;
-              if (articleTabFilter === 'draft' && !item.isDraft) return false;
+            // 搜索过滤与标签筛选
+            const filteredDrafts = drafts.filter(item => {
               if (articleTagFilter !== 'all') {
                 if (!Array.isArray(item.tags) || !item.tags.includes(articleTagFilter)) return false;
               }
@@ -2158,7 +2154,7 @@ window.__ModuleLoader__.load({
               try {
                 if (navigator?.clipboard?.writeText) {
                   navigator.clipboard.writeText(filePath);
-                  showToast(`已复制文件路径: ${filePath}`);
+                  showToast(`已复制草稿路径: ${filePath}`);
                 } else {
                   showToast(filePath);
                 }
@@ -2167,24 +2163,26 @@ window.__ModuleLoader__.load({
               }
             };
 
-            return h('div', { key: 'articles-panel' }, [
+            return h('div', { key: 'drafts-panel' }, [
               // 概览指标卡片
               h('div', { className: 'hs-stat-grid' }, [
                 h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, allItems.length),
-                  h('div', { className: 'hs-stat-title' }, '文章与草稿总计')
+                  h('div', { className: 'hs-stat-value', style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, drafts.length),
+                  h('div', { className: 'hs-stat-title' }, '待发布草稿总数')
                 ]),
                 h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: '#34d399' } }, rawArticles.length),
-                  h('div', { className: 'hs-stat-title' }, '已发布博文库')
+                  h('div', { className: 'hs-stat-value', style: { color: '#f59e0b', fontSize: 16, fontFamily: 'monospace' } }, state?.blog?.draftDir || 'docs/draft'),
+                  h('div', { className: 'hs-stat-title' }, '草稿落地相对目录')
                 ]),
                 h('div', { className: 'hs-stat-box' }, [
-                  h('div', { className: 'hs-stat-value', style: { color: '#f59e0b' } }, rawDrafts.length),
-                  h('div', { className: 'hs-stat-title' }, '待完善草稿')
+                  h('div', { className: 'hs-stat-value', style: { color: isBlogConfigured ? '#34d399' : '#f87171', fontSize: 16 } },
+                    isBlogConfigured ? '已绑定' : '未绑定'
+                  ),
+                  h('div', { className: 'hs-stat-title' }, '博客项目状态')
                 ]),
                 h('div', { className: 'hs-stat-box' }, [
                   h('div', { className: 'hs-stat-value', style: { color: '#38bdf8' } }, state?.profile?.tags?.length || 0),
-                  h('div', { className: 'hs-stat-title' }, '博客体系标签')
+                  h('div', { className: 'hs-stat-title' }, '博客参考标签库')
                 ])
               ]),
 
@@ -2207,27 +2205,17 @@ window.__ModuleLoader__.load({
                     ]),
                     h('input', {
                       className: 'hs-input hs-search-input',
-                      placeholder: '搜索所有文章标题、slug、标签或路径...',
+                      placeholder: '搜索草稿标题、slug、标签或路径...',
                       value: articleSearch,
                       onChange: (e) => setArticleSearch(e.target.value)
                     })
                   ]),
 
-                  // 分类筛选 Pills
-                  h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, [
-                    h('button', {
-                      className: `hs-btn sm ${articleTabFilter === 'all' ? 'primary' : ''}`,
-                      onClick: () => setArticleTabFilter('all')
-                    }, `全部 (${allItems.length})`),
-                    h('button', {
-                      className: `hs-btn sm ${articleTabFilter === 'published' ? 'primary' : ''}`,
-                      onClick: () => setArticleTabFilter('published')
-                    }, `已发布 (${rawArticles.length})`),
-                    h('button', {
-                      className: `hs-btn sm ${articleTabFilter === 'draft' ? 'primary' : ''}`,
-                      onClick: () => setArticleTabFilter('draft')
-                    }, `草稿 (${rawDrafts.length})`)
-                  ])
+                  // 快速清空搜索
+                  articleSearch.trim() && h('button', {
+                    className: 'hs-btn sm',
+                    onClick: () => setArticleSearch('')
+                  }, '清空搜索')
                 ]),
 
                 // 热门标签快捷过滤
@@ -2247,38 +2235,34 @@ window.__ModuleLoader__.load({
                 ])
               ]),
 
-              // 文章卡片列表
+              // 草稿卡片列表
               h('div', { className: 'hs-card' }, [
                 h('div', { className: 'hs-card-header' }, [
                   h('div', null, [
-                    h('div', { className: 'hs-card-title' }, `所有文章明细 (${filteredArticles.length} / ${allItems.length})`),
+                    h('div', { className: 'hs-card-title' }, `草稿明细 (${filteredDrafts.length} / ${drafts.length})`),
                     h('div', { className: 'hs-card-subtitle' },
-                      isBlogConfigured
-                        ? `源自博客仓库：${state?.blog?.projectRoot || ''}`
-                        : '未绑定博客根目录，请在上方或设置中指定'
+                      '专注管理由热点聚合生成的待发布草稿（支持预览润色、补料核验、转正发布与废弃删除，不干预博客正式文章）'
                     )
                   ]),
-                  (articleSearch || articleTabFilter !== 'all' || articleTagFilter !== 'all') && h('button', {
+                  (articleSearch || articleTagFilter !== 'all') && h('button', {
                     className: 'hs-btn sm',
                     onClick: () => {
                       setArticleSearch('');
-                      setArticleTabFilter('all');
                       setArticleTagFilter('all');
                     }
                   }, '重置筛选')
                 ]),
 
-                filteredArticles.length === 0
+                filteredDrafts.length === 0
                   ? h('div', { style: { padding: '36px 0', textAlign: 'center', color: 'var(--dsw-alias-label-secondary, #8c909e)' } }, [
-                      h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📄'),
-                      h('div', { style: { fontWeight: 500 } }, '没有找到匹配的文章'),
-                      h('div', { style: { fontSize: 12, marginTop: 4 } }, '可尝试清空搜索词或切换筛选分类')
+                      h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📝'),
+                      h('div', { style: { fontWeight: 500 } }, '暂无符合条件的草稿'),
+                      h('div', { style: { fontSize: 12, marginTop: 4 } }, '可在「热点候选」中点击一键生成草稿，草稿将落地到 docs/draft 目录')
                     ])
-                  : h('div', null, filteredArticles.map(item => {
-                      const isDraft = Boolean(item.isDraft);
-                      const filePath = item.file || item.path || (isDraft ? `docs/draft/${item.slug}/index.md` : `docs/article/${item.slug}/index.md`);
+                  : h('div', null, filteredDrafts.map(item => {
+                      const filePath = item.file || item.path || `docs/draft/${item.slug}/index.md`;
                       return h('div', {
-                        key: `${isDraft ? 'draft' : 'article'}-${item.slug}`,
+                        key: `draft-${item.slug}`,
                         className: 'hs-article-card'
                       }, [
                         // 标题行与状态
@@ -2287,12 +2271,12 @@ window.__ModuleLoader__.load({
                             h('span', {
                               className: 'hs-tag-pill',
                               style: {
-                                background: isDraft ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                                color: isDraft ? '#fbbf24' : '#34d399',
-                                borderColor: isDraft ? 'rgba(245, 158, 11, 0.3)' : 'rgba(16, 185, 129, 0.3)',
+                                background: 'rgba(245, 158, 11, 0.15)',
+                                color: '#fbbf24',
+                                borderColor: 'rgba(245, 158, 11, 0.3)',
                                 fontSize: 11
                               }
-                            }, isDraft ? '草稿 (sitemap:false)' : '已发布'),
+                            }, '草稿 (sitemap:false)'),
                             h('span', { className: 'hs-article-title', style: { wordBreak: 'break-word' } }, item.title || item.slug)
                           ]),
                           item.date && h('span', {
@@ -2323,7 +2307,7 @@ window.__ModuleLoader__.load({
                           // 文件路径胶囊
                           h('span', {
                             className: 'hs-article-file',
-                            title: '点击复制文件路径',
+                            title: '点击复制草稿文件路径',
                             onClick: () => handleCopyPath(filePath)
                           }, [
                             h('svg', { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
@@ -2347,14 +2331,14 @@ window.__ModuleLoader__.load({
                             }, `#${t}`))
                           ),
 
-                          // 操作按钮区
+                          // 操作按钮区：专注草稿的预览润色、转正发布与废弃删除
                           h('div', { style: { display: 'flex', gap: 6, marginLeft: 'auto', alignItems: 'center' } }, [
                             h('button', {
                               className: 'hs-btn sm',
                               style: { padding: '3px 8px', fontSize: 11 },
-                              onClick: () => openArticleEditor({ ...item, file: filePath, isDraft })
-                            }, '✏️ 预览与修改'),
-                            isDraft && h('button', {
+                              onClick: () => openArticleEditor({ ...item, file: filePath, isDraft: true })
+                            }, '✏️ 预览与润色'),
+                            h('button', {
                               className: 'hs-btn sm primary',
                               style: { padding: '3px 8px', fontSize: 11 },
                               disabled: isPromotingArticle,
@@ -2364,8 +2348,8 @@ window.__ModuleLoader__.load({
                               className: 'hs-btn sm',
                               style: { padding: '3px 8px', fontSize: 11, color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' },
                               disabled: isDeletingArticle,
-                              onClick: () => handleDeleteArticle({ ...item, file: filePath, isDraft })
-                            }, '🗑️ 删除')
+                              onClick: () => handleDeleteArticle({ ...item, file: filePath, isDraft: true })
+                            }, '🗑️ 废弃草稿')
                           ])
                         ])
                       ]);

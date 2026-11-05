@@ -8,8 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createPipeline } from './core/pipeline.js';
 import { rankClusters } from './core/rank.js';
 import { renderMarkdown } from './core/digest.js';
-import { validateArticle, parseFrontmatter } from './core/validate.js';
-import { collectSupplementEvidence } from './core/supplement.js';
+import { checkDraft } from './core/checks.js';
 import { dateLabel } from './core/normalize.js';
 import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
@@ -278,54 +277,19 @@ async function cmdScaffold() {
 
 async function runChecks(slug) {
   const { target, store, publish } = await loadConfig();
-  const draftFile = path.join(target.draftDir, slug, 'index.md');
-  const articleFile = path.join(target.articleDir, slug, 'index.md');
-  const file = existsSync(draftFile) ? draftFile : articleFile;
-  if (!existsSync(file)) fail(`找不到 ${slug} 的 index.md`);
-
-  const markdown = await readFile(file, 'utf8');
-  const digest = await store.loadDigest(String(flags.get('date') ?? 'latest'));
-  const raw = typeof store.loadRaw === 'function' ? await store.loadRaw(digest.date) : [];
-
-  const { data } = parseFrontmatter(markdown);
-  const candidate =
-    digest.items.find((it) => it.slugHint && it.slugHint === slug) ??
-    digest.items.find((it) => it.title === String(data.title ?? ''));
-
-  const sourceTexts = [];
-  const allowedUrls = new Set();
-  if (candidate) {
-    for (const source of candidate.sources ?? []) {
-      allowedUrls.add(source.url);
-      const match = raw.find((r) => r.url === source.url);
-      sourceTexts.push(`${source.title} ${match?.content ?? ''}`);
-    }
-    sourceTexts.push(candidate.title, candidate.summary ?? '');
-  } else {
-    for (const item of raw) sourceTexts.push(`${item.title} ${item.content ?? ''}`);
+  // 校验逻辑在 core/checks.js —— 面板生成正文后走的是同一段代码。
+  try {
+    return await checkDraft({
+      target,
+      store,
+      slug,
+      allowedHosts: publish.allowedHosts ?? [],
+      allowNumbers: String(flags.get('allow') ?? '').split(',').filter(Boolean),
+      date: String(flags.get('date') ?? 'latest'),
+    });
+  } catch (error) {
+    fail(error?.message ?? String(error));
   }
-
-  const profile = await target.profile();
-  const siteUrls = await target.siteUrls();
-
-  // 补料并入证据边界：登记过的页面，其原文参与数字比对，其 URL 与域名进入白名单。
-  // 这不是放宽闸门 —— 是让"读过什么"成为可审计的输入，而不是靠 --allow 手工放行。
-  const supplements = await target.readSupplements(slug);
-  const evidence = collectSupplementEvidence(supplements.entries, { allowedHosts: publish.allowedHosts ?? [] });
-  sourceTexts.push(...evidence.sourceTexts);
-  for (const url of evidence.allowedUrls) allowedUrls.add(url);
-
-  const result = validateArticle({
-    markdown,
-    sourceTexts,
-    siteUrls,
-    tagVocabulary: profile.tagVocabulary,
-    allowedUrls,
-    allowedHosts: evidence.allowedHosts,
-    allowNumbers: String(flags.get('allow') ?? '').split(',').filter(Boolean),
-  });
-
-  return { result, file, candidate, supplements };
 }
 
 function printCheckReport(slug, { result, file, supplements }) {
