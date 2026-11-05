@@ -942,7 +942,8 @@ export function createRoutes(deps) {
             projectRoot: currentProjectRoot,
             provider: body?.provider ? String(body.provider) : undefined,
             model: body?.model ? String(body.model) : undefined,
-            mode: body?.mode === 'direct' ? 'direct' : 'agent',
+            // 没显式传 mode 时交给已保存的选择决定，不能在这里默认成 agent。
+            mode: body?.mode === 'direct' ? 'direct' : body?.mode === 'agent' ? 'agent' : undefined,
           });
           // 生成完立刻用同一套闸门验一遍 —— 面板直接显示违规，不必再切回终端。
           let checks = null;

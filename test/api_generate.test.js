@@ -172,3 +172,17 @@ test('模型目录：不能保存时回 501，而不是假装成功', async () =
   assert.equal(out.status, 501);
   assert.equal(out.code, 'ERR_NO_MODELS');
 });
+
+test('生成正文：body 没传 mode 时不硬塞 agent，交给已保存的选择', async () => {
+  const seen = [];
+  const routes = routesWith({
+    generate: async (opts) => {
+      seen.push(opts);
+      return { slug: opts.slug, file: 'docs/draft/demo/index.md', bodyChars: 1, registered: 0, registerFailed: [] };
+    },
+  });
+  await callGenerate(routes, { slug: 'demo' });
+  assert.equal(seen[0].mode, undefined, 'API 层不能默认成 agent，否则保存的 direct 永远不生效');
+  await callGenerate(routes, { slug: 'demo', mode: 'direct' });
+  assert.equal(seen[1].mode, 'direct');
+});
