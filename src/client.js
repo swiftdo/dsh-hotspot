@@ -4333,7 +4333,15 @@ window.__ModuleLoader__.load({
                       h('div', { className: 'hs-card-subtitle' },
                         loadingErrors
                           ? '正在读取…'
-                          : `今天 ${(errorLog?.entries || []).length} 条${(errorLog?.files || []).length > 1 ? ` · 另有 ${errorLog.files.length - 1} 个历史文件` : ''}`)
+                          : `今天 ${(errorLog?.entries || []).length} 条${(errorLog?.files || []).length > 1 ? ` · 另有 ${errorLog.files.length - 1} 个历史文件` : ''}`),
+                      // 宿主用裸 import() 加载插件模块，Node 进程内会复用旧模块 ——
+                      // 改完代码没重启 App 时，面板里看到的报错其实来自旧代码
+                      state?.runtime?.loadedAt && h('div', {
+                        className: 'hs-form-hint',
+                        style: { marginTop: 2, color: (state.runtime.stale || []).length > 0 ? '#fbbf24' : undefined }
+                      }, (state.runtime.stale || []).length > 0
+                        ? `⚠️ 磁盘上的插件代码比进程里新（${state.runtime.stale.length} 个文件：${state.runtime.stale.slice(0, 3).join('、')}…），要完全退出并重开 DeepSeek Harness 才生效`
+                        : `插件代码载入于 ${new Date(state.runtime.loadedAt).toLocaleString('zh-CN')}`)
                     ]),
                     h('div', { style: { display: 'flex', gap: 8 } }, [
                       h('button', {

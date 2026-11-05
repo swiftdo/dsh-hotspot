@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { createPipeline } from './core/pipeline.js';
@@ -39,6 +40,47 @@ import { createHotspotTools } from './tools.js';
  * 前者需要猜命令 outcome 的契约；后者宿主已有「自动化任务」，让它调 hotspot_run 就行 ——
  * 少一处耦合，也就少一处随 DSH 版本改动而失效的地方。
  */
+
+/** 插件自身的源码根目录（src/）：用来判断「磁盘上的代码是否比进程里新」。 */
+const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const LOADED_AT = Date.now();
+
+/**
+ * 宿主用裸 `await import(url)` 加载插件模块，Node 在同一进程内会复用已求值的模块 ——
+ * 也就是说「禁用 → 启用」拿到的仍是内存里那份旧代码，改 server/core/plugin 之后
+ * 必须重启 App 才生效。这个列表用来在面板上把它说清楚，不然表现成「明明改了还报旧错」。
+ */
+const WATCHED_SOURCES = [
+  'plugin.js',
+  'tools.js',
+  'server/api.js',
+  'server/state.js',
+  'server/deploy.js',
+  'server/http.js',
+  'server/jobs.js',
+  'server/errors.js',
+  'server/generate.js',
+  'core/checks.js',
+  'core/promote.js',
+  'core/writer.js',
+  'core/writer-route.js',
+  'core/project-config.js',
+  'adapters/target-vitepress.js',
+];
+
+/** 磁盘上比本次载入更新的文件（相对 src/）。空数组表示进程里的代码就是最新的。 */
+function staleSources() {
+  const stale = [];
+  for (const rel of WATCHED_SOURCES) {
+    try {
+      const stat = statSync(path.join(PLUGIN_ROOT, rel));
+      if (stat.mtimeMs > LOADED_AT) stale.push(rel);
+    } catch {
+      /* 文件不存在（旧版本删掉的）不算过期 */
+    }
+  }
+  return stale;
+}
 
 const appliedContexts = new WeakSet();
 
@@ -370,6 +412,8 @@ export function apply(ctx, config = {}) {
         clearErrors: (opts) => errorLog.clear(opts),
         errorFiles: () => errorLog.files(),
         errorLogToday: () => errorLog.today(),
+        // 面板「诊断」用：进程里的代码是不是比磁盘旧（旧了就必须重启 App）
+        runtimeInfo: () => ({ loadedAt: new Date(LOADED_AT).toISOString(), stale: staleSources() }),
         projectRoot,
         store,
         target,

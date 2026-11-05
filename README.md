@@ -609,9 +609,13 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 
    不然每次重启 App 后都是未绑定状态（面板显示「未绑定路径」），要手工再绑一次。真正的配置（sources / publish / deploy）仍以博客仓库里那份为准——插件读到这个 `projectRoot` 后会跟随过去读它。
 
-2. **每次改完代码的重载**：用 `plugin_manager` 对 `include:dsh-hotspot` 先 `set_plugin enabled=false`、再 `enabled=true`。宿主会重新 import 插件，`src/server/api.js` 的新路由立刻生效，**不需要退出并重开 DSH**（旧结论「改路由必须重启」已被实测推翻）。
+2. **改完代码怎么让它生效**：宿主加载插件用的是裸 `await import(url)`（`cordis-plugin-loader` 的 `import()`），Node 在同一个进程内会复用已求值的模块 —— 所以 `plugin_manager` 的禁用再启用拿到的**仍然是内存里那份旧代码**。改 `src/plugin.js` / `src/server/**` / `src/core/**` / `src/adapters/**` 之后必须**完全退出并重开 DeepSeek Harness**（不是关窗口）。
+
+   `src/web/panel.html` 每次请求读盘、`src/client.js` 由页面加载，改这两处刷新页面即可。
+
+   > 旧文档说「禁用再启用就能生效，不需要重启」——那条是错的：它看起来生效过，是因为当时改的恰好是 panel.html 或 client.js。判断办法写在下面。
 3. **验证**：`/hotspot/` 返回 200；`/dsh-hotspot/rss.xml` 返回 200 且 `content-type: application/rss+xml`；`/dsh-hotspot/api/state` 的 `feed` 里有 `rssPath`。
-4. **改哪一层要重载**：`src/web/panel.html` 每次请求读盘，改完刷新页面即可；`src/client.js` 属浏览器侧客户端插件，刷新页面生效；`src/plugin.js`、`src/server/*`、`src/core/*` 走上面的 disable→enable。
+4. **怎么确认进程里跑的是不是最新代码**：设置页 →「诊断」会显示「插件代码载入于 …」；如果磁盘上有文件比这个时间新，它会直接标黄：`磁盘上的插件代码比进程里新（N 个文件…），要完全退出并重开 DeepSeek Harness 才生效`。对应的接口字段是 `/api/state` 的 `runtime.loadedAt` 与 `runtime.stale`。
 
 验证加载是否成功：`cordis.patch.yml` 里把 `verbose` 设为 `true`，启动后应看到
 

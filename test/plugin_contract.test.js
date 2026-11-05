@@ -107,3 +107,12 @@ test('设置页：tab 与页内标题统一叫「设置」，高级参数可折�
   assert.ok(client.includes('高级排序参数'), '很少改的两个参数默认收起');
   assert.ok(client.includes('showAdvancedRank'), '折叠状态要能记住');
 });
+
+test('诊断页能识别「进程里的代码比磁盘旧」', () => {
+  const client = readFileSync('src/client.js', 'utf8');
+  assert.ok(client.includes('state.runtime.stale'), '面板要读 runtime.stale');
+  assert.ok(client.includes('完全退出并重开'), '过期时给出可执行的提示');
+  const plugin = readFileSync('src/plugin.js', 'utf8');
+  assert.ok(plugin.includes('staleSources'), '插件要能判断哪些源码比载入时间新');
+  assert.ok(plugin.includes('runtimeInfo'), '通过 deps.runtimeInfo 暴露给面板');
+});

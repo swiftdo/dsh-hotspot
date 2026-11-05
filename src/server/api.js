@@ -285,6 +285,7 @@ export function createRoutes(deps) {
     getStore: () => currentStore,
     getProjectRoot: () => currentProjectRoot,
     jobs: deps.jobs,
+    runtimeInfo: deps.runtimeInfo,
   });
 
   const baseRoutes = [

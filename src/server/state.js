@@ -49,7 +49,7 @@ function relativeDir(root, dir) {
   return rel && !rel.startsWith('..') ? rel : '';
 }
 
-export function createStateBuilder({ readConfig, configFileIn, getTarget, getStore, getProjectRoot, jobs }) {
+export function createStateBuilder({ readConfig, configFileIn, getTarget, getStore, getProjectRoot, jobs, runtimeInfo }) {
   async function buildState() {
     const config = await readConfig();
     const hasConfiguredRoot = Boolean(
@@ -169,6 +169,8 @@ export function createStateBuilder({ readConfig, configFileIn, getTarget, getSto
       drafts: drafts || [],
       // 后台写作任务的当前状态：面板据此给草稿卡片标「写作中 / 失败可重试」。
       jobs: typeof jobs?.list === 'function' ? jobs.list() : [],
+      // 进程里的插件代码载入时间；stale 非空说明磁盘上已经改过、但还没重启 App
+      runtime: typeof runtimeInfo === 'function' ? runtimeInfo() : null,
       feed,
       digest: digest
         ? {
