@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { renderBrief } from './brief.js';
 
 /**
  * 「让 agent 写正文」的契约层 —— 只有提示词模板和产物解析，不碰磁盘、不碰模型。
@@ -29,6 +30,7 @@ export function buildWriterPrompt({
   title,
   url = '',
   sources = [],
+  brief = null,
   artifactPath,
   minChars = 800,
   maxChars = 1400,
@@ -38,19 +40,25 @@ export function buildWriterPrompt({
   lines.push('');
   lines.push(`选题：${String(title ?? '').trim()}`);
   if (url) lines.push(`一手源：${url}`);
-  const list = (sources ?? []).filter((s) => s && s.url);
-  if (list.length > 0) {
-    lines.push('');
-    lines.push('候选源（只当线索，不能当作唯一依据）：');
-    for (const source of list.slice(0, 8)) {
-      const name = String(source.title ?? '').trim() || source.url;
-      lines.push(`- ${name} — ${source.url}`);
+  lines.push('');
+  if (brief) {
+    // 摘要 / tags / 一手源原文节选：这些是「这篇热点现在知道什么」，
+    // 子代理不必从零搜，但也绝不能把它们直接改写一遍就当交付。
+    lines.push(...renderBrief(brief));
+  } else {
+    const list = (sources ?? []).filter((s) => s && s.url);
+    if (list.length > 0) {
+      lines.push('候选源（只当线索，不能当作唯一依据）：');
+      for (const source of list.slice(0, 8)) {
+        const name = String(source.title ?? '').trim() || source.url;
+        lines.push(`- ${name} — ${source.url}`);
+      }
+      lines.push('');
     }
   }
-  lines.push('');
   lines.push('做法：');
   lines.push('1. 先用搜索工具找 3–6 篇互相独立的报道或一手公告，逐一打开读原文，不要只看摘要。');
-  lines.push('2. 同一个事实至少要有两个独立来源；只有一处提到的，写成「据报道」或干脆不写。');
+  lines.push('2. 同一个事实至少要有两个独立来源；只有一处提到的，写成「据报道」或干脆不写。上面给的素材只是起点，不能成段搬运。');
   lines.push('3. 不编造数字、日期、引语、人名和职位。拿不准的地方就写「尚未披露」。');
   lines.push(`4. 正文用中文，${minChars}–${maxChars} 字，Markdown。不要写一级标题（# 由宿主补），小标题用 ##。`);
   lines.push('5. 结尾用「## 参考」列出你真正读过的链接，每条一行。');
