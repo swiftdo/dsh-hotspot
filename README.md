@@ -57,6 +57,97 @@ core 只认五个接口，不知道自己跑在 DSH 还是 CLI 里：
 
 `src/core/` 里不出现 `ctx`、不出现 `article`、不出现 `sitemap`——那些词只准出现在 `src/adapters/target-vitepress.js`。
 
+## 处理流程
+
+整条链路是三段：**采集是批处理，写作是会话里按需触发，校验是发布前的硬闸门**。三段之间只通过磁盘上的文件交接（digest、raw、`index.md`、`sources.json`），没有常驻进程、没有内存状态依赖——所以任何一步都可以隔天重跑。
+
+### 1 采集：一次 run 里发生什么
+
+```mermaid
+flowchart LR
+  A["配置里的 sources"] --> B["并发抓取<br/>rss / atom / github-release / hn"]
+  B -->|"单源失败只记录，不中断"| C["同源去重<br/>source + canonicalUrl"]
+  C --> D["聚类<br/>titleKey 字符 bigram<br/>Jaccard ≥ 0.6 且 72h 内"]
+  D --> E["打分<br/>3·log2(1+源数) + 1.5·新鲜度<br/>+ 2·关键词命中 − 5·黑名单"]
+  E --> F["digest（瘦）<br/>.hotspot/digest/YYYY-MM-DD.json"]
+  B --> G["原文（全）<br/>.hotspot/raw/YYYY-MM-DD.json"]
+  F --> H["候选表"]
+  G -.->|"check 的数字比对读这里"| I["一手源全文"]
+  H --> I
+```
+
+三个关键性质：
+
+- **单源失败不拖垮整体**。失败的源名进 `status.failedSources`，成功源不足一半时 `degraded: true`，候选表顶部会标「严重降级」。
+- **只压同源内部的重复，绝不按 URL 全局去重**。两个源订阅同一个 URL 时会被吞掉一条，而「跨源共现」正是排序里最强的信号（`3.0 × log2(1 + 源数)`）——吞掉就等于把这个信号永久归零。跨源合并是聚类那一步的职责。
+- **digest 瘦、raw 全**。digest 只留标题、URL、分数与来源列表；raw 存每个源的完整正文，专门给 `check` 做数字比对用。
+
+### 2 写作：一次成稿的调用顺序
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as 会话（你或 agent）
+  participant T as 插件工具
+  participant B as 博客仓库
+
+  U->>T: hotspot_run
+  T->>B: 写 digest + raw
+  T-->>U: 候选表
+
+  U->>T: hotspot_get 3（registerSlug=my-post）
+  T->>B: 读 digest/raw，写 docs/draft/my-post/sources.json
+  T-->>U: 多源原文（核对版本号、日期）
+
+  U->>T: hotspot_scaffold 3（slug=my-post）
+  T->>B: 写 docs/draft/my-post/index.md（sitemap: false）
+
+  Note over U: 联网搜官方 release notes / issue，综合后写正文，再去 AI 味
+
+  U->>T: hotspot_supplement（边搜边登记，可多次）
+  T->>B: sources.json 追加一条（正文 ≤ 4000 字）
+
+  U->>T: hotspot check my-post
+  T->>B: 读正文 + 一手源 + 补料
+  T-->>U: 三道检查 + frontmatter 结果
+
+  U->>T: hotspot promote my-post
+  T->>B: 搬到文章目录，删 sitemap: false，sources.json 一起搬
+```
+
+每步落在磁盘上的东西，决定了下一步能看到什么：
+
+| 步骤 | 写入 | 为什么必须落盘 |
+|---|---|---|
+| `run` | `.hotspot/digest/*.json`、`.hotspot/raw/*.json` | `check` 要拿一手源原文比数字 |
+| `get --registerSlug` | `<draftDir>/<slug>/sources.json` | digest 按天滚动，隔天 latest 里已无该 cluster，来源会丢 |
+| `scaffold` | `<draftDir>/<slug>/index.md` | 骨架与 frontmatter 由程序生成，不是模型写的 |
+| `supplement` | 同一个 `sources.json` | 补料是**证据账本**，不是笔记 |
+| `promote` | `<articleDir>/<slug>/{index.md,sources.json}` | 转正后仍要答得出「这段数字从哪读来的」 |
+
+### 3 校验：四道闸门
+
+```mermaid
+flowchart TD
+  A["文章 markdown"] --> B["数字字面比对"]
+  B -->|"不在证据边界内"| X1["number-not-in-source"]
+  B --> C["站内链接集合"]
+  C -->|"目标页不存在"| X2["internal-link-missing"]
+  C --> D["外链白名单"]
+  D -->|"域名未登记"| X3["external-link-untrusted"]
+  D --> E["frontmatter 规则"]
+  E -->|"缺字段 / 超长 / permalink / 日期 / tag"| X4["fm-title · fm-description · fm-description-length<br/>fm-permalink · fm-date · fm-tag-uncontrolled"]
+  E -->|"全过"| P["promote → 文章目录"]
+  P --> Q["publish（可选的五步）"]
+  X1 --> R["登记补料，或改稿"]
+  X2 --> R
+  X3 --> R
+  X4 --> R
+  R --> A
+```
+
+「证据边界」是三层叠加的：**候选源原文**（digest + raw）、**已登记的补料**（`sources.json`）、**配置里的 `publish.allowedHosts`**。闸门不会因为 `--allow` 变松——它只会因为「你真的读过」而变宽。
+
 ## 快速开始
 
 在**你的博客仓库根目录**下跑（`--root` 就是博客项目路径，不是本仓库）：
@@ -84,15 +175,15 @@ node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 
 |---|---|---|
 | 1 项目侧 | `hotspot doctor --online` | 没有 ✗；源能连通、能扫到文章、tag 词表非空 |
 | 2 打包侧 | `dsh --profile <名字> --dump-config \| grep -A6 hotspot` | 配置树里出现 `- id: hotspot`，config 正确 |
-| 3 运行时 | 启动后在 App 里打开 `<地址>/hotspot/` | 页面能开、`/api/state` 有数据、会话里能调 `hotspot_run` |
+| 3 运行时 | 启动后在 App 里打开 `<地址>/dsh-hotspot/` | 页面能开、`/api/state` 有数据、会话里能调 `hotspot_run` |
 
 第 2、3 层依赖 DSH 装好并重启。第 3 层是最关键的一层，因为前两层都可能"看起来正常但实际没生效"——踩过的两个坑（`output.render` 返回裸字符串、`output.schema` 写了 `required`）都属于这种静默失败。判断办法：`cordis.patch.yml` 里把 `verbose` 设成 `true`，启动日志应出现
 
 ```text
-[hotspot] hotspot: 插件已加载
-[hotspot] tools 服务就绪=true
-[hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
-[hotspot] 已注册 7 条路由，管理页 /hotspot/
+[dsh-hotspot] dsh-hotspot: 插件已加载，projectRoot=/path/to/blog
+[dsh-hotspot] tools 服务就绪=true
+[dsh-hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
+[dsh-hotspot] 已注册 N 条路由，管理页 /dsh-hotspot/
 ```
 
 四行缺哪一行，问题就在哪一层：第一行缺失 = 模块没被加载（看 `did not activate` 列表）；第二行 false = tools 服务没起来；第三行缺失 = 注册抛异常了（异常被 Cordis 吞掉，插件里的 try/catch 会打出来）；第四行缺失 = webServer 没就绪。
@@ -159,9 +250,107 @@ git push origin HEAD
 
 ⚠️ 构建命令与部署命令目前**写死在 `src/cli.js` 的 `cmdPublish`**（`yarn build` 与 `./deploy.sh --no-git --skip-build`）。这不是通用约定，是作者自己站点的流水线——你的站点若用别的构建/部署方式，要么改这两行，要么别用 `publish`，手动执行上面五步。
 
+## 插件原理
+
+插件只做三件事：**把 core 的端口接到 `ctx` 上、把能力暴露成工具、把状态暴露成页面**。它自己不实现任何业务逻辑——`src/plugin.js` 里出现的最复杂的判断是「有没有配置博客根目录」。
+
+```mermaid
+flowchart TB
+  subgraph HOST["DeepSeek Harness 宿主"]
+    TOOLS["tools 服务"]
+    WEB["webServer 服务"]
+  end
+
+  CFG["cordis.patch.yml<br/>projectRoot · articleDir<br/>draftDir · digestDir · verbose"]
+
+  subgraph PLUGIN["src/plugin.js 薄壳"]
+    APPLY["apply(ctx, config)"]
+    RT["运行时状态<br/>projectRoot · target · store"]
+    T4["4 个工具"]
+    RTES["路由 + 零依赖面板"]
+  end
+
+  subgraph CORE["src/core 端口层（不认识 ctx）"]
+    PIPE["pipeline 编排"]
+    RANK["rank 打分"]
+    VAL["validate 闸门"]
+    SUP["supplement 证据"]
+  end
+
+  subgraph ADAPTERS["src/adapters"]
+    SRC["source-rss<br/>rss / atom / github-release / hn"]
+    ST["store-fs<br/>digest + raw"]
+    VP["target-vitepress<br/>profile · scaffold · promote"]
+  end
+
+  CFG --> APPLY --> RT
+  RT --> T4
+  RT --> RTES
+  T4 --> CORE
+  RTES --> CORE
+  CORE --> ADAPTERS
+  TOOLS -.->|"注册"| T4
+  WEB -.->|"注册"| RTES
+  ADAPTERS --> FS[("博客仓库磁盘")]
+```
+
+三条边值得单独说：
+
+1. **宿主 → 薄壳是注册，不是调用**。工具和路由都是 `ctx.inject([服务名], sctx => sctx.effect(...))` 里注册进去的，`effect` 返回的 disposer 负责卸载。所以插件热重载不会留下僵尸路由。
+2. **薄壳 → core 是端口注入**。`runScan` 每次调用都现场 `createPipeline({ sources, ranker, store, clock })`，core 拿到的全是函数和对象，没有一个是 `ctx`。
+3. **core → 适配器是唯一的落盘口**。`src/core/` 里没有一处 `writeFile`，写博客目录的代码只在 `target-vitepress.js` 里。
+
+### 配置从哪来
+
+| 来源 | 生效时机 | 能改什么 |
+|---|---|---|
+| `cordis.patch.yml` 的 `config` | `apply` 入参，启动时 | `projectRoot` / `articleDir` / `draftDir` / `digestDir` / `limit` / `verbose` |
+| 工作区根目录的 `dsh-hotspot.config.json` 或 `hotspot.config.json` | 启动时读一次（`projectRoot` 为空则整段跳过） | `projectRoot` 及其 `digestDir` / `articleDir` / `draftDir` |
+| 面板「设置」页 | 运行时，走 `onConfigUpdated → updateRuntime` | `projectRoot` / 目录名 / `digestDir`（rank、publish 写回配置文件，下次启动生效） |
+| 工具参数 `projectRoot` | 单次调用 | 临时指定另一份博客仓库，不改全局状态 |
+
+优先级从上到下**后者覆盖前者**（工具参数只影响那一次调用）。
+
+两个已知的不一致，写在这里免得踩坑：
+
+- **缺省文章目录不同**。插件侧 `articleDir` 缺省 `docs`（最早只服务「文章直接放 `docs/` 下」这种布局），而 CLI 走适配器默认值 `docs/article`（`src/adapters/target-vitepress.js` 里的 `config.articleDir ?? 'docs/article'`）。插件的默认值会盖掉适配器的默认值，所以同一个仓库在插件里和 CLI 里可能指向不同目录——配置里显式写死 `articleDir` 就没有歧义。
+- **配置键不同**。插件读顶层的 `articleDir` / `draftDir` / `digestDir`，CLI 读 `target.articleDir` / `target.draftDir`。两个键写在同一个文件里，各读各的。
+
+### 没配置博客目录时会怎样
+
+`projectRoot` 为空或路径不存在 → 进入**未绑定状态**：`target = null`。
+
+| 能力 | 未绑定时的行为 |
+|---|---|
+| `hotspot_run` | 照常跑，但画像为空（没有 tag 词表、没有关键词加权），排序只剩新鲜度与源数 |
+| `hotspot_get` | 照常读 digest；带 `registerSlug` 会返回「尚未配置博客项目根目录」 |
+| `hotspot_scaffold` / `hotspot_supplement` | 返回同一条提示，不抛异常 |
+| 面板 | 能开，能在「设置」里填路径，填完立即生效 |
+
+刻意的取舍：**没有默认目录**。猜一个 `~/blog` 然后往里面写文件，比明确报错糟糕得多。
+
+### 四个工具
+
+| 工具 | 参数 | 读 | 写 |
+|---|---|---|---|
+| `hotspot_run` | `limit?` | 配置文件里的 sources | `.hotspot/digest/*.json`、`.hotspot/raw/*.json` |
+| `hotspot_get` | `id`、`registerSlug?` | digest + raw | 仅当传 `registerSlug`：`<draftDir>/<slug>/sources.json` |
+| `hotspot_scaffold` | `id`、`slug?`、`projectRoot?` | digest | `<draftDir>/<slug>/index.md` |
+| `hotspot_supplement` | `slug`、`url`、`title?`、`content?`、`kind?`、`projectRoot?` | `sources.json` | 同文件追加/覆盖 |
+
+`hotspot_get` 是唯一「读的时候可能写」的工具，因为 digest 按天滚动：隔天写同一篇草稿时，latest 里已经没有那个 cluster，`check` 也就不再认它的来源。写正文前用 `registerSlug` 把证据固化一次，是最省事的做法。
+
+### 路由与面板
+
+每个路径同时注册在两个前缀下：`/dsh-hotspot` 和旧前缀 `/hotspot`。所以启动日志里的路由条数是**路径数的两倍**——看到数字对不上先想想这一条。
+
+面板是一个零依赖 HTML（`src/client.js`），不打包、不引框架，由路由直接吐出字符串。所有数据走 `/api/*` 的 JSON 接口，所以面板坏掉时可以直接 curl 排障。
+
+**刻意没做的**：不注册 `/slash` 命令、不注册定时任务。前者要猜命令 outcome 的契约；后者宿主已有「自动化任务」，让它定时调 `hotspot_run` 就行。少两处耦合，就少两处随 DSH 版本失效的地方。
+
 ## DSH 插件
 
-`src/plugin.js` 是薄壳：把 core 的端口接上 `ctx`，然后就没它的事了。
+`src/plugin.js` 是薄壳（结构见上一节）：把 core 的端口接上 `ctx`，然后就没它的事了。
 
 **已在真实运行时验证**（DeepSeek Harness 0.2.1-rc.5，`dsh web --port 0`）：apply 执行、`tools` 服务就绪、四个工具注册成功。
 
@@ -211,9 +400,9 @@ dsh plugin --profile <profile> add <本仓库路径>
 验证加载是否成功：`cordis.patch.yml` 里把 `verbose` 设为 `true`，启动后应看到
 
 ```text
-[hotspot] hotspot: 插件已加载，projectRoot=...
-[hotspot] tools 服务就绪=true
-[hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
+[dsh-hotspot] dsh-hotspot: 插件已加载，projectRoot=...
+[dsh-hotspot] tools 服务就绪=true
+[dsh-hotspot] 已注册 4 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement
 ```
 
 ## 管理界面
