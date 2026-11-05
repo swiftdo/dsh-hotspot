@@ -8,6 +8,7 @@ import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
 import {
   createPolisher,
   createWriter,
+  pickParentAgent,
   pickProvider,
   readWriterSelection,
   saveWriterSelection,
@@ -35,6 +36,20 @@ async function setup({ draft = true } = {}) {
   const artifact = path.join(root, '.hotspot', 'writer', 'demo-post.json');
   return { root, target, store, artifact };
 }
+
+/**
+ * 假 agents 注册表。宿主要求 `request.parent` 是活着的 Agent 对象并做引用相等校验，
+ * 所以这里给的必须是稳定引用。
+ */
+function fakeAgents({ initiating = null, roots = [] } = {}) {
+  return {
+    currentInitiator: () => initiating,
+    roots: () => roots,
+    list: () => roots,
+  };
+}
+
+const liveAgent = { id: 'session-1', status: 'running' };
 
 /** 假宿主：startActivation 时把产物写进磁盘，模拟子代理交付。 */
 function fakeSubagents(artifact, payload, { text = '已写入', providers = ['spawn'] } = {}) {
@@ -71,8 +86,14 @@ test('子代理写产物 → 宿主登记补料 → 写正文 → 释放子代�
   });
 
   const body = '## 事实\n\nOpenAI 在 11 月 4 日宣布这笔收购。\n\n## 参考\n\n- https://the-decoder.com/x';
-  const write = createWriter({ getSubagents: () => fake.service, digestDir: '.hotspot' });
+  const write = createWriter({
+    getSubagents: () => fake.service,
+    getAgents: () => fakeAgents({ roots: [liveAgent] }),
+    digestDir: '.hotspot',
+  });
   const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
+
+  assert.equal(fake.calls[0].request.parent, liveAgent, '子代理必须挂在活着的父代理下');
 
   assert.equal(value.slug, 'demo-post');
   assert.equal(value.registered, 1, '只有带原文的来源才登记');
@@ -109,7 +130,7 @@ test('子代理没交产物时抛错，不写草稿', async () => {
       return { result: Promise.resolve({ text: '我写好了，但忘记存文件' }), async dispose() {} };
     },
   };
-  const write = createWriter({ getSubagents: () => service });
+  const write = createWriter({ getSubagents: () => service, getAgents: () => fakeAgents({ roots: [liveAgent] }) });
   await assert.rejects(() => write({ slug: 'demo-post', store, target, projectRoot: root }), /没有交出可用产物/);
 
   const draft = readFileSync(path.join(root, 'docs', 'draft', 'demo-post', 'index.md'), 'utf8');
@@ -119,8 +140,50 @@ test('子代理没交产物时抛错，不写草稿', async () => {
 test('草稿不存在时写正文失败并说明原因', async () => {
   const { root, target, store, artifact } = await setup({ draft: false });
   const fake = fakeSubagents(artifact, { body: '正文。', sources: [] });
-  const write = createWriter({ getSubagents: () => fake.service });
+  const write = createWriter({ getSubagents: () => fake.service, getAgents: () => fakeAgents({ roots: [liveAgent] }) });
   await assert.rejects(() => write({ slug: 'demo-post', store, target, projectRoot: root }), /草稿|找不到/);
+});
+
+test('没有活着的会话代理时给出可操作提示，不把 TypeError 抛给用户', async () => {
+  const { root, target, store } = await setup();
+  const fake = fakeSubagents(path.join(root, '.hotspot', 'writer', 'demo-post.json'), { body: '正文。', sources: [] });
+  const write = createWriter({ getSubagents: () => fake.service, getAgents: () => null });
+  await assert.rejects(
+    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
+    /找不到活着的会话代理/,
+  );
+  assert.equal(fake.calls.length, 0, '取不到父代理就不该发起激活');
+});
+
+test('pickParentAgent：initiator 优先，其次最近的 running root，再退回最后一个', () => {
+  const initiating = { id: 's-0' };
+  assert.equal(pickParentAgent(fakeAgents({ initiating })), initiating, 'agent 边界内优先发起者');
+
+  const idle = { id: 's-1', status: 'idle' };
+  const running = { id: 's-2', status: 'running' };
+  assert.equal(pickParentAgent(fakeAgents({ roots: [idle, running] })), running, '优先 running 的 root');
+  assert.equal(pickParentAgent(fakeAgents({ roots: [idle] })), idle, '没有 running 就取最近的 root');
+
+  const listed = { id: 'child' };
+  assert.equal(pickParentAgent({ list: () => [listed] }), listed, '没有 roots 时退回 list');
+
+  assert.equal(pickParentAgent(null), null);
+  assert.equal(pickParentAgent(fakeAgents()), null);
+  assert.equal(
+    pickParentAgent({
+      currentInitiator() {
+        throw new Error('no initiator');
+      },
+      roots() {
+        throw new Error('disposed');
+      },
+      list() {
+        throw new Error('disposed');
+      },
+    }),
+    null,
+    '服务抛错时降级为空，而不是把异常抛出去',
+  );
 });
 
 test('provider 缺省优先 spawn，没有就用第一个', () => {

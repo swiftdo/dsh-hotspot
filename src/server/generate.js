@@ -32,6 +32,44 @@ import {
 
 export const DEFAULT_WRITER_TIMEOUT_MS = 8 * 60 * 1000;
 
+/**
+ * 给子代理挑一个父代理。
+ *
+ * `subagents.startActivation()` 要求 `request.parent` 是一个**活着的 Agent 对象**，
+ * 并且做的是引用相等校验（`agents.get(parent.id) !== parent` 就拒绝）。官方工具
+ * （dsh-tool-subagent）从 `exec.agent` 拿；面板走的是 HTTP 路由，没有 `exec.agent`，
+ * 只能从 agents 注册表里取。早期版本干脆没传，宿主的 `spec.request.parent.id` 当场
+ * 抛 `Cannot read properties of undefined (reading 'id')` —— 面板写正文一直是坏的。
+ *
+ * 顺序：当前请求的发起者（在 agent 边界内调用时最准）→ 最近一个 running 的 root
+ * 会话 → 最近一个 root → 注册表最后一个。取不到就返回 null，由调用方给可操作提示。
+ *
+ * @param {{ currentInitiator?: Function, roots?: Function, list?: Function } | null} agents
+ */
+export function pickParentAgent(agents) {
+  if (!agents) return null;
+
+  try {
+    const initiating = typeof agents.currentInitiator === 'function' ? agents.currentInitiator() : null;
+    if (initiating) return initiating;
+  } catch {
+    /* 没有 initiator 边界是常态，继续往下找 */
+  }
+
+  const read = (fn) => {
+    try {
+      const list = typeof fn === 'function' ? fn() : null;
+      return Array.isArray(list) ? list.filter((agent) => agent && typeof agent === 'object') : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const roots = read(agents.roots);
+  const running = roots.filter((agent) => agent.status === 'running');
+  return running.at(-1) ?? roots.at(-1) ?? read(agents.list).at(-1) ?? null;
+}
+
 /** 润色是一次 completion，不联网、不发子代理：给 3 分钟已经足够，超时说明路由卡住了。 */
 export const DEFAULT_POLISH_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -134,6 +172,7 @@ async function streamOnce(llm, route, { system, prompt, signal, maxTokens = 4096
 
 export function createWriter({
   getSubagents,
+  getAgents,
   getLlm,
   digestDir = '.hotspot',
   timeoutMs = DEFAULT_WRITER_TIMEOUT_MS,
@@ -172,6 +211,13 @@ export function createWriter({
     if (mode === 'agent') {
       const service = typeof getSubagents === 'function' ? getSubagents() : null;
       if (!service) throw new Error('宿主没有提供 subagents 服务，无法生成正文');
+      // 子代理必须挂在一个活着的父代理下面，且宿主做的是引用相等校验
+      const parent = pickParentAgent(typeof getAgents === 'function' ? getAgents() : null);
+      if (!parent) {
+        throw new Error(
+          '找不到活着的会话代理，无法起子代理：先在任意会话里发一条消息把 DSH 唤醒，再回来点一次；或者切到「只用手头证据」模式（不联网）',
+        );
+      }
       const provider = selection.provider || pickProvider(typeof service.list === 'function' ? service.list() : []);
       route = { provider, model: '' };
 
@@ -198,7 +244,7 @@ export function createWriter({
         run = await service.startActivation({
           provider,
           label: 'hotspot-writer',
-          request: { prompt: [{ type: 'text', text: prompt }] },
+          request: { prompt: [{ type: 'text', text: prompt }], parent },
           signal: controller.signal,
           delivery: 'caller',
         });

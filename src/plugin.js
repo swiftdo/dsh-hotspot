@@ -728,6 +728,9 @@ export function apply(ctx, config = {}) {
         projectRoot ? path.join(projectRoot, currentDigestDir) : path.join(process.cwd(), currentDigestDir);
       const writer = createWriter({
         getSubagents: () => (typeof ctx.get === 'function' ? ctx.get('subagents') : null),
+        // 面板是 HTTP 路由，没有 exec.agent；子代理要挂到一个活着的父代理上，
+        // 只能从 agents 注册表取（宿主要求引用相等，不能传 id）
+        getAgents: () => (typeof ctx.get === 'function' ? ctx.get('agents') : null),
         getLlm: () => (typeof ctx.get === 'function' ? ctx.get('llm') : null),
         digestDir: writerConfigDir,
         log,
