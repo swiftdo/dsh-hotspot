@@ -1,8 +1,28 @@
-# hotspot
+# dsh-hotspot
 
-热点采集 → 去重 → 确定性排序 → 草稿落地。给静态博客用，也做成 DeepSeek Harness 插件。
+热点采集 → 去重 → 确定性排序 → 草稿落地。当前只适配 **VitePress** 博客，同时是一个 DeepSeek Harness 插件。
 
 零运行时依赖，纯 ESM JavaScript（Node ≥ 20.6）。`npm test` 用内置 `node:test`，不需要装任何东西。
+
+## 支持哪些博客
+
+**目前只有 VitePress。** 其他生成器（Hexo、Hugo、Astro）需要另写一个 `Target` 适配器——core 不用改，但适配器现在还不存在，`target.kind` 只认 `vitepress`。
+
+"支持 VitePress" 具体意味着这些约定：
+
+| 约定 | 说明 | 可改 |
+|---|---|---|
+| 文章是 `<目录>/<slug>/index.md` 或 `<目录>/<slug>.md` | 两种布局都能扫到 | — |
+| 已发布文章目录 | 默认 `docs/article` | `target.articleDir` |
+| 草稿目录 | 默认 `docs/draft` | `target.draftDir` |
+| frontmatter 字段 | `title` / `description` / `createTime` / `date` / `tags`，**不写 `permalink`** | — |
+| 草稿不进站点地图 | 写 `sitemap: false`，`promote` 时删掉 | — |
+| tag 词表 | 从存量文章归纳，同一 tag 的多种写法按小写归并 | — |
+| `init` 时项目里要有 `docs/` | 没有就判定"这不是一个 VitePress 项目" | — |
+
+`docs/` 之下怎么分层随你：文章直接在 `docs/` 一级就把 `articleDir` 设成 `docs`，放 `docs/posts/` 就设成 `docs/posts`。草稿目录同理。
+
+`sitemap: false` 只是往 frontmatter 里写一个字段——它变成 `noindex` 是靠你博客侧的插件解释的。如果你的站点不认这个字段，草稿仍然会被搜索引擎抓到，那就改用别的占位手段（或者干脆别把草稿提交上去）。
 
 ## 为什么不用模型打分
 
@@ -25,7 +45,7 @@ score = 3.0 × log2(1 + 跨源数)
 
 ## 架构：端口与适配器
 
-core 只认四个接口，不知道自己跑在 DSH 还是 CLI 里：
+core 只认五个接口，不知道自己跑在 DSH 还是 CLI 里：
 
 | 端口 | 职责 | 适配器 |
 |---|---|---|
@@ -39,18 +59,22 @@ core 只认四个接口，不知道自己跑在 DSH 还是 CLI 里：
 
 ## 快速开始
 
+在**你的博客仓库根目录**下跑（`--root` 就是博客项目路径，不是本仓库）：
+
 ```bash
-node src/cli.js init --root ~/Desktop/Code/blog/swiftdo.github.io
-# 编辑 hotspot.config.json 的 sources
-node src/cli.js run --dry-run          # 只看不落盘
-node src/cli.js run                    # 落 .hotspot/digest/YYYY-MM-DD.{json,md}
-node src/cli.js scaffold '#3'          # 生成 docs/draft/<slug>/index.md
+node src/cli.js init --root <你的博客目录>   # 生成配置文件，并从存量文章归纳 tag 词表
+# 编辑配置里的 sources，换成你关心的源
+node src/cli.js run --dry-run                # 只看不落盘
+node src/cli.js run                          # 落 .hotspot/digest/YYYY-MM-DD.{json,md}
+node src/cli.js scaffold '#3'                # 生成 <draftDir>/<slug>/index.md
 node src/cli.js supplement <slug> --url <页面> --file <正文>  # 联网补到的证据，登记后 check 才认
-node src/cli.js check <slug>           # 三道机械校验
-node src/cli.js promote <slug>         # 转到 docs/article/，去掉 sitemap:false
-node src/cli.js publish <slug> --yes   # 校验 → 构建 → 提交 → 推送 → 上传
-node src/cli.js doctor --online        # 自检：配置 / 目标项目 / 每个源 / DSH 安装状态
+node src/cli.js check <slug>                 # 三道机械校验
+node src/cli.js promote <slug>               # 转到文章目录，去掉 sitemap:false
+node src/cli.js publish <slug> --yes         # 校验 → 构建 → 只提交这一篇 → 推送 → 部署
+node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 每个源 / DSH 安装状态
 ```
+
+`init` 写出的 `sources` 只是示例，务必换成你自己领域的源——跨源共现信号要多个源覆盖同一领域才有意义（见「已知限制」）。
 
 ## 怎么确认它真的可用
 
@@ -80,11 +104,11 @@ node src/cli.js doctor --online        # 自检：配置 / 目标项目 / 每个
 补料（supplement）是这条缝的解法：把"实际读过什么"登记成证据，让闸门知道**证据边界在扩**，而不是用 `--allow` 把闸门关掉。
 
 ```bash
-node src/cli.js supplement <slug> --url https://swift.org/blog/x/ --file /tmp/x.txt --kind official
+node src/cli.js supplement <slug> --url <页面> --file <本地正文> --kind official
 node src/cli.js supplement <slug> --list     # 看已登记的补料
 ```
 
-登记后 `check` 做三件事：补料原文并入数字比对、补料 URL 与域名并入外链白名单、配置里的 `publish.allowedHosts` 继续生效。文件落在 `docs/draft/<slug>/sources.json`，`promote` 时一起搬到文章目录——转正之后仍答得出"这段数字是从哪读来的"。
+登记后 `check` 做三件事：补料原文并入数字比对、补料 URL 与域名并入外链白名单、配置里的 `publish.allowedHosts` 继续生效。文件落在 `<draftDir>/<slug>/sources.json`，`promote` 时一起搬到文章目录——转正之后仍答得出"这段数字是从哪读来的"。
 
 顺序是硬的：**写 → 去 AI 味 → check**。去味会改数字写法（`6.1.2` → `v6.1.2`）和删链接，先 check 等于白跑一遍。
 
@@ -97,12 +121,12 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 
 ## 三道机械校验
 
-发布前必须全过，否则文章只能留在 `docs/draft/`：
+发布前必须全过，否则文章只能留在草稿目录：
 
 | 检查 | 拦什么 | 实现 |
 |---|---|---|
 | 数字字面比对 | 把 `24.9` 写成 `24.10`、把版本号记错 | 文章里的 `\d+(\.\d+)+` 必须出现在一手源或已登记的补料原文里 |
-| 站内链接集合 | 死链 | 扫 `docs/**/index.md` 建 URL 集合，逐个命中 |
+| 站内链接集合 | 死链 | 扫站点 `docs/` 下所有含 `index.md` 的目录建 URL 集合（外加 `docs/public/*.html`），逐个命中 |
 | 外链白名单 | 编造来源 | 必须来自候选源、已登记的补料域名，或配置里登记的域名 |
 
 外加 frontmatter 规则：description ≤ 120 字、不写 `permalink`、date 格式、tag 必须来自受控词表（词表从存量文章归纳，同一 tag 的多种写法按小写归并）。
@@ -113,25 +137,27 @@ DSH 里对应 `hotspot_supplement` 工具：边搜边登记，别等 check 报�
 
 | 档位 | 产物 | 判定 |
 |---|---|---|
-| `auto` | `docs/article/` 直接进列表 | 一手 release 类，白名单源，版本号跨源一致 |
-| `draft` | `docs/draft/`，带 `sitemap:false` | 默认档 |
+| `auto` | 直接进文章目录 | 一手 release 类，白名单源，版本号跨源一致 |
+| `draft` | 草稿目录，带 `sitemap:false` | 默认档 |
 | `manual` | 只进 digest | 传闻、冲突、黑名单命中 |
 
 `publish.autoTiers` 默认为空数组。要开自动直发就往里加源类型，不要改代码。
 
-### publish 为什么不直接跑 ./deploy.sh
+### publish 会执行什么
 
-`deploy.sh` 第 113 行是 `git add -A`。自动发布时工作区通常有你的半成品——一个 `add -A` 就把它们全提交并发上线了。所以顺序是：
+`publish` 只做五步，且**只 `git add` 这一篇的目录**：
 
 ```bash
-yarn build                          # 死链检查在这里拦第一道
-git add docs/article/<slug>         # 只 add 这一篇
+yarn build                              # 构建（死链检查通常在这里拦第一道）
+git add <articleDir>/<slug>             # 只 add 这一篇
 git commit -m "post(auto): <slug>"
 git push origin HEAD
-./deploy.sh --no-git --skip-build   # 跳过 add -A 与重复构建，仍走产物校验
+./deploy.sh --no-git --skip-build       # 部署
 ```
 
-`--skip-build` 只跳过构建，产物校验（index.html、文件数 ≥ 200、sitemap ≥ 100 条）照常执行。
+不用 `git add -A` 是有意的：自动发布时工作区通常有你的半成品，一个 `add -A` 就把它们全提交并发上线了。
+
+⚠️ 构建命令与部署命令目前**写死在 `src/cli.js` 的 `cmdPublish`**（`yarn build` 与 `./deploy.sh --no-git --skip-build`）。这不是通用约定，是作者自己站点的流水线——你的站点若用别的构建/部署方式，要么改这两行，要么别用 `publish`，手动执行上面五步。
 
 ## DSH 插件
 
@@ -174,10 +200,10 @@ export function apply(ctx, config) {            // 具名导出，不用 export 
 
 ```bash
 # 官方入口（走 pnpm，会写 profile 的 dependencies）
-dsh plugin --profile desktop add /Users/laijihua/Desktop/Code/hotspot
+dsh plugin --profile <profile> add <本仓库路径>
 
 # 然后把 hotspot 加进 profile 的 dsh.profile.bundles
-#   ~/.dsh/profiles/desktop/package.json
+#   ~/.dsh/profiles/<profile>/package.json
 ```
 
 `cordis.patch.yml` 会作为一层 patch 自动应用（见 `package.json` 的 `dsh.bundle.patch`），里面的 `config` 就是配置面，改它不用改代码。
@@ -202,9 +228,9 @@ dsh plugin --profile desktop add /Users/laijihua/Desktop/Code/hotspot
 
 | 页签 | 能做什么 |
 |---|---|
-| 源 | 增删 RSS / GitHub releases / HN 三种源，保存即写回 `hotspot.config.json` |
+| 源 | 增删 RSS / GitHub releases / HN 三种源，保存即写回配置文件 |
 | 候选 | 看当日候选、分数、多个来源的原文摘要，一键生成草稿 |
-| 内容 | 草稿（`docs/draft/`）与已发布文章（`docs/article/`）列表 |
+| 内容 | 草稿与已发布文章列表，可预览、在线编辑、转正 |
 | 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单；画像 tag 与关键词只读展示 |
 
 接口都在 `/hotspot/api/` 下，普通 Node http handler，可直接 curl：
@@ -216,6 +242,9 @@ dsh plugin --profile desktop add /Users/laijihua/Desktop/Code/hotspot
 | POST | `/hotspot/api/config` | 局部更新 rank / publish |
 | POST | `/hotspot/api/run` | 触发一次抓取 |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿 |
+| GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
+| POST | `/hotspot/api/article` | 保存正文 |
+| POST | `/hotspot/api/article-promote` | 草稿转正 |
 
 **为什么不做 React 客户端插件**：`dsh.client` 需要引入客户端构建链，还要绑定预发布期的客户端 UI API。这几个页面都是表格和表单，单个零依赖 HTML 足够；省下的是一整条会随 DSH 版本失效的耦合。
 
@@ -223,6 +252,8 @@ dsh plugin --profile desktop add /Users/laijihua/Desktop/Code/hotspot
 
 ## 已知限制
 
+- **只支持 VitePress**。换生成器要写 `Target` 适配器（`src/adapters/target-vitepress.js` 是唯一实现）。
+- **`publish` 的构建/部署命令写死**（`yarn build`、`./deploy.sh --no-git --skip-build`），见上节。
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
