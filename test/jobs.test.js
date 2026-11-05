@@ -93,3 +93,61 @@ test('缺 slug 或任务体时直接拒绝', () => {
   assert.throws(() => runner.start({ slug: '', run: async () => ({}) }), /缺少 slug/);
   assert.throws(() => runner.start({ slug: 'x' }), /缺少任务体/);
 });
+
+test('取消：正在跑的任务标为 cancelled，signal 真的 abort', async () => {
+  let seenSignal = null;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const runner = createJobRunner();
+  runner.start({
+    slug: 'demo',
+    run: async ({ signal }) => {
+      seenSignal = signal;
+      await gate;
+      return { file: 'x' };
+    },
+  });
+
+  // run 是通过微任务起的，先让出一次事件循环，确保 signal 已经交到任务体手里
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cancelling = runner.cancel({ slug: 'demo' });
+  assert.equal(cancelling.slug, 'demo');
+  assert.equal(seenSignal.aborted, true, 'signal 要真的 abort');
+
+  release({ file: 'docs/draft/demo/index.md' });
+  const settled = await settle(runner, 'demo');
+  assert.equal(settled.state, 'cancelled');
+  assert.equal(settled.message, '已取消（若已写盘则保留）');
+});
+
+test('取消：任务体抛错时也记为已取消，不报失败', async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const runner = createJobRunner();
+  runner.start({
+    slug: 'demo',
+    run: async () => {
+      await gate;
+      throw new Error('aborted');
+    },
+  });
+  runner.cancel({ slug: 'demo' });
+  release();
+  const settled = await settle(runner, 'demo');
+  assert.equal(settled.state, 'cancelled');
+  assert.equal(settled.error, '', '用户主动取消不该显示成失败原因');
+});
+
+test('取消：没有正在跑的任务时返回 null（已结束的不再取消）', async () => {
+  const runner = createJobRunner();
+  assert.equal(runner.cancel({ slug: 'nope' }), null);
+  runner.start({ slug: 'done-job', run: async () => ({}) });
+  await settle(runner, 'done-job');
+  assert.equal(runner.cancel({ slug: 'done-job' }), null);
+  assert.equal(runner.cancel({}), null);
+});

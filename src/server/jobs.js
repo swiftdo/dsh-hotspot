@@ -9,6 +9,8 @@
  * - 同一个 slug 同时只允许一个任务（双击按钮不该起两个子代理）。
  * - 任务体与落盘都在调用方（plugin / api）给，这里只管状态机 + 记录。
  * - 记录落盘失败不影响任务本身 —— 状态是辅助信息，不是真相。
+ * - 取消是尽力而为：runner 把 `signal` 交给任务体，子代理那边真停了才算停；
+ *   已经写盘的内容不会被回滚（草稿是资产，删它比留着更糟）。
  */
 
 /** 内存里保留最近多少个任务。落盘的记录才是跨重启的那一份。 */
@@ -82,6 +84,9 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
         message,
         error: '',
         result: null,
+        // 不落盘：只在这个进程里有效
+        controller: new AbortController(),
+        cancelRequested: false,
       };
       jobs.set(job.id, job);
       runningBySlug.set(clean, job.id);
@@ -90,13 +95,26 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
       // 立刻返回快照：任务体自己跑，不挂在调用方（HTTP 请求）上
       void persistJob(job);
       Promise.resolve()
-        .then(run)
+        .then(() => run({ signal: job.controller.signal }))
         .then((result) => {
+          if (job.cancelRequested) {
+            // 取消后才跑完的：结果留着，但状态照实说「已取消」
+            job.result = result ?? null;
+            job.state = 'cancelled';
+            job.message = '已取消（若已写盘则保留）';
+            return;
+          }
           job.state = 'done';
           job.message = '正文已写入';
           job.result = result ?? null;
         })
         .catch((error) => {
+          if (job.cancelRequested) {
+            job.state = 'cancelled';
+            job.message = '已取消';
+            job.error = '';
+            return;
+          }
           job.state = 'failed';
           job.error = errorMessage(error);
           job.message = '正文失败，可重试';
@@ -124,6 +142,26 @@ export function createJobRunner({ log = () => {}, persist = null, now = () => ne
         .filter((job) => !wanted || job.slug === wanted)
         .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
         .map(snapshot);
+    },
+
+    /**
+     * 取消一个正在跑的任务。按 slug 或 id 都行。
+     * @returns 快照；没有正在跑的任务时返回 null
+     */
+    cancel({ slug = '', id = '' } = {}) {
+      const wantedId = String(id || '').trim() || runningBySlug.get(String(slug || '').trim());
+      const job = wantedId ? jobs.get(wantedId) : null;
+      if (!job || job.state !== 'running') return null;
+      job.cancelRequested = true;
+      job.message = '正在取消…';
+      try {
+        job.controller.abort(new Error('任务已取消'));
+      } catch {
+        /* abort 失败也要把状态标上，前端不该卡在「写作中」 */
+      }
+      void persistJob(job);
+      log(`任务 ${job.id} 取消请求：${job.slug}`);
+      return snapshot(job);
     },
 
     runningFor(slug) {

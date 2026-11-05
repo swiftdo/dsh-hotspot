@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
-import { canonicalUrl } from '../core/normalize.js';
+import { canonicalUrl, slugify } from '../core/normalize.js';
 import { buildFeedItems, buildRssXml } from '../core/rss.js';
 import { BUILTIN_SOURCES, configuredSources, resolveSources } from '../core/sources.js';
 import { describeViolations } from '../core/promote.js';
@@ -468,8 +468,9 @@ export function createRoutes(deps) {
     return deps.jobs.start({
       slug,
       message,
-      run: async () => {
-        const value = await deps.generate({ slug, store, target, projectRoot });
+      run: async ({ signal }) => {
+        // signal 一路传到子代理：取消要真停，不是只把状态改成 cancelled
+        const value = await deps.generate({ slug, store, target, projectRoot, signal });
         const checks = await draftChecks(slug, target, store);
         return { ...value, checks };
       },
@@ -732,6 +733,37 @@ function sourceLabel(source) {
         } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
         }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/jobs/cancel`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (!deps.jobs || typeof deps.jobs.cancel !== 'function') {
+          sendJson(res, 501, { ok: false, code: 'ERR_NO_JOBS', message: '当前环境没有后台任务执行器' });
+          return;
+        }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, message: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        const job = deps.jobs.cancel({
+          slug: String(body?.slug ?? '').trim(),
+          id: String(body?.id ?? '').trim(),
+        });
+        if (!job) {
+          sendJson(res, 404, {
+            ok: false,
+            code: 'ERR_NO_RUNNING_JOB',
+            message: '没有正在跑的任务（可能已经结束）',
+          });
+          return;
+        }
+        sendJson(res, 200, { ok: true, message: '已请求取消', value: job, job });
       },
     },
     {
@@ -1040,10 +1072,43 @@ function sourceLabel(source) {
           });
         }
 
+        // 目录名是永久 URL，必须能给出来。纯中文标题推导不出 slug（slugify 只提 ASCII），
+        // 以前这里直接落到 target.scaffold 抛错、接口回 500 —— 面板点「生成草稿」就炸。
+        // 现在提前判：能推导就用推导值，推导不出要求显式传，并回可操作的结构化错误。
+        const requestedSlug = body.slug == null ? '' : String(body.slug).trim();
+        const slug = requestedSlug || item.slugHint || slugify(item.title);
+        if (!slug) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_SLUG_REQUIRED',
+            message: '这条候选的标题推导不出目录名（纯中文标题），请提供一个 slug，例如 hotspot-1105-03',
+            value: { title: item.title, slugHint: item.slugHint || '', url: item.url },
+          });
+          return;
+        }
+        if (!/^[a-z0-9-]+$/.test(slug)) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_SLUG_INVALID',
+            message: `slug 只能用小写字母、数字和连字符：${slug}`,
+          });
+          return;
+        }
+        if (body.title != null && !String(body.title).trim()) {
+          sendJson(res, 400, { ok: false, code: 'ERR_TITLE_EMPTY', message: '标题不能是空的' });
+          return;
+        }
+
         try {
           const existing = await effectiveTarget.exists(item);
           if (existing.exists) return sendJson(res, 409, { ok: false, message: `已经写过：${existing.reason}` });
-          const result = await effectiveTarget.scaffold(item, { draft: true, slug: body.slug });
+          const result = await effectiveTarget.scaffold(item, {
+            draft: true,
+            slug,
+            // 中文标题必须能覆盖，否则 frontmatter 会沿用英文 RSS 标题
+            title: body.title == null ? undefined : String(body.title),
+            description: body.description == null ? undefined : String(body.description),
+          });
 
           // 默认只建骨架（旧面板与脚本的行为不变）；generate:true 才是「一键成稿」。
           if (body.generate !== true) {

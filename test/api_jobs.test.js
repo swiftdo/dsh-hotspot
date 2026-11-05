@@ -222,3 +222,41 @@ test('没有接入写作子代理时，generate:true 仍保住草稿并说明原
     cleanup();
   }
 });
+
+test('POST /api/jobs/cancel：取消在跑的任务，再取消回 404', async () => {
+  const { deps, jobs, cleanup } = makeDeps();
+  try {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    deps.generate = async ({ slug, signal }) => {
+      await gate;
+      if (signal?.aborted) throw new Error('aborted');
+      return { slug, bodyChars: 1 };
+    };
+
+    const routes = createRoutes(deps);
+    const start = routes.find((r) => r.path === '/dsh-hotspot/api/jobs');
+    const started = mockReqRes('POST', '/dsh-hotspot/api/jobs', { slug: 'swift-6-2' });
+    await start.handler(started.req, started.res);
+    assert.equal(started.result().json().ok, true);
+
+    const cancel = routes.find((r) => r.path === '/dsh-hotspot/api/jobs/cancel');
+    const cancelled = mockReqRes('POST', '/dsh-hotspot/api/jobs/cancel', { slug: 'swift-6-2' });
+    await cancel.handler(cancelled.req, cancelled.res);
+    assert.equal(cancelled.result().status, 200);
+    assert.equal(cancelled.result().json().ok, true);
+
+    release();
+    const settled = await settle(jobs, 'swift-6-2');
+    assert.equal(settled.state, 'cancelled');
+
+    const again = mockReqRes('POST', '/dsh-hotspot/api/jobs/cancel', { slug: 'swift-6-2' });
+    await cancel.handler(again.req, again.res);
+    assert.equal(again.result().status, 404);
+    assert.equal(again.result().json().code, 'ERR_NO_RUNNING_JOB');
+  } finally {
+    cleanup();
+  }
+});

@@ -445,3 +445,28 @@ test('agent 模式：没选模型时不传 agentOptions，跟着父代理的模�
   assert.equal(fake.calls[0].request.agentOptions, undefined);
   assert.equal(value.model, '');
 });
+
+test('取消信号：外部 abort 会传成子代理的 signal，真的能中断', async () => {
+  const { root, target, store, artifact } = await setup();
+  const controller = new AbortController();
+  const seen = [];
+  const service = {
+    list: () => ['spawn'],
+    getProvider: () => ({ capabilities: { agentOptions: true } }),
+    async startActivation(options) {
+      seen.push(options.signal);
+      controller.abort(new Error('用户取消'));
+      await mkdir(path.dirname(artifact), { recursive: true });
+      await writeFile(artifact, JSON.stringify({ body: '## 事实\n\n正文。', sources: [] }));
+      return { result: Promise.resolve({ text: '已写入' }), async dispose() {} };
+    },
+  };
+
+  const write = createWriter({
+    getSubagents: () => service,
+    getAgents: () => fakeAgents({ roots: [liveAgent] }),
+    digestDir: '.hotspot',
+  });
+  await write({ slug: 'demo-post', store, target, projectRoot: root, signal: controller.signal });
+  assert.equal(seen[0].aborted, true, '外部取消要传到子代理的 signal 上');
+});

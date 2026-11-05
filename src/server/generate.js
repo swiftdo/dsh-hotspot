@@ -177,6 +177,29 @@ export async function saveWriterConfig(digestDir, patch = {}) {
   return next;
 }
 
+/**
+ * 把外部的取消信号接到我们自己的 controller 上。
+ *
+ * 超时是「我们主动掐」，取消是「用户要求停」——两者都要能让子代理 / 流真的中断，
+ * 所以合成一个 controller，而不是各建一个。返回解绑函数，避免长时间持有监听。
+ */
+function linkAbort(outer, controller) {
+  if (!outer) return () => {};
+  if (outer.aborted) {
+    controller.abort(outer.reason);
+    return () => {};
+  }
+  const onAbort = () => controller.abort(outer.reason);
+  outer.addEventListener('abort', onAbort, { once: true });
+  return () => {
+    try {
+      outer.removeEventListener('abort', onAbort);
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
 /** 一次 completion 的文本；message 形状优先用宿主自己的 createUserMessage，拿不到再退回朴素形状。 */
 async function streamOnce(llm, route, { system, prompt, signal, maxTokens = 4096 }) {
   let createUserMessage = null;
@@ -222,7 +245,16 @@ export function createWriter({
     return path.isAbsolute(dir) ? dir : path.join(projectRoot || '.', dir);
   };
 
-  return async function write({ slug, store, target, projectRoot, provider: wantedProvider, model: wantedModel, mode: wantedMode }) {
+  return async function write({
+    slug,
+    store,
+    target,
+    projectRoot,
+    signal: outerSignal,
+    provider: wantedProvider,
+    model: wantedModel,
+    mode: wantedMode,
+  }) {
     const clean = String(slug ?? '').trim();
     if (!clean) throw new Error('缺少 slug');
     if (!target) throw new Error('还没有绑定博客项目根目录');
@@ -300,6 +332,7 @@ export function createWriter({
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error(`生成超时（${Math.round(timeoutMs / 1000)}s）`)), timeoutMs);
+      const unlink = linkAbort(outerSignal, controller);
       let run;
       let result;
       try {
@@ -317,6 +350,7 @@ export function createWriter({
         result = await run.result;
       } finally {
         clearTimeout(timer);
+        unlink();
         try {
           await run?.dispose?.();
         } catch {
@@ -359,6 +393,7 @@ export function createWriter({
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error(`生成超时（${Math.round(timeoutMs / 1000)}s）`)), timeoutMs);
+      const unlink = linkAbort(outerSignal, controller);
       try {
         const text = await streamOnce(llm, route, {
           system: '你是技术博客作者，只用给定材料写作，不编造事实。',
@@ -368,6 +403,7 @@ export function createWriter({
         body = stripH1(String(text ?? '').trim());
       } finally {
         clearTimeout(timer);
+        unlink();
       }
       if (!body) throw new Error('模型没有返回正文');
       log(`模型 ${route.provider}/${route.model} 完成：${body.slice(0, 80)}`);
@@ -437,6 +473,7 @@ export function createPolisher({
     target,
     projectRoot,
     instruction,
+    signal: outerSignal,
     provider: wantedProvider,
     model: wantedModel,
   }) {
@@ -481,6 +518,7 @@ export function createPolisher({
       () => controller.abort(new Error(`润色超时（${Math.round(timeoutMs / 1000)}s）`)),
       timeoutMs,
     );
+    const unlink = linkAbort(outerSignal, controller);
     let text = '';
     try {
       text = await streamOnce(llm, route, {
@@ -491,6 +529,7 @@ export function createPolisher({
       });
     } finally {
       clearTimeout(timer);
+      unlink();
     }
 
     const body = cleanPolishedBody(text);
