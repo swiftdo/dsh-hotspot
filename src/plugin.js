@@ -22,6 +22,7 @@ import { resolveRoute, resolveWriterSelection } from './core/writer-route.js';
 import { createRoutes, PREFIX } from './server/api.js';
 import { createJobRunner } from './server/jobs.js';
 import { createSingleFlight } from './core/lock.js';
+import { createErrorLog } from './server/errors.js';
 import { createHotspotTools } from './tools.js';
 
 /**
@@ -82,6 +83,19 @@ export function apply(ctx, config = {}) {
 
   // 未绑定根目录时用一份进程内 store：抓到的 digest 本次会话内可读（hotspot_get 照常），
   // 但不往任何目录写文件 —— 插件不该往自己没管辖权的目录写 .hotspot/。
+  /**
+   * 错误日志：跟 writer 配置同目录（跟着博客项目走），默认只留当天。
+   * 放在 apply 顶层是因为工具注册失败的时间点比 webServer 注入更早。
+   */
+  const errorLogDir = () =>
+    projectRoot ? path.join(projectRoot, currentDigestDir) : path.join(process.cwd(), currentDigestDir);
+  const errorLog = createErrorLog({
+    dir: errorLogDir,
+    keepDays: Number(config.log?.keepDays) > 0 ? Number(config.log.keepDays) : 1,
+    log,
+  });
+  const logError = (input) => errorLog.record(input).catch(() => {});
+
   const unboundStore = createMemoryStore();
   function activeStore() {
     return projectRoot ? store : unboundStore;
@@ -264,6 +278,7 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         // Cordis 会把 inject 回调里的异常静默掉，这里必须自己喊出来，
         // 否则表现就是"插件加载了但工具不存在"，最难查
+        void logError?.({ source: 'tools', error, message: `工具注册失败：${error?.message ?? error}` });
         console.warn(`[dsh-hotspot] 工具注册失败：${error?.message ?? error}`);
         console.warn(error?.stack ?? '');
         return () => {};
@@ -318,6 +333,11 @@ export function apply(ctx, config = {}) {
       });
       for (const route of createRoutes({
         jobs,
+        logError,
+        readErrors: (opts) => errorLog.list(opts),
+        clearErrors: (opts) => errorLog.clear(opts),
+        errorFiles: () => errorLog.files(),
+        errorLogToday: () => errorLog.today(),
         projectRoot,
         store,
         target,
@@ -367,6 +387,7 @@ export function apply(ctx, config = {}) {
         try {
           disposers.push(sctx.webServer.register(route));
         } catch (error) {
+          void logError?.({ source: 'routes', error, context: { path: route.path } });
           console.warn(`[dsh-hotspot] 路由 ${route.path} 注册失败：${error?.message ?? error}`);
         }
       }

@@ -240,10 +240,15 @@ export function createRoutes(deps) {
       slug,
       message,
       run: async ({ signal }) => {
-        // signal 一路传到子代理：取消要真停，不是只把状态改成 cancelled
-        const value = await deps.generate({ slug, store, target, projectRoot, signal });
-        const checks = await draftChecks(slug, target, store);
-        return { ...value, checks };
+        try {
+          // signal 一路传到模型请求：取消要真停，不是只把状态改成 cancelled
+          const value = await deps.generate({ slug, store, target, projectRoot, signal });
+          const checks = await draftChecks(slug, target, store);
+          return { ...value, checks };
+        } catch (error) {
+          await deps.logError?.({ source: 'writer', slug, error });
+          throw error;
+        }
       },
     });
   }
@@ -632,6 +637,54 @@ export function createRoutes(deps) {
             sendJson(res, 409, { ok: false, code: 'ERR_SCAN_BUSY', message: error.message });
             return;
           }
+          await deps.logError?.({ source: 'scan', error });
+          sendJson(res, 500, { ok: false, message: error.message });
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/errors`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET', 'POST', 'DELETE'])) return;
+        const isRead = req.method === 'GET';
+        try {
+          if (isRead) {
+            const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+            const date = parsedUrl.searchParams.get('date') || '';
+            const limit = Number(parsedUrl.searchParams.get('limit') || 100);
+            sendJson(res, 200, {
+              ok: true,
+              value: {
+                date: date || (typeof deps.errorLogToday === 'function' ? deps.errorLogToday() : ''),
+                entries: typeof deps.readErrors === 'function' ? await deps.readErrors({ date: date || undefined, limit }) : [],
+                files: typeof deps.errorFiles === 'function' ? await deps.errorFiles() : [],
+              },
+            });
+            return;
+          }
+
+          // 清空：POST / DELETE 都行，带 date 只清那一天，不带清全部
+          let body = {};
+          if (req.method === 'POST') {
+            try {
+              body = await readJson(req);
+            } catch (e) {
+              sendJson(res, 400, { ok: false, message: `JSON 解析失败: ${e.message}` });
+              return;
+            }
+            if (body === undefined) body = {};
+          }
+          const date = String(body?.date ?? '');
+          const removed = typeof deps.clearErrors === 'function'
+            ? await deps.clearErrors(date ? { date } : {})
+            : 0;
+          sendJson(res, 200, {
+            ok: true,
+            message: removed > 0 ? `已清理 ${removed} 个日志文件` : '没有需要清理的日志',
+            value: { removed, files: typeof deps.errorFiles === 'function' ? await deps.errorFiles() : [] },
+          });
+        } catch (error) {
           sendJson(res, 500, { ok: false, message: error.message });
         }
       },
@@ -761,6 +814,7 @@ export function createRoutes(deps) {
             message: job ? '草稿已建，正文在后台写' : '草稿已建，但当前环境没有接入写作子代理，正文待补',
           });
         } catch (error) {
+          await deps.logError?.({ source: 'scaffold', error, context: { id: body?.id } });
           sendJson(res, 500, { ok: false, message: error.message });
         }
       },
@@ -1147,6 +1201,11 @@ export function createRoutes(deps) {
             value: { ...value, checks },
           });
         } catch (err) {
+          await deps.logError?.({
+            source: 'writer-sync',
+            error: err,
+            slug,
+          });
           sendJson(res, 500, { ok: false, error: err.message });
         }
       },
@@ -1209,6 +1268,11 @@ export function createRoutes(deps) {
             value: { ...value, checks },
           });
         } catch (err) {
+          await deps.logError?.({
+            source: 'polish',
+            error: err,
+            slug,
+          });
           sendJson(res, 500, { ok: false, error: err.message });
         }
       },

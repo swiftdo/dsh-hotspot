@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -16,6 +16,7 @@ import { createFsStore } from './adapters/store-fs.js';
 import { createMemoryStore } from './adapters/store-memory.js';
 import { pickCandidate } from './core/candidates.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
+import { createErrorLog } from './server/errors.js';
 
 const USAGE = `
 hotspot —— 热点采集 → 去重 → 确定性排序 → 草稿落地
@@ -69,6 +70,16 @@ function log(...args) {
 
 function fail(message) {
   console.error(`✖ ${message}`);
+  // CLI 的失败也留一条：终端滚掉之后就再也查不到了
+  try {
+    const raw = existsSync(configFileIn()) ? JSON.parse(readFileSync(configFileIn(), 'utf8')) : {};
+    const digestDir = raw.digestDir || raw.store?.dir || '.hotspot';
+    const logger = createErrorLog({ dir: path.resolve(cwd, digestDir), keepDays: Number(raw.log?.keepDays) > 0 ? Number(raw.log.keepDays) : 1 });
+    // fail 之后立刻 process.exit，必须用同步写入
+    logger.recordSync({ source: `cli:${positional[0] || 'unknown'}`, message });
+  } catch {
+    /* 日志写不进去不能挡住报错本身 */
+  }
   process.exit(1);
 }
 

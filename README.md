@@ -331,6 +331,20 @@ POST /dsh-hotspot/api/models   # 局部更新：{"mode"?, "global"?, "writer"?, 
 
 模型目录的读取是容忍式的：宿主的 `listProviders()` / `listModels()` 返回形状随适配器版本变化（`provider`/`route`/`id`、`model`/`id`/`name`），拿不到路由的条目直接不显示——宁少一个选项，也不给一条会在生成时才炸的假路由。
 
+## 错误日志
+
+出错时只有一条 toast，刷新就没了；写作任务失败也只留在 `jobs/<slug>.json` 里。所以插件把错误记到 `<digestDir>/errors/YYYY-MM-DD.jsonl`（一行一条 JSON）：
+
+```
+{ "at": "...", "source": "writer", "code": "", "message": "模型没有返回正文", "slug": "demo", "detail": "..." }
+```
+
+- **默认只留当天**（`log.keepDays` 默认 1）：写入时顺手删掉超期的文件。错误日志的价值随时间掉得很快，留久了只是占磁盘，而清理又常被忘掉。
+- **记哪些**：抓取失败、建草稿/生成/润色失败、写作任务失败、工具与路由注册失败。**不记每次请求**——一旦变成访问流水就没人看了。
+- **怎么清**：面板「设置 → 诊断」里有「刷新 / 清空日志」，或者 `DELETE /dsh-hotspot/api/errors`；`POST { "date": "2026-11-04" }` 只清那一天。
+- **CLI 也记**：`hotspot` 命令失败时用同步写入落一条（`process.exit` 等不及 Promise）。
+- **写日志失败不影响主流程**：它只是诊断设施，出问题只会打一行 console。
+
 ## 三道机械校验
 
 发布前必须全过，否则文章只能留在草稿目录：
@@ -652,6 +666,8 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿（`slug` / `title` / `description` 可覆盖）；`generate:true` 时建完立刻在后台写正文并返回 job；slug 推导不出回 400 `ERR_SLUG_REQUIRED` |
 | GET | `/hotspot/api/jobs` | 后台写作任务列表（`?slug=` 过滤） |
 | POST | `/hotspot/api/jobs/cancel` | 取消正在跑的写作任务；没有在跑的回 404 `ERR_NO_RUNNING_JOB` |
+| GET | `/hotspot/api/errors` | 当天的错误日志（`?date=` / `?limit=`），附现有日志文件列表 |
+| POST / DELETE | `/hotspot/api/errors` | 清空错误日志；带 `{ date }` 只清那一天 |
 | POST | `/hotspot/api/jobs` | 按 slug 重跑写正文（失败重试）；同篇在跑时 409 `ERR_JOB_BUSY` |
 | GET | `/hotspot/api/article` | 读正文，附带 `supplements`（补料条数与摘要） |
 | POST | `/hotspot/api/article` | 保存正文 |
@@ -670,6 +686,7 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 - **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
 - **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
 - **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
+- **`.hotspot/errors/` 默认只留当天**，与 raw/digest 的 30 天保留策略分开（错误日志过期更快）。
 - **`.hotspot/raw` 会自动清理**。每次抓取结束后删掉超过 `store.keepDays`（默认 30 天）的 digest 与 raw，`latest.*` / `writer/` / `jobs/` / 部署历史都不动。`check` 只往回找 14 天，30 天够用；要留更久就把它调大。
 - **`promote` 是硬闸门，没有 force**。要放行只有两条路：把正文改到证据边界内，或把真正读过的页面登记成补料。MCP/宿主级强行改文件当然绕过它——闸门防的是流程上的惯性，不是防有磁盘权限的人。
 - **同时只允许一次抓取**。两次并发 run 会互相覆盖当天的 digest 与 raw，所以入口用单飞挡掉：第二次直接回 409 `ERR_SCAN_BUSY`，不排队——排队会把「点两下」变成「跑两次」。

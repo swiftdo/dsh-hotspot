@@ -2161,6 +2161,42 @@ window.__ModuleLoader__.load({
         loadModels();
       }, [loadModels]);
 
+      // ── 错误日志：默认只留当天，面板可刷新与清空 ──
+      const [errorLog, setErrorLog] = useState(null);
+      const [loadingErrors, setLoadingErrors] = useState(false);
+
+      const loadErrors = useCallback(async () => {
+        try {
+          setLoadingErrors(true);
+          const res = await fetch(`${API_BASE}/errors`);
+          const data = await res.json();
+          if (data.ok) setErrorLog(data.value);
+        } catch (err) {
+          console.warn('[dsh-hotspot] 读取错误日志失败:', err);
+        } finally {
+          setLoadingErrors(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        loadErrors();
+      }, [loadErrors]);
+
+      const handleClearErrors = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/errors`, { method: 'DELETE' });
+          const data = await res.json();
+          if (data.ok) {
+            showToast(data.message || '错误日志已清空');
+            await loadErrors();
+          } else {
+            showToast(data.message || '清空失败', true);
+          }
+        } catch (err) {
+          showToast(err.message || String(err), true);
+        }
+      };
+
       const handleSaveModels = async () => {
         if (!modelForm) return;
         try {
@@ -3955,7 +3991,7 @@ window.__ModuleLoader__.load({
 
               // 四组之间互相隔得远，给一排锚点：点一下直接滚过去
               h('div', { className: 'hs-cfg-jump' }, [
-                [['connect', '连接'], ['generate', '生成'], ['publish', '发布'], ['profile', '画像']].map(([id, label]) =>
+                [['connect', '连接'], ['generate', '生成'], ['publish', '发布'], ['profile', '画像'], ['diagnose', '诊断']].map(([id, label]) =>
                   h('button', {
                     key: id,
                     type: 'button',
@@ -4286,6 +4322,61 @@ window.__ModuleLoader__.load({
                   (!state?.profile?.tags || state.profile.tags.length === 0) && h('div', {
                     style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' }
                   }, '还没有归纳出画像：绑定仓库或先写几篇带 tags 的文章')
+                ])
+              ]),
+
+              section('diagnose', '诊断', '出错时只有一条 toast 很难查；这里留当天的错误记录，默认不跨天', [
+                h('div', { className: 'hs-card' }, [
+                  h('div', { className: 'hs-card-header' }, [
+                    h('div', null, [
+                      h('div', { className: 'hs-card-title' }, '错误日志'),
+                      h('div', { className: 'hs-card-subtitle' },
+                        loadingErrors
+                          ? '正在读取…'
+                          : `今天 ${(errorLog?.entries || []).length} 条${(errorLog?.files || []).length > 1 ? ` · 另有 ${errorLog.files.length - 1} 个历史文件` : ''}`)
+                    ]),
+                    h('div', { style: { display: 'flex', gap: 8 } }, [
+                      h('button', {
+                        className: 'hs-btn ghost',
+                        type: 'button',
+                        style: { padding: '2px 8px', fontSize: 11 },
+                        disabled: loadingErrors,
+                        onClick: loadErrors
+                      }, '刷新'),
+                      h('button', {
+                        className: 'hs-btn ghost',
+                        type: 'button',
+                        style: { padding: '2px 8px', fontSize: 11, color: '#f87171' },
+                        disabled: loadingErrors || (errorLog?.entries || []).length === 0,
+                        title: '删除所有错误日志文件（含历史）',
+                        onClick: handleClearErrors
+                      }, '清空日志')
+                    ])
+                  ]),
+                  (() => {
+                    const entries = (errorLog?.entries || []).slice(0, 6);
+                    if (entries.length === 0) {
+                      return h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                        loadingErrors ? '正在读取…' : '今天没有错误记录');
+                    }
+                    return h('div', { className: 'hs-src-rows' }, entries.map((entry, index) => h('div', {
+                      key: `${entry.at}-${index}`,
+                      className: 'hs-src-row',
+                      style: { gridTemplateColumns: '150px 120px 1fr' }
+                    }, [
+                      h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #7c8290)' } },
+                        new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false })),
+                      h('span', { className: 'hs-src-kind hn' }, entry.source || 'plugin'),
+                      h('div', { className: 'hs-src-main' }, [
+                        h('div', { style: { fontSize: 12.5, wordBreak: 'break-word' } }, entry.message || '(无消息)'),
+                        entry.code && h('div', { className: 'hs-src-target' }, entry.code),
+                        entry.detail && h('div', {
+                          className: 'hs-src-target',
+                          style: { whiteSpace: 'pre-wrap', overflow: 'hidden', maxHeight: 54 }
+                        }, entry.detail)
+                      ])
+                    ])));
+                  })()
                 ])
               ]),
 
