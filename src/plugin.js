@@ -8,9 +8,12 @@ import { rankClusters } from './core/rank.js';
 import { renderMarkdown } from './core/digest.js';
 import { createSources } from './adapters/source-rss.js';
 import { createFsStore } from './adapters/store-fs.js';
+import { createMemoryStore } from './adapters/store-memory.js';
+import { pickCandidate } from './core/candidates.js';
 import { createVitePressTarget } from './adapters/target-vitepress.js';
 import { registerCandidateSources } from './core/supplement.js';
 import { checkDraft } from './core/checks.js';
+import { describeViolations, promoteChecked } from './core/promote.js';
 import {
   createPolisher,
   createWriter,
@@ -60,13 +63,13 @@ export function apply(ctx, config = {}) {
   const configuredRoot = config.projectRoot ? path.resolve(config.projectRoot) : '';
   let projectRoot = '';
   let target = null;
+  // 运行时目录名：面板改过之后，带 projectRoot 参数的工具调用也要跟着走，
+  // 不能再用启动时的 config.articleDir（那条路径会写错目录）。
+  let articleDir = config.articleDir;
+  let draftDir = config.draftDir;
   if (configuredRoot && existsSync(configuredRoot)) {
     projectRoot = configuredRoot;
-    target = createVitePressTarget({
-      root: projectRoot,
-      articleDir: config.articleDir,
-      draftDir: config.draftDir,
-    });
+    target = createVitePressTarget({ root: projectRoot, articleDir, draftDir });
   } else if (configuredRoot) {
     ctx.logger?.warn?.(`dsh-hotspot: projectRoot 不存在（${configuredRoot}），进入未配置状态`);
   }
@@ -76,6 +79,13 @@ export function apply(ctx, config = {}) {
   let store = createFsStore({
     dir: projectRoot ? path.join(projectRoot, baseDigestDir) : path.join(process.cwd(), baseDigestDir),
   });
+
+  // 未绑定根目录时用一份进程内 store：抓到的 digest 本次会话内可读（hotspot_get 照常），
+  // 但不往任何目录写文件 —— 插件不该往自己没管辖权的目录写 .hotspot/。
+  const unboundStore = createMemoryStore();
+  function activeStore() {
+    return projectRoot ? store : unboundStore;
+  }
 
   function updateRuntime(newConfig = {}) {
     if (newConfig.projectRoot) {
@@ -90,18 +100,12 @@ export function apply(ctx, config = {}) {
     }
     const digestDir = newConfig.digestDir || config.digestDir || '.hotspot';
     currentDigestDir = digestDir;
-    const articleDir = newConfig.articleDir || config.articleDir || 'docs';
-    const draftDir = newConfig.draftDir || config.draftDir || 'docs/draft';
+    articleDir = newConfig.articleDir || config.articleDir || 'docs';
+    draftDir = newConfig.draftDir || config.draftDir || 'docs/draft';
     store = createFsStore({
       dir: projectRoot ? path.join(projectRoot, digestDir) : path.join(process.cwd(), digestDir),
     });
-    target = projectRoot
-      ? createVitePressTarget({
-          root: projectRoot,
-          articleDir,
-          draftDir,
-        })
-      : null;
+    target = projectRoot ? createVitePressTarget({ root: projectRoot, articleDir, draftDir }) : null;
     log(`dsh-hotspot: 运行时配置已更新，projectRoot=${projectRoot || '(未配置)'}`);
     return { projectRoot, store, target, runScan };
   }
@@ -148,12 +152,44 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  async function runScan(limitOverride) {
-    if (!projectRoot) {
-      throw new Error(
-        '还没有绑定博客根目录：先在面板「配置」里选择博客项目（或在工作区 dsh-hotspot.config.json 写 projectRoot）再抓取',
-      );
+  /**
+   * 工具里指定 projectRoot 时的目标解析。返回 { target } 或 { error }。
+   * 目录名用运行时值（面板改过之后启动值已经过期）。
+   */
+  function resolveTarget(projectRootOverride) {
+    if (projectRootOverride) {
+      const pr = path.resolve(String(projectRootOverride));
+      if (!existsSync(pr)) return { error: `指定博客根目录不存在：${pr}` };
+      return { target: createVitePressTarget({ root: pr, articleDir, draftDir }) };
     }
+    if (!target) {
+      return {
+        error: '尚未配置博客项目根目录。请在控制面板填写博客路径，或在参数中指定 projectRoot。',
+      };
+    }
+    return { target };
+  }
+
+  /** 跑一次闸门，把违规摊成可读字符串。工具与面板共用同一段 core/checks.js。 */
+  async function runCheck(effectiveTarget, slug) {
+    const cfg = await readProjectConfig();
+    const report = await checkDraft({
+      target: effectiveTarget,
+      store: activeStore(),
+      slug,
+      allowedHosts: cfg.publish?.allowedHosts ?? [],
+    });
+    return {
+      ok: report.result.ok,
+      violations: report.result.violations.map((item) => `[${item.code}] ${item.message}`),
+      report,
+    };
+  }
+
+  async function runScan(limitOverride) {
+    // 未绑定根目录不再直接抛错：能抓就抓，只是没有画像（排序退回新鲜度 + 源数），
+    // digest 落在进程内存里，本次会话能读、重启就没了。
+    const bound = Boolean(projectRoot);
     const { config: projectConfig, file: cfgPath } = await readProjectConfigForScan();
     // 与面板同一套判定：配置里有源用配置，一个都没有就用内置默认源。
     const { sources: sourceConfigs, mode } = resolveSources(projectConfig);
@@ -165,21 +201,24 @@ export function apply(ctx, config = {}) {
       log(`dsh-hotspot: ${cfgPath} 没有配置 sources，本次使用内置默认源`);
     }
 
-    const profile = target
+    const profile = bound && target
       ? await target.profile()
       : { tagVocabulary: [], keywords: [], articles: [] };
     const pipeline = createPipeline({
       sources,
       ranker: { rank: (clusters, c) => Promise.resolve(rankClusters(clusters, c)) },
-      store,
+      store: activeStore(),
       clock: { now: () => new Date() },
     });
-    return pipeline.run({
+    const result = await pipeline.run({
       profile,
-      limit: limitOverride ?? config.limit ?? projectConfig.rank?.limit ?? 15,
+      // 优先级：显式参数 > 项目配置的 rank.limit > 插件配置的 limit。
+      // 以前 config.limit 在前，而 cordis.patch.yml 默认就写着 15 —— 面板里改的上限永远不生效。
+      limit: limitOverride ?? projectConfig.rank?.limit ?? config.limit ?? 15,
       sinceHours: projectConfig.rank?.sinceHours ?? 36,
       clusterThreshold: projectConfig.rank?.clusterThreshold ?? 0.6,
     });
+    return { ...result, persisted: bound, projectRoot };
   }
 
   ctx.inject(['tools'], (sctx) => {
@@ -211,15 +250,17 @@ export function apply(ctx, config = {}) {
                   candidates: { type: 'number' },
                   degraded: { type: 'boolean' },
                   failedSources: { type: 'array', items: { type: 'string' } },
+                  persisted: { type: 'boolean' },
+                  message: { type: 'string' },
                 },
               },
               render(_args, value) {
                 const head = `抓取 ${value.feedsOk}/${value.feedsTotal} 源 · 原始 ${value.itemsRaw} 条 · 去重后 ${value.itemsDeduped} 条 · 候选 ${value.candidates} 条${value.degraded ? ' · 严重降级' : ''}`;
-                return textBlocks(`${head}\n\n${value.markdown}`);
+                return textBlocks(`${head}\n\n${value.markdown}${value.message ? `\n> ${value.message}` : ''}`);
               },
             },
             async execute(args) {
-              const { digest, status } = await runScan(args?.limit);
+              const { digest, status, persisted } = await runScan(args?.limit);
               return {
                 markdown: renderMarkdown(digest),
                 feedsOk: status.feedsOk,
@@ -229,6 +270,10 @@ export function apply(ctx, config = {}) {
                 candidates: status.candidates,
                 degraded: status.degraded,
                 failedSources: status.failedSources,
+                persisted,
+                message: persisted
+                  ? ''
+                  : '未绑定博客根目录：候选只存在于本次会话（不落盘），也没算入你的画像。要取原文、建草稿、跑校验，先在面板「设置」里绑定博客项目。',
               };
             },
           }),
@@ -238,7 +283,7 @@ export function apply(ctx, config = {}) {
           defineTool({
             name: 'hotspot_get',
             description:
-              '按候选 id（如 h-20261105-03 或 #3）读取完整条目，包含多个来源的原文。写文章前用它核对事实，不要凭记忆写版本号。',
+              '按候选 id（如 h-20261105-03 或 #3）读取完整条目，包含多个来源的原文。写文章前用它核对事实，不要凭记忆写版本号。读不到时按提示先跑 hotspot_run。',
             parameters: {
               id: {
                 type: 'string',
@@ -269,16 +314,14 @@ export function apply(ctx, config = {}) {
               },
             },
             async execute(args) {
-              const digest = await store.loadDigest('latest');
+              const scanStore = activeStore();
+              const digest = await scanStore.loadDigest('latest');
               if (!digest) return { found: false, text: '还没有 digest，先跑 hotspot_run' };
 
-              const key = String(args?.id ?? '').replace(/^#/, '');
-              const item =
-                digest.items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`)) ??
-                (Number(key) >= 1 && Number(key) <= digest.items.length ? digest.items[Number(key) - 1] : null);
+              const item = pickCandidate(digest, args?.id);
               if (!item) return { found: false, text: `没有候选 ${args?.id}` };
 
-              const raw = await store.loadRaw(digest.date);
+              const raw = await scanStore.loadRaw(digest.date);
               const blocks = [`${item.id}  ${item.title}`, item.url, `分数 ${item.score}（${JSON.stringify(item.scoreParts)}）`];
               for (const source of item.sources ?? []) {
                 const match = raw.find((r) => r.url === source.url);
@@ -294,7 +337,12 @@ export function apply(ctx, config = {}) {
                 if (!target) {
                   registerFailed.push('尚未配置博客项目根目录');
                 } else {
-                  const outcome = await registerCandidateSources(target, registerSlug, item.sources, raw);
+                  // 传上候选本体：登记正文的同时把 candidate.id 记进 sources.json，
+                  // 之后 check 才能按 id 定位证据，而不是靠标题猜
+                  const outcome = await registerCandidateSources(target, registerSlug, item.sources, raw, {
+                    id: item.id,
+                    url: item.url,
+                  });
                   registered = outcome.registered.length;
                   for (const miss of outcome.failed) {
                     registerFailed.push(`${miss.url}（${miss.reason}）`);
@@ -343,46 +391,39 @@ export function apply(ctx, config = {}) {
                   file: { type: 'string' },
                   slug: { type: 'string' },
                   bodyWritten: { type: 'boolean' },
+                  violations: { type: 'array', items: { type: 'string' } },
                   message: { type: 'string' },
                 },
               },
               render(_args, value) {
                 if (!value.ok) return textBlocks(value.message);
                 const kind = value.bodyWritten ? '草稿（含正文）' : '草稿骨架（正文待写）';
-                return textBlocks(`${kind}：${value.file}\nslug: ${value.slug}`);
+                const checks = (value.violations ?? []).length
+                  ? `\n\n✖ 校验未过（${value.violations.length} 项）：\n${value.violations.join('\n')}`
+                  : value.bodyWritten
+                    ? '\n\n✓ 三道校验全过，可以 hotspot_promote'
+                    : '';
+                return textBlocks(`${kind}：${value.file}\nslug: ${value.slug}${checks}`);
               },
             },
             async execute(args) {
-              let effectiveTarget = target;
-              if (args?.projectRoot) {
-                const pr = path.resolve(args.projectRoot);
-                if (!existsSync(pr)) {
-                  return { ok: false, message: `指定博客根目录不存在：${pr}` };
-                }
-                effectiveTarget = createVitePressTarget({
-                  root: pr,
-                  articleDir: config.articleDir || 'docs',
-                  draftDir: config.draftDir || 'docs/draft',
-                });
-              }
-              if (!effectiveTarget) {
-                return {
-                  ok: false,
-                  message: '尚未配置博客项目根目录。请在控制面板填写博客路径，或在参数中指定 projectRoot。',
-                };
-              }
+              const resolved = resolveTarget(args?.projectRoot);
+              if (resolved.error) return { ok: false, message: resolved.error };
+              const effectiveTarget = resolved.target;
 
-              const digest = await store.loadDigest('latest');
+              const digest = await activeStore().loadDigest('latest');
               if (!digest) return { ok: false, message: '还没有 digest，先跑 hotspot_run' };
 
-              const key = String(args?.id ?? '').replace(/^#/, '');
-              const item =
-                digest.items.find((it) => it.id === key || it.id.endsWith(key) || it.id.endsWith(`-${key.padStart(2, '0')}`)) ??
-                (Number(key) >= 1 && Number(key) <= digest.items.length ? digest.items[Number(key) - 1] : null);
+              const item = pickCandidate(digest, args?.id);
               if (!item) return { ok: false, message: `没有候选 ${args?.id}` };
 
               const existing = await effectiveTarget.exists(item);
-              if (existing.exists) return { ok: false, message: `已经写过：${existing.reason}` };
+              if (existing.exists) {
+                return {
+                  ok: false,
+                  message: `已经写过：${existing.reason}\n改稿走 hotspot_write，不要重建草稿`,
+                };
+              }
 
               const result = await effectiveTarget.scaffold(item, {
                 draft: true,
@@ -391,7 +432,22 @@ export function apply(ctx, config = {}) {
                 description: args?.description,
                 body: args?.body,
               });
-              return { ok: true, file: result.file, slug: result.slug, bodyWritten: result.bodyWritten };
+
+              // 正文随草稿落盘时立刻跑闸门（与 CLI scaffold 一致）：违规当场列出来，
+              // 不等到 promote 才发现。骨架没正文，校验没有意义。
+              let violations = [];
+              if (result.bodyWritten) {
+                const report = await runCheck(effectiveTarget, result.slug);
+                violations = report.violations;
+              }
+              return {
+                ok: true,
+                file: result.file,
+                slug: result.slug,
+                bodyWritten: result.bodyWritten,
+                violations,
+                message: '',
+              };
             },
           }),
         ),
@@ -430,24 +486,9 @@ export function apply(ctx, config = {}) {
               },
             },
             async execute(args) {
-              let effectiveTarget = target;
-              if (args?.projectRoot) {
-                const pr = path.resolve(args.projectRoot);
-                if (!existsSync(pr)) {
-                  return { ok: false, message: `指定博客根目录不存在：${pr}` };
-                }
-                effectiveTarget = createVitePressTarget({
-                  root: pr,
-                  articleDir: config.articleDir || 'docs',
-                  draftDir: config.draftDir || 'docs/draft',
-                });
-              }
-              if (!effectiveTarget) {
-                return {
-                  ok: false,
-                  message: '尚未配置博客项目根目录。请在控制面板填写博客路径，或在参数中指定 projectRoot。',
-                };
-              }
+              const resolved = resolveTarget(args?.projectRoot);
+              if (resolved.error) return { ok: false, message: resolved.error };
+              const effectiveTarget = resolved.target;
               if (!args?.url) return { ok: false, message: '缺 url' };
 
               try {
@@ -464,6 +505,193 @@ export function apply(ctx, config = {}) {
             },
           }),
         ),
+
+        sctx.tools.register(
+          defineTool({
+            name: 'hotspot_check',
+            description:
+              '跑发布前的三道机械校验：数字字面比对、站内链接、外链白名单，外加 frontmatter 规则。改完正文就重跑，不要等到 promote 才知道。违规逐条列出（code + 说明）。',
+            parameters: {
+              slug: { type: 'string', description: '草稿 slug（必填）' },
+              projectRoot: { type: 'string', description: '可选：博客项目根目录（未配置全局路径时必须提供）' },
+            },
+            output: {
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  ok: { type: 'boolean' },
+                  slug: { type: 'string' },
+                  file: { type: 'string' },
+                  digestDate: { type: 'string' },
+                  evidence: { type: 'number' },
+                  violations: { type: 'array', items: { type: 'string' } },
+                  message: { type: 'string' },
+                },
+              },
+              render(_args, value) {
+                return textBlocks(value.message);
+              },
+            },
+            async execute(args) {
+              const slug = String(args?.slug ?? '').trim();
+              const empty = { ok: false, slug, file: '', digestDate: '', evidence: 0, violations: [], message: '缺 slug' };
+              if (!slug) return empty;
+
+              const resolved = resolveTarget(args?.projectRoot);
+              if (resolved.error) return { ...empty, message: resolved.error };
+
+              const outcome = await runCheck(resolved.target, slug);
+              const report = outcome.report;
+              const evidence = report.supplements?.entries?.length ?? 0;
+              const head = `校验 ${slug}（${path.relative(resolved.target.root, report.file)}）`;
+              const boundary =
+                `证据：候选 ${report.candidate?.id ?? '未定位'} · digest ${report.digestDate ?? '—'} · 补料 ${evidence} 条`;
+              const message = outcome.ok
+                ? `✓ 三道检查全过\n${head}\n${boundary}\n下一步：hotspot_promote ${slug}`
+                : `✖ 校验未通过（${outcome.violations.length} 项）\n${head}\n${boundary}\n${outcome.violations.join('\n')}\n\n数字对不上就登记读过的那页：hotspot_supplement（url + content）；外链不认可一并登记它。`;
+
+              return {
+                ok: outcome.ok,
+                slug,
+                file: path.relative(resolved.target.root, report.file),
+                digestDate: String(report.digestDate ?? ''),
+                evidence,
+                violations: outcome.violations,
+                message,
+              };
+            },
+          }),
+        ),
+
+        sctx.tools.register(
+          defineTool({
+            name: 'hotspot_promote',
+            description:
+              '把草稿转正到文章目录（去掉 sitemap:false，sources.json 一起搬）。转正前强制跑三道校验：有违规就拒绝，草稿留在 docs/draft/。不要用它绕过校验。',
+            parameters: {
+              slug: { type: 'string', description: '草稿 slug（必填）' },
+              projectRoot: { type: 'string', description: '可选：博客项目根目录（未配置全局路径时必须提供）' },
+            },
+            output: {
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  ok: { type: 'boolean' },
+                  slug: { type: 'string' },
+                  file: { type: 'string' },
+                  violations: { type: 'array', items: { type: 'string' } },
+                  message: { type: 'string' },
+                },
+              },
+              render(_args, value) {
+                return textBlocks(value.message);
+              },
+            },
+            async execute(args) {
+              const slug = String(args?.slug ?? '').trim();
+              if (!slug) return { ok: false, slug, file: '', violations: [], message: '缺 slug' };
+              const resolved = resolveTarget(args?.projectRoot);
+              if (resolved.error) return { ok: false, slug, file: '', violations: [], message: resolved.error };
+
+              const effectiveTarget = resolved.target;
+              const cfg = await readProjectConfig();
+              const outcome = await promoteChecked({
+                target: effectiveTarget,
+                store: activeStore(),
+                slug,
+                allowedHosts: cfg.publish?.allowedHosts ?? [],
+              });
+
+              if (!outcome.ok) {
+                const violations = outcome.violations.map((v) => `[${v.code}] ${v.message}`);
+                return {
+                  ok: false,
+                  slug,
+                  file: '',
+                  violations,
+                  message:
+                    `✖ 校验未通过（${describeViolations(outcome.violations)}），未转正；草稿仍在 ` +
+                    `${path.relative(effectiveTarget.root, path.join(effectiveTarget.draftDir, slug))}\n` +
+                    `${violations.join('\n')}\n\n改稿走 hotspot_write，缺证据走 hotspot_supplement，然后重跑 hotspot_check。`,
+                };
+              }
+
+              const promoted = outcome.promoted;
+              return {
+                ok: true,
+                slug,
+                file: path.relative(effectiveTarget.root, promoted.file),
+                violations: [],
+                message:
+                  `✓ 已转正：${path.relative(effectiveTarget.root, promoted.from)} → ` +
+                  `${path.relative(effectiveTarget.root, promoted.to)}\n已移除 sitemap: false，文章会进博客列表与 sitemap。`,
+              };
+            },
+          }),
+        ),
+
+        sctx.tools.register(
+          defineTool({
+            name: 'hotspot_write',
+            description:
+              '把写好的正文写进已有草稿（保留 frontmatter），写完立刻跑三道校验并返回违规清单。scaffold 只能用于新建草稿，改稿一律走它。',
+            parameters: {
+              slug: { type: 'string', description: '草稿 slug（必填）' },
+              body: { type: 'string', description: '正文 Markdown（必填；自带 # 标题时原样使用）' },
+              projectRoot: { type: 'string', description: '可选：博客项目根目录（未配置全局路径时必须提供）' },
+            },
+            output: {
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  ok: { type: 'boolean' },
+                  file: { type: 'string' },
+                  chars: { type: 'number' },
+                  violations: { type: 'array', items: { type: 'string' } },
+                  message: { type: 'string' },
+                },
+              },
+              render(_args, value) {
+                return textBlocks(value.message);
+              },
+            },
+            async execute(args) {
+              const slug = String(args?.slug ?? '').trim();
+              if (!slug) return { ok: false, file: '', chars: 0, violations: [], message: '缺 slug' };
+              const resolved = resolveTarget(args?.projectRoot);
+              if (resolved.error) return { ok: false, file: '', chars: 0, violations: [], message: resolved.error };
+              const body = String(args?.body ?? '').trim();
+              if (!body) return { ok: false, file: '', chars: 0, violations: [], message: 'body 是空的' };
+
+              try {
+                const written = await resolved.target.writeBody(slug, body);
+                // 写盘就复核：改稿是迭代的，把违规当场交回去比等人去跑 check 快
+                const outcome = await runCheck(resolved.target, slug);
+                const head = `✓ 正文已写入 ${written.file}（${written.chars} 字）`;
+                return {
+                  ok: true,
+                  file: written.file,
+                  chars: written.chars,
+                  violations: outcome.violations,
+                  message: outcome.ok
+                    ? `${head}\n✓ 三道校验全过，可以 hotspot_promote ${slug}`
+                    : `${head}\n✖ 校验未过（${outcome.violations.length} 项）：\n${outcome.violations.join('\n')}`,
+                };
+              } catch (error) {
+                return {
+                  ok: false,
+                  file: '',
+                  chars: 0,
+                  violations: [],
+                  message: error instanceof Error ? error.message : String(error),
+                };
+              }
+            },
+          }),
+        ),
         ];
       } catch (error) {
         // Cordis 会把 inject 回调里的异常静默掉，这里必须自己喊出来，
@@ -473,7 +701,9 @@ export function apply(ctx, config = {}) {
         return () => {};
       }
 
-      log(`已注册 ${disposers.length} 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement`);
+      log(
+        `已注册 ${disposers.length} 个工具：hotspot_run / hotspot_get / hotspot_scaffold / hotspot_supplement / hotspot_check / hotspot_promote / hotspot_write`,
+      );
 
       return () => {
         for (const dispose of disposers) {
@@ -533,6 +763,11 @@ export function apply(ctx, config = {}) {
         checkDraft: async (opts) => {
           const cfg = await readProjectConfig();
           return checkDraft({ ...opts, allowedHosts: cfg.publish?.allowedHosts ?? [] });
+        },
+        // 面板「转正」与 CLI / 插件工具共用同一道闸门（core/promote.js）
+        promoteChecked: async (opts) => {
+          const cfg = await readProjectConfig();
+          return promoteChecked({ ...opts, allowedHosts: cfg.publish?.allowedHosts ?? [] });
         },
       })) {
         try {
