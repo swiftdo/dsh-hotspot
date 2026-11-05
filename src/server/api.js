@@ -234,7 +234,7 @@ export function createRoutes(deps) {
    * 起一个后台写作任务：子代理在后台「搜 → 读 → 综合」，写盘后立刻复核。
    * 三个入口（建草稿后自动写、面板重试、以后可能的定时任务）共用这一段。
    */
-  function startWriteJob({ slug, target, store, projectRoot, message = '正在搜资料并写正文' }) {
+  function startWriteJob({ slug, target, store, projectRoot, message = '正在写正文' }) {
     if (!deps.jobs || typeof deps.generate !== 'function') return null;
     return deps.jobs.start({
       slug,
@@ -1104,7 +1104,7 @@ export function createRoutes(deps) {
           sendJson(res, 501, {
             ok: false,
             code: 'ERR_NO_WRITER',
-            error: '当前环境没有接入写作子代理，无法在面板里生成正文',
+            error: '当前环境没有接入 llm 服务，无法生成正文',
           });
           return;
         }

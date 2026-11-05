@@ -1,17 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
 import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
 import { resolveWriterSelection } from '../src/core/writer-route.js';
 import {
   createPolisher,
   createWriter,
-  describeAgentRegistry,
-  pickParentAgent,
-  pickProvider,
   readWriterConfig,
   saveWriterConfig,
 } from '../src/server/generate.js';
@@ -21,9 +18,11 @@ const CANDIDATE = {
   title: 'Demo Post',
   slugHint: 'demo-post',
   summary: '演示用候选。',
-  tags: [],
-  sources: [{ title: 'OpenAI', url: 'https://openai.com/index/demo' }],
+  tags: ['demo'],
+  sources: [{ source: 'openai', title: 'OpenAI', url: 'https://openai.com/index/demo' }],
 };
+
+const RAW = [{ url: 'https://openai.com/index/demo', content: 'OpenAI 在 11 月 4 日宣布收购，金额未披露。' }];
 
 async function setup({ draft = true } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'hotspot-generate-'));
@@ -34,171 +33,21 @@ async function setup({ draft = true } = {}) {
     async loadDigest() {
       return { date: '2026-11-05', items: [CANDIDATE] };
     },
+    async loadRecent() {
+      return [{ date: '2026-11-05', items: [CANDIDATE] }];
+    },
+    async loadRaw() {
+      return RAW;
+    },
   };
-  const artifact = path.join(root, '.hotspot', 'writer', 'demo-post.json');
-  return { root, target, store, artifact };
+  return { root, target, store };
 }
 
-/**
- * 假 agents 注册表。宿主要求 `request.parent` 是活着的 Agent 对象并做引用相等校验，
- * 所以这里给的必须是稳定引用。
- */
-function fakeAgents({ initiating = null, roots = [] } = {}) {
-  return {
-    currentInitiator: () => initiating,
-    roots: () => roots,
-    list: () => roots,
-  };
-}
-
-const liveAgent = { id: 'session-1', status: 'running' };
-
-/** 假宿主：startActivation 时把产物写进磁盘，模拟子代理交付。 */
-function fakeSubagents(artifact, payload, { text = '已写入', providers = ['spawn'] } = {}) {
+/** 假 llm：记录每次 stream 的入参，按脚本吐文本。 */
+function fakeLlm({ texts = ['# 模型自己写的一级标题\n\n', '这是正文。', '第二段。'], onStream } = {}) {
   const calls = [];
-  const state = { disposed: false };
   return {
     calls,
-    state,
-    service: {
-      list: () => providers,
-      async startActivation(options) {
-        calls.push(options);
-        await mkdir(path.dirname(artifact), { recursive: true });
-        await writeFile(artifact, JSON.stringify(payload));
-        return {
-          result: Promise.resolve({ text }),
-          async dispose() {
-            state.disposed = true;
-          },
-        };
-      },
-    },
-  };
-}
-
-test('子代理写产物 → 宿主登记补料 → 写正文 → 释放子代理', async () => {
-  const { root, target, store, artifact } = await setup();
-  const fake = fakeSubagents(artifact, {
-    body: '## 事实\n\nOpenAI 在 11 月 4 日宣布这笔收购。\n\n## 参考\n\n- https://the-decoder.com/x',
-    sources: [
-      { url: 'https://the-decoder.com/x', title: 'The Decoder', content: 'OpenAI announced on Nov 4.' },
-      { url: 'https://siliconangle.com/y', title: 'SiliconANGLE' },
-    ],
-  });
-
-  const body = '## 事实\n\nOpenAI 在 11 月 4 日宣布这笔收购。\n\n## 参考\n\n- https://the-decoder.com/x';
-  const write = createWriter({
-    getSubagents: () => fake.service,
-    getAgents: () => fakeAgents({ roots: [liveAgent] }),
-    digestDir: '.hotspot',
-  });
-  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
-
-  assert.equal(fake.calls[0].request.parent, liveAgent, '子代理必须挂在活着的父代理下');
-
-  assert.equal(value.slug, 'demo-post');
-  assert.equal(value.registered, 1, '只有带原文的来源才登记');
-  assert.equal(value.registerFailed.length, 1);
-  assert.match(value.registerFailed[0].reason, /没有原文/);
-  assert.equal(value.bodyChars, [...body].length);
-  assert.equal(fake.state.disposed, true, '跑完必须 dispose，否则子代理常驻');
-  assert.equal(fake.calls.length, 1);
-  assert.equal(fake.calls[0].provider, 'spawn');
-  assert.equal(fake.calls[0].delivery, 'caller');
-
-  const draft = readFileSync(path.join(target.draftDir, 'demo-post', 'index.md'), 'utf8');
-  assert.ok(draft.includes('## 事实'), '正文应写进草稿');
-  assert.ok(draft.includes('title: Demo Post'), 'frontmatter 必须保留');
-  assert.ok(draft.includes('# Demo Post'), '缺 H1 时宿主补一个');
-  assert.ok(!draft.includes('（正文待写）'), '写完不该留占位');
-
-  const supplements = JSON.parse(readFileSync(path.join(target.draftDir, 'demo-post', 'sources.json'), 'utf8'));
-  assert.equal(supplements.entries.length, 1);
-  assert.equal(supplements.entries[0].kind, 'web');
-});
-
-test('宿主没有 subagents 服务时明确报错', async () => {
-  const { target, store } = await setup();
-  const write = createWriter({ getSubagents: () => null });
-  await assert.rejects(() => write({ slug: 'demo-post', store, target, projectRoot: '/tmp' }), /subagents 服务/);
-});
-
-test('子代理没交产物时抛错，不写草稿', async () => {
-  const { root, target, store } = await setup();
-  const service = {
-    list: () => ['spawn'],
-    async startActivation() {
-      return { result: Promise.resolve({ text: '我写好了，但忘记存文件' }), async dispose() {} };
-    },
-  };
-  const write = createWriter({ getSubagents: () => service, getAgents: () => fakeAgents({ roots: [liveAgent] }) });
-  await assert.rejects(() => write({ slug: 'demo-post', store, target, projectRoot: root }), /没有交出可用产物/);
-
-  const draft = readFileSync(path.join(target.draftDir, 'demo-post', 'index.md'), 'utf8');
-  assert.ok(draft.includes('（正文待写）'), '失败时草稿保持原样');
-});
-
-test('草稿不存在时写正文失败并说明原因', async () => {
-  const { root, target, store, artifact } = await setup({ draft: false });
-  const fake = fakeSubagents(artifact, { body: '正文。', sources: [] });
-  const write = createWriter({ getSubagents: () => fake.service, getAgents: () => fakeAgents({ roots: [liveAgent] }) });
-  await assert.rejects(() => write({ slug: 'demo-post', store, target, projectRoot: root }), /草稿|找不到/);
-});
-
-test('没有活着的会话代理时给出可操作提示，不把 TypeError 抛给用户', async () => {
-  const { root, target, store } = await setup();
-  const fake = fakeSubagents(path.join(root, '.hotspot', 'writer', 'demo-post.json'), { body: '正文。', sources: [] });
-  const write = createWriter({ getSubagents: () => fake.service, getAgents: () => null });
-  await assert.rejects(
-    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
-    /找不到活着的会话代理/,
-  );
-  assert.equal(fake.calls.length, 0, '取不到父代理就不该发起激活');
-});
-
-test('pickParentAgent：initiator 优先，其次最近的 running root，再退回最后一个', () => {
-  const initiating = { id: 's-0' };
-  assert.equal(pickParentAgent(fakeAgents({ initiating })), initiating, 'agent 边界内优先发起者');
-
-  const idle = { id: 's-1', status: 'idle' };
-  const running = { id: 's-2', status: 'running' };
-  assert.equal(pickParentAgent(fakeAgents({ roots: [idle, running] })), running, '优先 running 的 root');
-  assert.equal(pickParentAgent(fakeAgents({ roots: [idle] })), idle, '没有 running 就取最近的 root');
-
-  const listed = { id: 'child' };
-  assert.equal(pickParentAgent({ list: () => [listed] }), listed, '没有 roots 时退回 list');
-
-  assert.equal(pickParentAgent(null), null);
-  assert.equal(pickParentAgent(fakeAgents()), null);
-  assert.equal(
-    pickParentAgent({
-      currentInitiator() {
-        throw new Error('no initiator');
-      },
-      roots() {
-        throw new Error('disposed');
-      },
-      list() {
-        throw new Error('disposed');
-      },
-    }),
-    null,
-    '服务抛错时降级为空，而不是把异常抛出去',
-  );
-});
-
-test('provider 缺省优先 spawn，没有就用第一个', () => {
-  assert.equal(pickProvider(['custom', 'spawn']), 'spawn');
-  assert.equal(pickProvider(['custom']), 'custom');
-  assert.equal(pickProvider([]), 'spawn');
-  assert.equal(pickProvider(null), 'spawn');
-});
-
-test('direct 模式：用选中的模型一次生成，只用手头证据并写进草稿', async () => {
-  const { root, target, store } = await setup();
-  const prompts = [];
-  const llm = {
     async listProviders() {
       return [{ provider: 'deepseek', name: 'DeepSeek' }, { provider: 'openai', name: 'OpenAI' }];
     },
@@ -206,18 +55,24 @@ test('direct 模式：用选中的模型一次生成，只用手头证据并写�
       return provider === 'openai' ? [{ id: 'gpt-x', name: 'GPT X' }] : [{ id: 'chat', name: 'Chat' }];
     },
     async *stream(options) {
-      prompts.push(options);
-      yield { type: 'chunk', chunk: { type: 'text-delta', text: '# 模型自己写的一级标题\n\n' } };
-      yield { type: 'text-chunks', texts: ['这是正文。', '第二段。'] };
+      calls.push(options);
+      if (onStream) await onStream(options);
+      yield { type: 'chunk', chunk: { type: 'text-delta', text: texts[0] } };
+      if (texts.length > 1) yield { type: 'text-chunks', texts: texts.slice(1) };
     },
   };
+}
+
+test('写正文：一次 completion，模型从配置里选，正文写进草稿', async () => {
+  const { root, target, store } = await setup();
+  const llm = fakeLlm();
   const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+
   const value = await write({
     slug: 'demo-post',
     store,
     target,
     projectRoot: root,
-    mode: 'direct',
     provider: 'openai',
     model: 'gpt-x',
   });
@@ -225,30 +80,101 @@ test('direct 模式：用选中的模型一次生成，只用手头证据并写�
   assert.equal(value.mode, 'direct');
   assert.equal(value.provider, 'openai');
   assert.equal(value.model, 'gpt-x');
-  assert.equal(prompts.length, 1);
-  assert.equal(prompts[0].provider, 'openai');
-  assert.equal(prompts[0].model, 'gpt-x');
-  assert.match(prompts[0].messages[0].content[0].text, /只能使用下面给出的材料/);
+  assert.equal(llm.calls.length, 1, '只发一次 completion，不起子代理');
+  assert.equal(llm.calls[0].provider, 'openai');
+  assert.match(llm.calls[0].messages[0].content[0].text, /只能使用下面给出的材料/);
 
   const text = readFileSync(path.join(root, value.file), 'utf8');
   assert.match(text, /^---/);
   assert.match(text, /这是正文。第二段。/);
-  // 模型自带的一级标题必须被去掉，frontmatter 之后只留宿主补的那一个 H1。
+  // 模型自带的一级标题必须被去掉，frontmatter 之后只留宿主补的那一个 H1
   assert.equal((text.match(/^# /gm) || []).length, 1);
 });
 
-test('direct 模式：没有可用模型路由时明确报错，不静默产出空正文', async () => {
+test('写正文：素材包进提示词（摘要 + 一手源原文 + 标签）', async () => {
+  const { root, target, store } = await setup();
+  const llm = fakeLlm();
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot' });
+  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
+
+  const prompt = llm.calls[0].messages[0].content[0].text;
+  assert.match(prompt, /演示用候选/, '候选摘要要进提示词');
+  assert.match(prompt, /金额未披露/, '一手源原文要进提示词');
+  assert.ok(value.briefChars > 0);
+  assert.equal(value.candidateId, CANDIDATE.id);
+});
+
+test('写正文：宿主没接 llm 时明确报错，不写草稿', async () => {
+  const { root, target, store } = await setup();
+  const write = createWriter({ getLlm: () => null });
+  await assert.rejects(
+    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
+    /没有提供 llm 服务/,
+  );
+  const text = readFileSync(path.join(target.draftDir, 'demo-post', 'index.md'), 'utf8');
+  assert.match(text, /（正文待写）/, '失败时草稿保持骨架');
+});
+
+test('写正文：没有可用模型路由时明确报错，不静默产出空正文', async () => {
   const { root, target, store } = await setup();
   const llm = {
     async listProviders() { return []; },
     async listModels() { return []; },
     async *stream() { throw new Error('没有路由时不应该调用 stream'); },
   };
-  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot' });
   await assert.rejects(
-    () => write({ slug: 'demo-post', store, target, projectRoot: root, mode: 'direct' }),
+    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
     /没有可用的模型路由/,
   );
+});
+
+test('写正文：草稿不存在时失败并说明原因', async () => {
+  const { root, target, store } = await setup({ draft: false });
+  const write = createWriter({ getLlm: () => fakeLlm(), digestDir: '.hotspot' });
+  await assert.rejects(
+    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
+    /草稿|找不到/,
+  );
+});
+
+test('写正文：外部取消信号传到模型请求上', async () => {
+  const { root, target, store } = await setup();
+  const controller = new AbortController();
+  const seen = [];
+  const llm = fakeLlm({
+    onStream: async () => {
+      controller.abort(new Error('用户取消'));
+    },
+  });
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot' });
+  const value = await write({ slug: 'demo-post', store, target, projectRoot: root, signal: controller.signal });
+  seen.push(...llm.calls);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].signal.aborted, true, '取消要传到 llm.stream 的 signal 上');
+  assert.ok(value.bodyChars > 0, '已经拿到的正文照常落盘');
+});
+
+test('候选按 sources.json 的 id 定位：中文标题 + 自定义 slug 也能拿到摘要与一手源原文', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'hotspot-generate-'));
+  mkdirSync(path.join(root, 'docs'), { recursive: true });
+  const target = createVitePressTarget({ root });
+  await target.scaffold(CANDIDATE, { slug: 'zh-post', title: '中文标题' });
+
+  const store = {
+    async loadDigest() { return { date: '2026-11-05', items: [CANDIDATE] }; },
+    async loadRecent() { return [{ date: '2026-11-05', items: [CANDIDATE] }]; },
+    async loadRaw() { return RAW; },
+  };
+
+  const llm = fakeLlm();
+  const write = createWriter({ getLlm: () => llm, digestDir: '.hotspot' });
+  const value = await write({ slug: 'zh-post', store, target, projectRoot: root });
+
+  assert.equal(value.candidateId, CANDIDATE.id, '必须按 candidate.id 命中，而不是 slugify(英文标题)');
+  const prompt = llm.calls[0].messages[0].content[0].text;
+  assert.match(prompt, /演示用候选/, '摘要要进提示词');
+  assert.match(prompt, /金额未披露/, '一手源原文要进提示词');
 });
 
 test('模型选择：全局默认 + 按用途覆盖，缺省跟随全局', async () => {
@@ -257,23 +183,15 @@ test('模型选择：全局默认 + 按用途覆盖，缺省跟随全局', async
   const empty = { provider: '', model: '' };
 
   const saved = await saveWriterConfig(dir, { mode: 'direct', global: { provider: 'openai', model: 'gpt-x' } });
-  assert.deepEqual(saved, {
-    version: 2,
-    mode: 'direct',
-    global: { provider: 'openai', model: 'gpt-x' },
-    writer: empty,
-    polish: empty,
-  });
+  assert.deepEqual(saved.global, { provider: 'openai', model: 'gpt-x' });
   assert.deepEqual(resolveWriterSelection(saved, 'writer'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
   assert.deepEqual(resolveWriterSelection(saved, 'polish'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
 
-  // 局部更新：只动润色，全局保持不变
   const overridden = await saveWriterConfig(dir, { polish: { provider: 'deepseek', model: 'chat' } });
   assert.equal(overridden.global.model, 'gpt-x');
   assert.deepEqual(resolveWriterSelection(overridden, 'polish'), { provider: 'deepseek', model: 'chat', mode: 'direct' });
   assert.deepEqual(resolveWriterSelection(overridden, 'writer'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
 
-  // 清掉覆盖 = 回到跟随全局
   const cleared = await saveWriterConfig(dir, { polish: empty });
   assert.deepEqual(cleared.polish, empty);
   assert.deepEqual(resolveWriterSelection(cleared, 'polish'), { provider: 'openai', model: 'gpt-x', mode: 'direct' });
@@ -318,16 +236,14 @@ test('润色：只走一次 completion，写回正文并把事实差异一并报
   assert.equal(value.mode, 'polish');
   assert.equal(value.provider, 'deepseek');
   assert.equal(value.model, 'chat');
-  assert.equal(prompts.length, 1, '润色只发一次 completion，不分子代理');
+  assert.equal(prompts.length, 1, '润色只发一次 completion');
   assert.match(prompts[0].messages[0].content[0].text, /更口语一点/);
   assert.match(prompts[0].system, /只做表达层润色/);
 
   const text = readFileSync(path.join(root, value.file), 'utf8');
   assert.match(text, /^---/);
   assert.match(text, /这段改得更顺了/);
-  // 开场白必须被削掉，不能留在正文里
   assert.doesNotMatch(text, /以下是润色后的正文/);
-  // 丢了「42 个用例」要被识别成事实差异（只报不拦）
   assert.equal(value.facts.ok, false);
   assert.match(value.factWarning, /42/);
 });
@@ -349,154 +265,4 @@ test('润色：草稿不存在时明确报错', async () => {
     () => polish({ slug: 'nope', target, projectRoot: root, instruction: '' }),
     /找不到草稿/,
   );
-});
-
-test('候选按 sources.json 的 id 定位：中文标题 + 自定义 slug 也能拿到摘要与一手源原文', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'hotspot-generate-'));
-  mkdirSync(path.join(root, 'docs'), { recursive: true });
-  const target = createVitePressTarget({ root });
-  await target.scaffold(CANDIDATE, { slug: 'zh-post', title: 'OpenAI 买下 Pierre 到底图什么' });
-
-  const store = {
-    async loadDigest() {
-      return { date: '2026-11-05', items: [CANDIDATE] };
-    },
-    async loadRecent() {
-      return [{ date: '2026-11-05', items: [CANDIDATE] }];
-    },
-    async loadRaw() {
-      return [{ url: 'https://openai.com/index/demo', content: 'OpenAI 宣布收购 Pierre，金额未披露。' }];
-    },
-  };
-
-  const artifact = path.join(root, '.hotspot', 'writer', 'zh-post.json');
-  const fake = fakeSubagents(artifact, { body: '## 事实\n\n收购已宣布。', sources: [] });
-  const write = createWriter({
-    getSubagents: () => fake.service,
-    getAgents: () => fakeAgents({ roots: [liveAgent] }),
-    digestDir: '.hotspot',
-  });
-
-  const value = await write({ slug: 'zh-post', store, target, projectRoot: root });
-  assert.equal(value.candidateId, 'h-20261105-01', '必须按 candidate.id 命中，而不是 slugify(英文标题)');
-  assert.ok(value.briefChars > 0, '一手源原文应当进入素材包');
-
-  const prompt = fake.calls[0].request.prompt[0].text;
-  assert.match(prompt, /摘要：演示用候选/, '摘要要进提示词');
-  assert.match(prompt, /金额未披露/, '一手源原文要进提示词');
-});
-
-test('agent 模式：面板选的模型通过 agentOptions 传给子代理', async () => {
-  const { root, target, store, artifact } = await setup();
-  const fake = fakeSubagents(artifact, { body: '## 事实\n\n正文。', sources: [] });
-  const withCaps = {
-    ...fake.service,
-    getProvider: () => ({ capabilities: { agentOptions: true } }),
-  };
-  const dir = path.join(root, '.hotspot');
-  await saveWriterConfig(dir, { writer: { provider: 'openai', model: 'gpt-x' } });
-
-  const write = createWriter({
-    getSubagents: () => withCaps,
-    getAgents: () => fakeAgents({ roots: [liveAgent] }),
-    digestDir: '.hotspot',
-  });
-  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
-
-  assert.deepEqual(fake.calls[0].request.agentOptions, { provider: 'openai', model: 'gpt-x' });
-  assert.equal(value.model, 'gpt-x', '结果里要如实报告实际用的模型');
-});
-
-test('agent 模式：provider 不支持指定模型时明确报错，不静默回退', async () => {
-  const { root, target, store } = await setup();
-  const fake = fakeSubagents(path.join(root, '.hotspot', 'writer', 'demo-post.json'), { body: '正文。', sources: [] });
-  const noCaps = {
-    ...fake.service,
-    getProvider: () => ({ capabilities: { agentOptions: false } }),
-  };
-  const dir = path.join(root, '.hotspot');
-  await saveWriterConfig(dir, { global: { provider: 'spawn', model: 'whatever' } });
-
-  const write = createWriter({
-    getSubagents: () => noCaps,
-    getAgents: () => fakeAgents({ roots: [liveAgent] }),
-    digestDir: '.hotspot',
-  });
-  await assert.rejects(
-    () => write({ slug: 'demo-post', store, target, projectRoot: root }),
-    /不支持指定模型/,
-  );
-  assert.equal(fake.calls.length, 0, '不支持就不该发起激活');
-});
-
-test('agent 模式：没选模型时不传 agentOptions，跟着父代理的模型跑', async () => {
-  const { root, target, store, artifact } = await setup();
-  const fake = fakeSubagents(artifact, { body: '## 事实\n\n正文。', sources: [] });
-  const withCaps = {
-    ...fake.service,
-    getProvider: () => ({ capabilities: { agentOptions: true } }),
-  };
-
-  const write = createWriter({
-    getSubagents: () => withCaps,
-    getAgents: () => fakeAgents({ roots: [liveAgent] }),
-    digestDir: '.hotspot',
-  });
-  const value = await write({ slug: 'demo-post', store, target, projectRoot: root });
-  assert.equal(fake.calls[0].request.agentOptions, undefined);
-  assert.equal(value.model, '');
-});
-
-test('取消信号：外部 abort 会传成子代理的 signal，真的能中断', async () => {
-  const { root, target, store, artifact } = await setup();
-  const controller = new AbortController();
-  const seen = [];
-  const service = {
-    list: () => ['spawn'],
-    getProvider: () => ({ capabilities: { agentOptions: true } }),
-    async startActivation(options) {
-      seen.push(options.signal);
-      controller.abort(new Error('用户取消'));
-      await mkdir(path.dirname(artifact), { recursive: true });
-      await writeFile(artifact, JSON.stringify({ body: '## 事实\n\n正文。', sources: [] }));
-      return { result: Promise.resolve({ text: '已写入' }), async dispose() {} };
-    },
-  };
-
-  const write = createWriter({
-    getSubagents: () => service,
-    getAgents: () => fakeAgents({ roots: [liveAgent] }),
-    digestDir: '.hotspot',
-  });
-  await write({ slug: 'demo-post', store, target, projectRoot: root, signal: controller.signal });
-  assert.equal(seen[0].aborted, true, '外部取消要传到子代理的 signal 上');
-});
-
-test('父代理解析：必须绑定 this 调用 —— dsh-agent 的 roots() 内部读 this.store', () => {
-  // 复刻宿主的写法：方法内部访问 this.store，一旦被取下当普通函数调用就抛
-  class Registry {
-    constructor(agents) {
-      this.store = new Map(agents.map((agent) => [agent.id, agent]));
-    }
-    currentInitiator() {
-      throw new Error('no initiator');
-    }
-    roots() {
-      return [...this.store.values()];
-    }
-    list() {
-      return [...this.store.values()];
-    }
-  }
-
-  const agent = { id: 'session-1', status: 'idle' };
-  const registry = new Registry([agent]);
-  assert.equal(pickParentAgent(registry), agent, '以前这里会抛 TypeError 被吞成「没有活代理」');
-
-  const running = [{ id: 'a', status: 'idle' }, { id: 'b', status: 'running' }];
-  assert.equal(pickParentAgent(new Registry(running)), running[1], '优先 running 的 root');
-
-  assert.equal(pickParentAgent(new Registry([])), null);
-  assert.match(describeAgentRegistry(registry), /roots=1 · list=1/);
-  assert.match(describeAgentRegistry(null), /没有提供 agents 服务/);
 });

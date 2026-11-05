@@ -2283,7 +2283,7 @@ window.__ModuleLoader__.load({
       };
 
       /**
-       * 让写作子代理替当前草稿补全正文。
+       * 用一次 completion 替当前草稿补全正文。
        *
        * scaffold 出来的草稿只有 frontmatter + 标题 + 来源引用，正文是「（正文待写）」。
        * 这里直接复用面板已有的 POST /api/generate（写盘 + 校验都在服务端做），
@@ -2296,7 +2296,7 @@ window.__ModuleLoader__.load({
         const dirty = editContent !== editOriginalContent;
         const empty = isDraftBodyEmpty(editContent);
         const lines = [
-          `让写作子代理为「${label}」${empty ? '完成正文' : '重写正文'}？`,
+          `为「${label}」${empty ? '生成正文' : '重写正文'}？`,
           '会联网搜索并登记证据，通常 1–3 分钟，最长 8 分钟，请保持面板打开。',
         ];
         if (dirty) lines.push('当前有未保存的修改：生成会以磁盘内容为底稿，这些修改会丢失。');
@@ -2594,7 +2594,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      /** 取消正在跑的写作任务：信号会一路传到子代理，真停。 */
+      /** 取消正在跑的写作任务：信号会一路传到模型请求，真停。 */
       const cancelWrite = async (slug) => {
         if (!slug) return;
         try {
@@ -2606,7 +2606,7 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.ok) {
             setJobStates(prev => ({ ...prev, [slug]: data.job }));
-            showToast('已请求取消，正在停子代理…');
+            showToast('已请求取消，正在中断模型请求…');
             await loadState();
           } else {
             showToast(data.message || '取消失败', true);
@@ -4104,7 +4104,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'hs-card-header' }, [
                     h('div', null, [
                       h('div', { className: 'hs-card-title' }, '模型与写作方式'),
-                      h('div', { className: 'hs-card-subtitle' }, '写正文走联网子代理，润色只走一次 completion；两边可以各用一个模型')
+                      h('div', { className: 'hs-card-subtitle' }, '写正文与润色都走一次 completion，只用磁盘上已有的材料；两边可以各用一个模型')
                     ]),
                     h('span', { className: 'hs-cfg-state idle' },
                       modelCatalog ? `${(modelCatalog.providers || []).length} 个 provider` : '未接入模型目录')
@@ -4147,28 +4147,12 @@ window.__ModuleLoader__.load({
                       const route = routes[purpose];
                       return route ? `${route.provider} · ${route.model}` : '未解析到可用模型';
                     };
-                    const modeButton = (mode, label) => h('button', {
-                      type: 'button',
-                      className: modelForm.mode === mode ? 'on' : '',
-                      onClick: () => setModelForm(prev => ({ ...prev, mode }))
-                    }, label);
                     return h('div', null, [
                       modelRow('global', '默认模型', false),
                       modelRow('writer', '写正文', true),
                       modelRow('polish', '润色', true),
-                      h('div', { className: 'hs-cfg-model-row', style: { marginTop: 14, alignItems: 'start' } }, [
-                        h('div', { className: 'hs-cfg-field-label', style: { margin: '6px 0 0' } }, '写作方式'),
-                        h('div', null, [
-                          h('div', { className: 'hs-cfg-segmented' }, [
-                            modeButton('agent', '联网子代理'),
-                            modeButton('direct', '只用手头证据')
-                          ]),
-                          h('div', { className: 'hs-form-hint' },
-                            modelForm.mode === 'direct'
-                              ? '一次 completion，不联网，快；只能把已有材料写顺'
-                              : '子代理自带搜索与抓取，5 秒到几分钟；能读到一手公告与多家报道')
-                        ])
-                      ]),
+                      h('div', { className: 'hs-form-hint', style: { marginTop: 4 } },
+                        '写正文与润色都是一次 completion：只用候选素材与已登记补料，不联网、不起子代理。材料不够就先补充料。'),
                       h('div', { className: 'hs-cfg-effective' }, [
                         h('div', null, ['写正文实际会问 ', h('code', null, effective('writer'))]),
                         h('div', null, ['润色实际会问 ', h('code', null, effective('polish'))])
@@ -4498,7 +4482,7 @@ window.__ModuleLoader__.load({
                 ])
               ]),
               h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 4 } },
-                '确认后先建草稿，随后在后台起子代理：读候选素材 → 联网补 3–6 篇 → 综合成文 → 跑三道校验。可以随时取消。')
+                '确认后先建草稿，随后在后台写正文：读候选素材 + 已登记补料 → 一次 completion → 跑三道校验。可以随时取消。')
             ]),
             h('div', { className: 'hs-modal-footer' }, [
               h('button', {
@@ -4641,7 +4625,7 @@ window.__ModuleLoader__.load({
                     !isWritingBody && h('button', {
                       className: 'hs-btn sm primary',
                       onClick: handleWriteBody
-                    }, '✨ 先让子代理写正文')
+                    }, '✨ 先生成正文')
                   ])
                 : h('div', null, [
                     h('textarea', {
@@ -4684,7 +4668,7 @@ window.__ModuleLoader__.load({
                   ])
             ]),
 
-            // 生成正文进行中：写作子代理最长要跑 8 分钟，明确告诉用户别关面板
+            // 生成正文进行中：一次 completion 最长要跑 8 分钟，明确告诉用户别关面板
             isWritingBody && h('div', { className: 'hs-body-writing' }, [
               h('span', { className: 'hs-body-writing-spinner' }),
               h('span', null, '正在生成正文：联网补料 → 写正文 → 登记证据'),
@@ -4748,13 +4732,13 @@ window.__ModuleLoader__.load({
                     h('span', null, '这篇草稿还没有正文')
                   ]),
                   h('div', { className: 'hs-body-empty-desc' },
-                    'scaffold 只写了标题、摘要和来源，正文是空的，所以还不能润色。点下面的按钮，写作子代理会先联网补料、把来源登记进证据账本，再按这些材料把正文写完；写完就可以用头部的「✨ 正文润色」按你的要求反复润。'),
+                    'scaffold 只写了标题、摘要和来源，正文是空的，所以还不能润色。点下面的按钮，会用候选素材与已登记补料把正文写完；写完就可以用头部的「✨ 正文润色」按你的要求反复润。'),
                   h('div', { className: 'hs-body-empty-actions' }, [
                     h('button', {
                       className: 'hs-btn primary',
                       disabled: isWritingBody,
                       onClick: handleWriteBody
-                    }, isWritingBody ? '✍️ 正在生成正文...' : '✨ 让子代理写正文'),
+                    }, isWritingBody ? '✍️ 正在生成正文...' : '✨ 生成正文'),
                     h('span', { className: 'hs-body-empty-hint' },
                       isWritingBody
                         ? '最长 8 分钟，请勿关闭面板'

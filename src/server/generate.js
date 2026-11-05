@@ -1,6 +1,6 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { buildWriterPrompt, parseWriterArtifact, stripH1, writerArtifactPath } from '../core/writer.js';
+import { stripH1 } from '../core/writer.js';
 import {
   buildDirectPrompt,
   collectStreamText,
@@ -35,107 +35,8 @@ import {
 
 export const DEFAULT_WRITER_TIMEOUT_MS = 8 * 60 * 1000;
 
-/**
- * 给子代理挑一个父代理。
- *
- * `subagents.startActivation()` 要求 `request.parent` 是一个**活着的 Agent 对象**，
- * 并且做的是引用相等校验（`agents.get(parent.id) !== parent` 就拒绝）。官方工具
- * （dsh-tool-subagent）从 `exec.agent` 拿；面板走的是 HTTP 路由，没有 `exec.agent`，
- * 只能从 agents 注册表里取。早期版本干脆没传，宿主的 `spec.request.parent.id` 当场
- * 抛 `Cannot read properties of undefined (reading 'id')` —— 面板写正文一直是坏的。
- *
- * 顺序：当前请求的发起者（在 agent 边界内调用时最准）→ 最近一个 running 的 root
- * 会话 → 最近一个 root → 注册表最后一个。取不到就返回 null，由调用方给可操作提示。
- *
- * @param {{ currentInitiator?: Function, roots?: Function, list?: Function } | null} agents
- */
-export function pickParentAgent(agents) {
-  if (!agents) return null;
-
-  try {
-    const initiating = typeof agents.currentInitiator === 'function' ? agents.currentInitiator() : null;
-    if (initiating) return initiating;
-  } catch {
-    /* 没有 initiator 边界是常态，继续往下找 */
-  }
-
-  /**
-   * 必须 `method.call(agents)`。
-   *
-   * dsh-agent 的 `roots()` 实现是 `[...this.store.values()]`，把它取下来当普通函数
-   * 调用会 `this === undefined` 直接抛 TypeError；而这里又用 try/catch 兜底，于是
-   * 表现成「注册表是空的」——面板写正文就一直报「找不到活着的会话代理」。
-   */
-  const listOf = (method) => {
-    try {
-      const list = typeof method === 'function' ? method.call(agents) : null;
-      return Array.isArray(list) ? list.filter((agent) => agent && typeof agent === 'object') : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const roots = listOf(agents.roots);
-  const running = roots.filter((agent) => agent.status === 'running');
-  return running.at(-1) ?? roots.at(-1) ?? listOf(agents.list).at(-1) ?? null;
-}
-
-/**
- * 出错时的诊断串：到底是「没有 agents 服务」还是「注册表真为空」。
- * 这两种情况的修法完全不同，报错里必须能分出来。
- */
-export function describeAgentRegistry(agents) {
-  if (!agents) return '宿主没有提供 agents 服务';
-  const count = (method) => {
-    try {
-      const list = typeof method === 'function' ? method.call(agents) : null;
-      return Array.isArray(list) ? list.length : -1;
-    } catch {
-      return -2;
-    }
-  };
-  return `roots=${count(agents.roots)} · list=${count(agents.list)}`;
-}
-
-/** 润色是一次 completion，不联网、不发子代理：给 3 分钟已经足够，超时说明路由卡住了。 */
+/** 润色是短任务：3 分钟够用，超时说明模型路由卡住了。 */
 export const DEFAULT_POLISH_TIMEOUT_MS = 3 * 60 * 1000;
-
-function textOf(result) {
-  if (typeof result === 'string') return result;
-  if (result && typeof result === 'object') {
-    if (typeof result.text === 'string') return result.text;
-    if (Array.isArray(result.blocks)) {
-      return result.blocks.map((b) => (b && b.type === 'text' ? String(b.text ?? '') : '')).join('');
-    }
-  }
-  return '';
-}
-
-/**
- * 子代理能不能用指定模型，是 provider 自己的能力，不是我们说了算。
- *
- * 宿主支持 `getProvider` 时先问一句：不支持就明确报错，而不是静默回退到父代理的模型
- * （那会让人以为换成了大模型，实际跑的还是默认那个）。老宿主没有这个查询方法时
- * 交给 `startActivation` 自己的能力校验去报，错误码是 UNSUPPORTED_CAPABILITY。
- */
-export function assertAgentModelOverride(service, provider) {
-  if (!service || typeof service.getProvider !== 'function') return;
-  const entry = service.getProvider(provider);
-  if (!entry) throw new Error(`子代理 provider「${provider}」没有注册，无法指定模型`);
-  if (!entry.capabilities?.agentOptions) {
-    throw new Error(
-      `子代理 provider「${provider}」不支持指定模型：把「写正文」的模型改成「跟随默认」，` +
-        `或把写作方式切到「只用手头证据」（不联网，走一次 completion，模型照样生效）`,
-    );
-  }
-}
-
-/** 宿主里 provider 名不止一个时，`spawn` 是默认的内置 provider，优先用它。 */
-export function pickProvider(providers) {
-  const list = Array.isArray(providers) ? providers.filter((p) => typeof p === 'string' && p) : [];
-  if (list.includes('spawn')) return 'spawn';
-  return list[0] ?? 'spawn';
-}
 
 /** 模型目录：`listProviders()` 与 `listModels()` 的形状由宿主决定，这里只做容忍式摊平。 */
 export async function listCatalog(llm) {
@@ -255,20 +156,26 @@ async function streamOnce(llm, route, { system, prompt, signal, maxTokens = 4096
 }
 
 export function createWriter({
-  getSubagents,
-  getAgents,
   getLlm,
   digestDir = '.hotspot',
   timeoutMs = DEFAULT_WRITER_TIMEOUT_MS,
   log = () => {},
 } = {}) {
   const dirOf = () => (typeof digestDir === 'function' ? digestDir() : digestDir);
-  /** 选择文件与产物都落在博客项目里的 digest 目录下：digestDir 可能是相对的，也可能已经是绝对路径。 */
+  /** 选择文件落在博客项目里的 digest 目录下：digestDir 可能是相对的，也可能已经是绝对路径。 */
   const absDirOf = (projectRoot) => {
     const dir = String(dirOf() || '.hotspot');
     return path.isAbsolute(dir) ? dir : path.join(projectRoot || '.', dir);
   };
 
+  /**
+   * 写正文：一次 completion，不联网、不起子代理。
+   *
+   * 素材来自磁盘上已经有的东西 —— 候选摘要 + 当天 raw 里的一手源原文 + 已登记的补料。
+   * 为什么不再走子代理：那条路要在 HTTP 路由里伪造一个「活着的父代理」才能被宿主接纳，
+   * 依赖宿主的 agents 注册表与 startActivation 的引用相等校验，宿主版本一变就断；
+   * 而它多出来的能力（联网搜几篇）现在由「生成前补齐补料」替代，代价是慢与不可控。
+   */
   return async function write({
     slug,
     store,
@@ -277,15 +184,18 @@ export function createWriter({
     signal: outerSignal,
     provider: wantedProvider,
     model: wantedModel,
-    mode: wantedMode,
   }) {
     const clean = String(slug ?? '').trim();
     if (!clean) throw new Error('缺少 slug');
     if (!target) throw new Error('还没有绑定博客项目根目录');
 
+    const llm = typeof getLlm === 'function' ? getLlm() : null;
+    if (!llm || typeof llm.stream !== 'function') {
+      throw new Error('宿主没有提供 llm 服务，无法生成正文');
+    }
+
     // 定位候选：优先读草稿里记下的 candidate.id（scaffold / registerSlug 会写），
-    // 找不到再退回 slugHint / 标题。以前只用 slugify(标题) === slug 反查，中文标题
-    // 或自定义 slug 都会 miss —— 于是提示词里连「这是哪条热点」都没有。
+    // 找不到再退回 slugHint / 标题。
     const drafts = typeof target.listDrafts === 'function' ? await target.listDrafts() : [];
     const draft = (Array.isArray(drafts) ? drafts : []).find((entry) => entry && entry.slug === clean) ?? null;
     const draftTitle = String(draft?.title ?? '');
@@ -309,151 +219,45 @@ export function createWriter({
     const title = brief.title || draftTitle || clean;
     const url = brief.url || brief.sources[0]?.url || '';
 
-    const stored = await readWriterConfig(absDirOf(projectRoot));
-    const configured = resolveWriterSelection(stored, 'writer');
+    const configured = resolveWriterSelection(await readWriterConfig(absDirOf(projectRoot)), 'writer');
     const selection = {
       provider: wantedProvider || configured.provider,
       model: wantedModel || configured.model,
     };
-    // 默认走子代理（能联网搜）；只有明确要「只用手头证据」时才走一次 completion。
-    const mode = wantedMode === 'direct' || wantedMode === 'agent' ? wantedMode : stored.mode;
 
+    const catalog = await listCatalog(llm);
+    const route = resolveRoute(catalog, selection);
+    if (!route) throw new Error('宿主没有可用的模型路由，请先在设置页里选一个模型');
+
+    const prompt = buildDirectPrompt({
+      title,
+      url,
+      summary: brief.summary,
+      tags: brief.tags,
+      sources: brief.sources,
+      supplements: supplements?.entries ?? [],
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`生成超时（${Math.round(timeoutMs / 1000)}s）`)),
+      timeoutMs,
+    );
+    const unlink = linkAbort(outerSignal, controller);
     let body = '';
-    let sources = [];
-    let route = { provider: selection.provider, model: selection.model };
-
-    if (mode === 'agent') {
-      const service = typeof getSubagents === 'function' ? getSubagents() : null;
-      if (!service) throw new Error('宿主没有提供 subagents 服务，无法生成正文');
-      // 子代理必须挂在一个活着的父代理下面，且宿主做的是引用相等校验
-      const agentsService = typeof getAgents === 'function' ? getAgents() : null;
-      const parent = pickParentAgent(agentsService);
-      if (!parent) {
-        throw new Error(
-          `找不到活着的会话代理，无法起子代理（${describeAgentRegistry(agentsService)}）：` +
-            '先在任意会话里发一条消息把 DSH 唤醒，再回来点一次；或者切到「只用手头证据」模式（不联网）',
-        );
-      }
-      const provider = selection.provider || pickProvider(typeof service.list === 'function' ? service.list() : []);
-      // 面板选了模型就把它带进子代理；provider 不支持覆盖时明说，不自作主张回退。
-      const agentOptions = selection.model ? { provider, model: selection.model } : null;
-      if (agentOptions) assertAgentModelOverride(service, provider);
-      route = { provider, model: agentOptions?.model ?? '' };
-
-      const artifact = writerArtifactPath(absDirOf(projectRoot), clean);
-      await mkdir(path.dirname(artifact), { recursive: true });
-      await rm(artifact, { force: true }).catch(() => {});
-
-      const prompt = buildWriterPrompt({
-        title,
-        url,
-        sources: item?.sources ?? [],
-        brief,
-        artifactPath: artifact,
+    try {
+      const text = await streamOnce(llm, route, {
+        system: '你是技术博客作者，只用给定材料写作，不编造事实。',
+        prompt,
+        signal: controller.signal,
       });
-
-      if (typeof service.startActivation !== 'function') {
-        throw new Error('宿主的 subagents 服务没有 startActivation，无法生成正文');
-      }
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error(`生成超时（${Math.round(timeoutMs / 1000)}s）`)), timeoutMs);
-      const unlink = linkAbort(outerSignal, controller);
-      let run;
-      let result;
-      try {
-        run = await service.startActivation({
-          provider,
-          label: 'hotspot-writer',
-          request: {
-            prompt: [{ type: 'text', text: prompt }],
-            parent,
-            ...(agentOptions ? { agentOptions } : {}),
-          },
-          signal: controller.signal,
-          delivery: 'caller',
-        });
-        result = await run.result;
-      } finally {
-        clearTimeout(timer);
-        unlink();
-        try {
-          await run?.dispose?.();
-        } catch {
-          /* 释放失败不影响已经拿到的结果 */
-        }
-      }
-      log(`子代理 ${provider} 完成：${textOf(result).slice(0, 80)}`);
-
-      let raw = null;
-      try {
-        raw = await readFile(artifact, 'utf8');
-      } catch {
-        raw = null;
-      }
-      if (raw === null) {
-        // 子代理没写文件时，退一步看它的回复里是不是直接给了 JSON。
-        raw = textOf(result);
-      }
-      const parsed = parseWriterArtifact(raw);
-      if (!parsed.ok) throw new Error(`子代理没有交出可用产物：${parsed.error}`);
-      body = parsed.body;
-      sources = parsed.sources;
-    } else {
-      const llm = typeof getLlm === 'function' ? getLlm() : null;
-      if (!llm || typeof llm.stream !== 'function') {
-        throw new Error('宿主没有提供 llm 服务，无法用选中的模型生成正文');
-      }
-      const catalog = await listCatalog(llm);
-      const resolved = resolveRoute(catalog, selection);
-      if (!resolved) throw new Error('宿主没有可用的模型路由，请先在面板里选一个模型');
-      route = resolved;
-
-      // 「只用手头证据」模式直接用素材包里的原文，不再是「只有标题 + 链接」
-      const prompt = buildDirectPrompt({
-        title,
-        url,
-        sources: brief.sources,
-        supplements: supplements?.entries ?? [],
-      });
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error(`生成超时（${Math.round(timeoutMs / 1000)}s）`)), timeoutMs);
-      const unlink = linkAbort(outerSignal, controller);
-      try {
-        const text = await streamOnce(llm, route, {
-          system: '你是技术博客作者，只用给定材料写作，不编造事实。',
-          prompt,
-          signal: controller.signal,
-        });
-        body = stripH1(String(text ?? '').trim());
-      } finally {
-        clearTimeout(timer);
-        unlink();
-      }
-      if (!body) throw new Error('模型没有返回正文');
-      log(`模型 ${route.provider}/${route.model} 完成：${body.slice(0, 80)}`);
+      body = stripH1(String(text ?? '').trim());
+    } finally {
+      clearTimeout(timer);
+      unlink();
     }
-
-    const registered = [];
-    const failed = [];
-    for (const source of sources) {
-      if (!source.content) {
-        failed.push({ url: source.url, reason: '没有原文，数字无法比对' });
-        continue;
-      }
-      try {
-        const added = await target.addSupplement(clean, {
-          url: source.url,
-          title: source.title,
-          content: source.content,
-          kind: 'web',
-        });
-        registered.push(added?.entry?.url ?? source.url);
-      } catch (error) {
-        failed.push({ url: source.url, reason: String(error?.message ?? error) });
-      }
-    }
+    if (!body) throw new Error('模型没有返回正文');
+    log(`模型 ${route.provider}/${route.model} 完成：${body.slice(0, 80)}`);
 
     const written = await target.writeBody(clean, body);
     return {
@@ -464,13 +268,12 @@ export function createWriter({
       briefChars: brief.chars,
       briefSources: brief.withContent,
       bodyChars: [...body].length,
-      sources: sources.length,
-      registered: registered.length,
-      registerFailed: failed,
-      mode,
+      mode: 'direct',
       provider: route.provider,
       model: route.model || '',
-      artifact: mode === 'agent' ? path.relative(projectRoot || '.', writerArtifactPath(absDirOf(projectRoot), clean)) : '',
+      sources: brief.sources.length,
+      registered: 0,
+      registerFailed: [],
     };
   };
 }

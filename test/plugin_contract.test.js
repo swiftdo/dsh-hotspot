@@ -58,12 +58,14 @@ test('带 projectRoot 的工具用运行时目录，而不是启动时的配置'
   assert.ok(!source.includes("articleDir: config.articleDir || 'docs'"));
 });
 
-test('模型能力接线：agent 模式能问 provider 并带上 agentOptions', () => {
+test('写正文不再走子代理：只保留一次 completion 的路径', () => {
   const generate = readFileSync('src/server/generate.js', 'utf8');
-  assert.ok(generate.includes('getProvider'), '要能问 provider 是否支持覆盖模型');
-  assert.ok(generate.includes('agentOptions'), '选中模型要通过 agentOptions 传给子代理');
-  assert.ok(generate.includes('不支持指定模型'), '不支持时明确报错，不静默回退');
-  assert.ok(source.includes('routes: {'), 'listModels/saveModels 要回两个用途解析后的路由');
+  assert.ok(!generate.includes('.startActivation('), '不该再调宿主的子代理');
+  assert.ok(!generate.includes('getSubagents'), '不该再依赖 subagents 服务');
+  assert.ok(!generate.includes('getAgents'), '不该再从 agents 注册表找父代理');
+  assert.ok(generate.includes('llm.stream') || generate.includes('streamOnce('), '走一次 completion');
+  assert.ok(source.includes('routes: {'), 'listModels/saveModels 仍要回两个用途解析后的路由');
+  assert.ok(!readFileSync('src/plugin.js', 'utf8').includes('getSubagents'), '插件也不再注入子代理依赖');
 });
 
 test('面板契约：生成草稿带 generate:true 并轮询 /api/jobs', () => {

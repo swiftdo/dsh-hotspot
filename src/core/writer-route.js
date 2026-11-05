@@ -134,6 +134,8 @@ export function resolveRoute(catalog, selection) {
 export function buildDirectPrompt({
   title,
   url = '',
+  summary = '',
+  tags = [],
   sources = [],
   supplements = [],
   minChars = 800,
@@ -144,6 +146,12 @@ export function buildDirectPrompt({
   lines.push('');
   lines.push(`选题：${String(title ?? '').trim()}`);
   if (url) lines.push(`一手源：${url}`);
+  // 候选摘要与标签是「这条热点是什么」的最短说明：只给它一条概括，
+  // 也比让模型从正文里猜快得多，而且能约束它别跑题。
+  const hint = String(summary ?? '').trim();
+  if (hint) lines.push(`摘要：${hint}`);
+  const tagList = (Array.isArray(tags) ? tags : []).filter(Boolean);
+  if (tagList.length > 0) lines.push(`标签：${tagList.join('、')}`);
   lines.push('');
   lines.push('材料（这些是唯一可用的事实来源）：');
   let index = 0;

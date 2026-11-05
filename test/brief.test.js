@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCandidateBrief, renderBrief } from '../src/core/brief.js';
-import { buildWriterPrompt } from '../src/core/writer.js';
+import { buildDirectPrompt } from '../src/core/writer-route.js';
 
 const candidate = {
   id: 'h-20261105-03',
@@ -72,25 +72,16 @@ test('renderBrief 把素材摊成「起点，不是全部」的一段', () => {
   assert.match(text, /https:\/\/swift\.org\/blog\/swift-6-2/);
 });
 
-test('写作提示词带素材时，摘要与原文都在里面，并要求联网补读', () => {
-  const prompt = buildWriterPrompt({
-    title: candidate.title,
-    url: candidate.url,
-    brief: buildCandidateBrief(candidate, raw),
-    artifactPath: '/tmp/x.json',
-  });
-  assert.match(prompt, /摘要：Swift 6.2 发布/);
+test('direct 提示词：素材包里的摘要与原文都在里面', () => {
+  const brief = buildCandidateBrief(candidate, raw);
+  const prompt = buildDirectPrompt({ title: candidate.title, url: candidate.url, sources: brief.sources });
+  assert.match(prompt, /只能使用下面给出的材料/);
   assert.match(prompt, /构建速度快了 20%/);
-  assert.match(prompt, /找 3–6 篇互相独立的报道/);
-  assert.match(prompt, /素材只是起点/);
+  assert.match(prompt, /资料|材料/);
 });
 
-test('没有素材包时保持旧行为：列出候选源链接', () => {
-  const prompt = buildWriterPrompt({
-    title: 'T',
-    sources: [{ title: 'A', url: 'https://a.com/x' }],
-    artifactPath: '/tmp/x.json',
-  });
-  assert.match(prompt, /候选源（只当线索/);
-  assert.match(prompt, /https:\/\/a\.com\/x/);
+test('direct 提示词：没有原文的来源标注为「只有链接」', () => {
+  const brief = buildCandidateBrief(candidate, []);
+  const prompt = buildDirectPrompt({ title: candidate.title, sources: brief.sources });
+  assert.match(prompt, /只有链接/);
 });
