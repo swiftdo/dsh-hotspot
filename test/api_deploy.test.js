@@ -294,3 +294,23 @@ test('部署：保存 build 不会抹掉已保存的 script（合并语义）', 
   const onDisk = JSON.parse(readFileSync(path.join(tempDir, 'dsh-hotspot.config.json'), 'utf8'));
   assert.deepEqual(onDisk.deploy, { script: './deploy.sh', build: 'yarn build' });
 });
+
+test('配置：改绑博客根目录时，配置写到新根而不是旧的 currentProjectRoot', async (t) => {
+  const { tempDir, blogDir } = setupBlog(t);
+  // 实例以 tempDir 为初始根，模拟「DSH 启动时绑的是旧目录」
+  const routes = createRoutes(makeDeps(tempDir));
+  const configRoute = routeOf(routes, 'config');
+
+  const saved = await callRoute(configRoute, 'POST', {
+    projectRoot: blogDir,
+    deploy: { build: 'yarn build', script: './deploy.sh' },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.json().value.projectRoot, blogDir);
+
+  // 关键断言：配置必须落在新根，否则重启后按新根读取会读不到（表现为「保存了但没生效」）
+  const onNewRoot = JSON.parse(readFileSync(path.join(blogDir, 'dsh-hotspot.config.json'), 'utf8'));
+  assert.equal(onNewRoot.projectRoot, blogDir);
+  assert.deepEqual(onNewRoot.deploy, { build: 'yarn build', script: './deploy.sh' });
+  assert.equal(existsSync(path.join(tempDir, 'dsh-hotspot.config.json')), false);
+});

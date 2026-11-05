@@ -319,6 +319,7 @@ git push origin HEAD
 }
 ```
 
+- **配置写在博客仓库里**：保存时写入 `<projectRoot>/dsh-hotspot.config.json`（该仓库若已有 `hotspot.config.json` 会同步一份），配置卡片底部显示实际路径；改绑根目录后写到新根，不再写回旧目录。服务端代码更新后需重启 DSH 宿主才生效——运行中的进程不会热加载插件模块。
 - `deploy.build` 可选，`deploy.script` 必填；面板按 **build → script** 顺序执行，**任一步失败即停**，不会带着构建失败的旧产物去上线。
 - 用**你的登录 shell**（`$SHELL` → `/bin/zsh` → `/bin/bash` → `/bin/sh`，以 `-l -c` 调用）执行，PATH 和终端里一致：从 Finder 启动的 GUI 也能找到 nvm 装的 `node`/`yarn` 与 `ssh-agent` 里的 key。原先用 `/bin/sh -c` 时终端能跑的脚本在面板里会 `command not found`，这是「部署没打通」最常见的原因。
 - **没配也能开始**：面板会只读探测博客根目录（`deploy.sh` / `scripts/deploy.sh` / `bin/deploy.sh`，以及 `package.json` 的 `scripts.build` 搭配 `pnpm-lock.yaml` / `yarn.lock`），在配置卡片里给出建议值，点「使用探测结果」填入表单，保存即生效。探测本身不写盘、不冒充已绑定。

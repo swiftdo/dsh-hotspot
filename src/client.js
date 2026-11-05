@@ -1755,6 +1755,7 @@ window.__ModuleLoader__.load({
       const savedDeployScript = state?.config?.deploy?.script || '';
       const savedDeployBuild = state?.config?.deploy?.build || '';
       const deployDetected = state?.config?.deploy?.detected || { script: '', build: '' };
+      const configFilePath = state?.config?.configFile || '';
       const deployHistory = state?.config?.deploy?.history || [];
       const lastDeploy = deployHistory[0] || null;
       const deployCodeStyle = {
@@ -2833,6 +2834,10 @@ window.__ModuleLoader__.load({
                   deployConfigured
                     ? `已保存：${savedDeployBuild ? `${savedDeployBuild} && ` : ''}${savedDeployScript}`
                     : '尚未绑定部署脚本'),
+                configFilePath && h('span', {
+                  className: 'hs-form-hint',
+                  style: { marginTop: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' }
+                }, `配置文件：${configFilePath}`),
                 (deployScript.trim() !== savedDeployScript || deployBuild.trim() !== savedDeployBuild)
                   && h('span', { style: { fontSize: 11, color: '#fbbf24' } }, '（表单已改动，保存后生效）')
               ]),

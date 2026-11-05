@@ -379,29 +379,51 @@ export function createRoutes(deps) {
   let currentRunScan = deps.runScan;
   let deployInProgress = false;
 
-  function getConfigFile() {
-    if (!currentProjectRoot) return '';
-    const dshCfg = path.join(currentProjectRoot, 'dsh-hotspot.config.json');
+  function configFileIn(root) {
+    if (!root) return '';
+    const dshCfg = path.join(root, 'dsh-hotspot.config.json');
     if (existsSync(dshCfg)) return dshCfg;
-    const legacyCfg = path.join(currentProjectRoot, 'hotspot.config.json');
+    const legacyCfg = path.join(root, 'hotspot.config.json');
     if (existsSync(legacyCfg)) return legacyCfg;
     return dshCfg;
   }
 
-  async function readConfig() {
+  function getConfigFile() {
+    if (!currentProjectRoot) return '';
+    return configFileIn(currentProjectRoot);
+  }
+
+  async function readConfigFile(file) {
     try {
-      const file = getConfigFile();
-      if (!file) return {};
+      if (!file || !existsSync(file)) return null;
       return JSON.parse(await readFile(file, 'utf8'));
     } catch {
-      return {};
+      return null;
     }
   }
 
+  // 读取时跟随「绑定根」：启动根（进程 cwd / 上次绑定的目录）里的配置只负责记录
+  // projectRoot；真正的配置以绑定根下的那份为准。这样「配置跟着博客项目走」，
+  // 面板里改过的东西不会因为宿主换个 cwd 启动就丢。
+  async function readConfig() {
+    if (!currentProjectRoot) return {};
+    const local = await readConfigFile(getConfigFile());
+    const boundRoot = local?.projectRoot ? path.resolve(local.projectRoot) : '';
+    if (boundRoot && boundRoot !== path.resolve(currentProjectRoot)) {
+      const followed = await readConfigFile(configFileIn(boundRoot));
+      if (followed) return followed;
+    }
+    return local ?? {};
+  }
+
+  // 配置写到「这次保存之后生效的根」：面板里改绑博客根目录时，config.projectRoot
+  // 已经是新值，而 currentProjectRoot 还是旧的，若按旧根写盘，配置会落在上一个项目里，
+  // 重启后按新根读取就变成「配置没保存」。
+  // 返回实际落盘路径，接口把它回给面板 —— 保存到底有没有写成功要能看见，不能静默。
   async function writeConfig(config) {
-    if (!currentProjectRoot) return;
-    const primary = path.join(currentProjectRoot, 'dsh-hotspot.config.json');
-    const legacy = path.join(currentProjectRoot, 'hotspot.config.json');
+    const targetRoot = config?.projectRoot || currentProjectRoot || process.cwd();
+    const primary = path.join(targetRoot, 'dsh-hotspot.config.json');
+    const legacy = path.join(targetRoot, 'hotspot.config.json');
     const payload = `${JSON.stringify(config, null, 2)}\n`;
     await writeFile(primary, payload, 'utf8');
     if (existsSync(legacy)) {
@@ -411,6 +433,7 @@ export function createRoutes(deps) {
         /* 忽略兼容写错误 */
       }
     }
+    return primary;
   }
 
   async function buildState() {
@@ -490,6 +513,8 @@ export function createRoutes(deps) {
           autoTiers: ['tier-1', 'tier-2'],
           ...(config.publish ?? {}),
         },
+        // 面板据此显示「配置保存到哪个文件」，避免用户保存后不知道写去了哪里。
+        configFile: configFileIn(activeProjectRoot || currentProjectRoot),
         // deploy.script 为空时面板不渲染「部署站点」按钮 —— 没绑定命令就不给入口。
         // detected 只是只读探测出来的建议值，面板可据此一键绑定。
         deploy: {
@@ -678,7 +703,10 @@ export function createRoutes(deps) {
           else delete config.deploy;
         }
 
-        await writeConfig(config);
+        const configFile = await writeConfig(config);
+        // 绑定根变了就立刻跟上：否则同一次请求里的后续读取仍指向旧根，
+        // 面板刷新出来的是「保存了但没生效」。
+        if (config.projectRoot) currentProjectRoot = path.resolve(config.projectRoot);
 
         // 4. 触发运行时刷新
         if (typeof deps.onConfigUpdated === 'function') {
@@ -703,6 +731,7 @@ export function createRoutes(deps) {
             rank: config.rank ?? {},
             publish: config.publish ?? {},
             deploy: describeDeploy(config, config.projectRoot || currentProjectRoot),
+            configFile,
           },
         });
       },
@@ -1148,6 +1177,14 @@ export function createRoutes(deps) {
         }
         const config = await readConfig();
         const deploy = describeDeploy(config, config.projectRoot || currentProjectRoot);
+        const rootRaw = config.projectRoot || currentProjectRoot;
+        const root = rootRaw ? path.resolve(rootRaw) : '';
+        const rootExists = Boolean(root) && existsSync(root);
+        if (rootRaw && !rootExists) {
+          const message = `博客项目根目录已失效：${root}，请重新绑定后再部署`;
+          sendJson(res, 400, { ok: false, code: 'ERR_NO_BLOG_ROOT', message, error: message });
+          return;
+        }
         const script = deploy.script;
         if (!script) {
           const detected = deploy.detected.script;
@@ -1162,9 +1199,7 @@ export function createRoutes(deps) {
           });
           return;
         }
-        const rootRaw = config.projectRoot || currentProjectRoot;
-        const root = rootRaw ? path.resolve(rootRaw) : '';
-        if (!root || !existsSync(root)) {
+        if (!rootExists) {
           sendJson(res, 400, {
             ok: false,
             code: 'ERR_NO_BLOG_ROOT',
