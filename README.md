@@ -1,0 +1,184 @@
+# hotspot
+
+热点采集 → 去重 → 确定性排序 → 草稿落地。给静态博客用，也做成 DeepSeek Harness 插件。
+
+零运行时依赖，纯 ESM JavaScript（Node ≥ 20.6）。`npm test` 用内置 `node:test`，不需要装任何东西。
+
+## 为什么不用模型打分
+
+排序是确定性的算术：
+
+```text
+score = 3.0 × log2(1 + 跨源数)
+      + 1.5 × 新鲜度(0..1, 半衰期 24h)
+      + 2.0 × 关键词命中(权重和, 封顶 1)
+      - 5.0 × 黑名单命中
+```
+
+理由有三条，都不是"省钱"：
+
+1. **可复现**。同一批数据跑两次结果一致，你能判断候选质量下降是源变差了还是算法抖了。
+2. **可解释**。每一条的分都拆进 `scoreParts`，digest 里能直接算给人看。
+3. **不引入新的故障模式**。模型排序会编造来源、抬高评分、把转载当首发；那些只能靠"候选集 URL 白名单"打补丁，而补丁本身就是新的耦合。
+
+`whyNow` / `angle` 这类判断留给"你拍板之后"——那时 agent 在会话里有完整上下文，比流水线里盲猜一遍准得多。
+
+## 架构：端口与适配器
+
+core 只认四个接口，不知道自己跑在 DSH 还是 CLI 里：
+
+| 端口 | 职责 | 适配器 |
+|---|---|---|
+| `Source` | 拉取条目 | rss / atom / github-release / hn |
+| `Ranker` | 排序 | 确定性公式 |
+| `Store` | 落盘 digest 与原文 | 文件系统 / 宿主 storage |
+| `Clock` | 当前时间 | 系统时钟 / 冻结时间（测试） |
+| `Target` | 项目知识与草稿落地 | VitePress / （可扩展 hexo、plain、outbox） |
+
+`src/core/` 里不出现 `ctx`、不出现 `article`、不出现 `sitemap`——那些词只准出现在 `src/adapters/target-vitepress.js`。
+
+## 快速开始
+
+```bash
+node src/cli.js init --root ~/Desktop/Code/blog/swiftdo.github.io
+# 编辑 hotspot.config.json 的 sources
+node src/cli.js run --dry-run          # 只看不落盘
+node src/cli.js run                    # 落 .hotspot/digest/YYYY-MM-DD.{json,md}
+node src/cli.js scaffold '#3'          # 生成 docs/draft/<slug>/index.md
+node src/cli.js check <slug>           # 三道机械校验
+node src/cli.js promote <slug>         # 转到 docs/article/，去掉 sitemap:false
+node src/cli.js publish <slug> --yes   # 校验 → 构建 → 提交 → 推送 → 上传
+```
+
+## 三道机械校验
+
+发布前必须全过，否则文章只能留在 `docs/draft/`：
+
+| 检查 | 拦什么 | 实现 |
+|---|---|---|
+| 数字字面比对 | 把 `24.9` 写成 `24.10`、把版本号记错 | 文章里的 `\d+(\.\d+)+` 必须在一手源原文里出现过 |
+| 站内链接集合 | 死链 | 扫 `docs/**/index.md` 建 URL 集合，逐个命中 |
+| 外链白名单 | 编造来源 | 必须来自候选源，或配置里登记的域名 |
+
+外加 frontmatter 规则：description ≤ 120 字、不写 `permalink`、date 格式、tag 必须来自受控词表（词表从存量文章归纳，同一 tag 的多种写法按小写归并）。
+
+一手源原文单独存 `.hotspot/raw/<date>.json`，不放进 digest——digest 要瘦，数字校验要全。
+
+## 自动发布：三档，默认只开第一档
+
+| 档位 | 产物 | 判定 |
+|---|---|---|
+| `auto` | `docs/article/` 直接进列表 | 一手 release 类，白名单源，版本号跨源一致 |
+| `draft` | `docs/draft/`，带 `sitemap:false` | 默认档 |
+| `manual` | 只进 digest | 传闻、冲突、黑名单命中 |
+
+`publish.autoTiers` 默认为空数组。要开自动直发就往里加源类型，不要改代码。
+
+### publish 为什么不直接跑 ./deploy.sh
+
+`deploy.sh` 第 113 行是 `git add -A`。自动发布时工作区通常有你的半成品——一个 `add -A` 就把它们全提交并发上线了。所以顺序是：
+
+```bash
+yarn build                          # 死链检查在这里拦第一道
+git add docs/article/<slug>         # 只 add 这一篇
+git commit -m "post(auto): <slug>"
+git push origin HEAD
+./deploy.sh --no-git --skip-build   # 跳过 add -A 与重复构建，仍走产物校验
+```
+
+`--skip-build` 只跳过构建，产物校验（index.html、文件数 ≥ 200、sitemap ≥ 100 条）照常执行。
+
+## DSH 插件
+
+`src/plugin.js` 是薄壳：把 core 的端口接上 `ctx`，然后就没它的事了。
+
+**已在真实运行时验证**（DeepSeek Harness 0.2.1-rc.5，`dsh web --port 0`）：apply 执行、`tools` 服务就绪、三个工具注册成功。
+
+接口是从已安装插件的源码里读出来的，不是猜的：
+
+```js
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+export function apply(ctx, config) {            // 具名导出，不用 export default
+  ctx.inject(['tools'], (sctx) => {
+    sctx.effect(() => {
+      const dispose = sctx.tools.register(defineTool({
+        name: 'hotspot_run',
+        description: '...',
+        parameters: { limit: { type: 'number', description: '...' } },  // 扁平 map，不是 JSON Schema
+        output: {
+          schema: { type: 'object', additionalProperties: false, properties: {...} },
+          render(_args, value) { return [{ type: 'text', text: '...' }] },  // 必须返回 ContentBlock[]
+        },
+        async execute(args) { return {...} },
+      }))
+      return () => dispose?.()
+    })
+  })
+}
+```
+
+两个踩过的坑，写在这里免得再踩：
+
+1. **`output.render` 必须返回 `ContentBlock[]`**。返回裸字符串不会立刻报错，而是在 `tools/post-execute` 阶段把下游消费者（如 hooks）打崩。
+2. **`output.schema` 不支持 `required: [...]`**。DSH 用的是自有 value schema DSL，写了会抛 `unsupported JSON schema: schema.required is not supported`，而 Cordis 会把 `inject` 回调里的异常静默掉——表现是"插件加载了但工具不存在"。所以 `plugin.js` 里注册块被 try/catch 包住并显式 `console.warn`，这个包装不要拆。
+
+刻意没做的：**不注册 `/slash` 命令、不注册定时任务**。前者要猜命令 outcome 的契约；后者宿主已有「自动化任务」，让它定时调 `hotspot_run` 就行。少两处耦合，就少两处随 DSH 版本失效的地方。
+
+### 安装
+
+```bash
+# 官方入口（走 pnpm，会写 profile 的 dependencies）
+dsh plugin --profile desktop add /Users/laijihua/Desktop/Code/hotspot
+
+# 然后把 hotspot 加进 profile 的 dsh.profile.bundles
+#   ~/.dsh/profiles/desktop/package.json
+```
+
+`cordis.patch.yml` 会作为一层 patch 自动应用（见 `package.json` 的 `dsh.bundle.patch`），里面的 `config` 就是配置面，改它不用改代码。
+
+验证加载是否成功：`cordis.patch.yml` 里把 `verbose` 设为 `true`，启动后应看到
+
+```text
+[hotspot] hotspot: 插件已加载，projectRoot=...
+[hotspot] tools 服务就绪=true
+[hotspot] 已注册 3 个工具：hotspot_run / hotspot_get / hotspot_scaffold
+```
+
+## 管理界面
+
+插件启动后会在 DSH 的 web server 上挂一组路由，打开：
+
+```text
+<你的 DSH 地址>/hotspot/
+```
+
+四个页签：
+
+| 页签 | 能做什么 |
+|---|---|
+| 源 | 增删 RSS / GitHub releases / HN 三种源，保存即写回 `hotspot.config.json` |
+| 候选 | 看当日候选、分数、多个来源的原文摘要，一键生成草稿 |
+| 内容 | 草稿（`docs/draft/`）与已发布文章（`docs/article/`）列表 |
+| 设置 | 候选上限、时间窗、半衰期、去重阈值、外链白名单；画像 tag 与关键词只读展示 |
+
+接口都在 `/hotspot/api/` 下，普通 Node http handler，可直接 curl：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/hotspot/api/state` | 一次返回 sources / config / articles / drafts / 最新 digest |
+| POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
+| POST | `/hotspot/api/config` | 局部更新 rank / publish |
+| POST | `/hotspot/api/run` | 触发一次抓取 |
+| POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿 |
+
+**为什么不做 React 客户端插件**：`dsh.client` 需要引入客户端构建链，还要绑定预发布期的客户端 UI API。这几个页面都是表格和表单，单个零依赖 HTML 足够；省下的是一整条会随 DSH 版本失效的耦合。
+
+**安全**：插件路由不走平台鉴权（`webServer.register` 的语义如此），所以自己守一道——只接受 loopback 来源、拒绝 `sec-fetch-site: cross-site`、`origin` 与 `host` 必须同源。这三条对应 `src/server/api.js` 的 `isAllowed()`。
+
+## 已知限制
+
+- **`github-release` 源走 releases.atom**，不需要 token。本地网络若访问不了 github.com，该源会失败并在 digest 状态行里列出来——单源失败不影响其他源。
+- **跨源共现信号要有重叠才生效**。如果几个源各覆盖一块不重叠的领域（比如 HN + 一个官方博客），所有条目 `sourceCount` 都是 1，共现项退化成常数，排序实际由新鲜度和关键词决定。想让这个信号有意义，得让多个源覆盖同一领域。
+- **中文标题不生成拼音 slug**，`slugHint` 可能为空，`scaffold` 会要求显式 `--slug`。这是刻意的：拼音目录名后面还得手工重命名。
+- **digest 不进版本库**（`.hotspot/` 已 gitignore）。它是过程产物；真正要留痕的判断应该写进文章或 commit message。

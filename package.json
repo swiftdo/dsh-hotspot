@@ -1,0 +1,44 @@
+{
+  "name": "hotspot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "热点采集、去重、确定性排序与草稿落地；同时是 DeepSeek Harness 插件",
+  "main": "./src/plugin.js",
+  "exports": {
+    ".": "./src/plugin.js",
+    "./core": "./src/core/pipeline.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "bin": {
+    "hotspot": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=20.6"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    },
+    "engines": {
+      "dsh": ">=0.2.0-rc.1"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "run": "node src/cli.js run"
+  }
+}

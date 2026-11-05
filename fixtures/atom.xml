@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="zh-CN">
+  <title>Release notes from deepseek-harness</title>
+  <entry>
+    <id>tag:github.com,2008:Repository/1/dsh-v0.2.2-rc.1</id>
+    <updated>2026-11-04T13:07:00Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1"/>
+    <title>dsh-v0.2.2-rc.1</title>
+    <content type="html">&lt;p&gt;Node.js 最低 24.9；SSH 协议从 2 升为 3；pi-ai 升至 1.3.0&lt;/p&gt;</content>
+  </entry>
+</feed>

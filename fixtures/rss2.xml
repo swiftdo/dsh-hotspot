@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <item>
+      <title><![CDATA[OpenAI 发布 Images 2.6，出图快 50%]]></title>
+      <link>https://example.com/openai-images-2-6?utm_source=rss&amp;utm_medium=feed</link>
+      <pubDate>Wed, 04 Nov 2026 13:07:00 GMT</pubDate>
+      <description><![CDATA[<p>新模型 <b>gpt-image-2.6-flare</b> 最快约 6 秒出图</p>]]></description>
+    </item>
+    <item>
+      <title>DeepSeek Harness 0.2.2-rc.1</title>
+      <link>https://example.com/dsh-022</link>
+      <pubDate>Wed, 04 Nov 2026 05:07:00 GMT</pubDate>
+      <description>Node.js 最低版本提高到 24.9</description>
+    </item>
+  </channel>
+</rss>

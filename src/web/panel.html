@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hotspot 管理</title>
+<style>
+  :root {
+    --bg: #15161a;
+    --panel: #1c1d23;
+    --panel-2: #22232a;
+    --line: #2e3038;
+    --text: #e8e8ea;
+    --muted: #9b9ca6;
+    --accent: #4db6a0;
+    --warn: #e0a34a;
+    --danger: #d9636b;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.6 system-ui, -apple-system, "PingFang SC", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 14px; font-weight: 500; margin: 0; }
+  header .path { color: var(--muted); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0d1a17; border-color: transparent; font-weight: 500; }
+  button.ghost { background: transparent; }
+  button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; }
+  nav button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
+  nav button.on { background: var(--panel); border-color: var(--line); border-bottom-color: var(--panel); }
+  main { padding: 16px 20px 48px; max-width: 1080px; }
+  section { display: none; }
+  section.on { display: block; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-bottom: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 400; font-size: 12px; }
+  input, select {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .item { border-bottom: 1px solid var(--line); padding: 10px 0; }
+  .item:last-child { border-bottom: 0; }
+  .item .title { font-weight: 500; }
+  .item .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .score { font-variant-numeric: tabular-nums; color: var(--accent); }
+  .tag { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
+  details { margin-top: 6px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--panel-2); padding: 10px; border-radius: 6px; font-size: 12px; max-height: 260px; overflow: auto; }
+  .toast {
+    position: fixed; right: 20px; bottom: 20px; max-width: 420px;
+    background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 10px 14px; display: none;
+  }
+  .toast.err { border-left-color: var(--danger); }
+</style>
+</head>
+<body>
+<header>
+  <h1>hotspot</h1>
+  <span class="path" id="projectPath"></span>
+  <button class="ghost" id="reload">刷新</button>
+  <button class="primary" id="run">立即抓取</button>
+</header>
+
+<nav>
+  <button data-tab="sources" class="on">源</button>
+  <button data-tab="items">候选</button>
+  <button data-tab="content">内容</button>
+  <button data-tab="config">设置</button>
+</nav>
+
+<main>
+  <section id="sources" class="on">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <strong style="font-weight:500">新增源</strong>
+        <span class="muted">kind 决定要填哪些字段</span>
+      </div>
+      <div class="grid">
+        <input id="newId" placeholder="id（小写-连字符）">
+        <select id="newKind">
+          <option value="rss">rss</option>
+          <option value="github-release">github-release</option>
+          <option value="hn">hn</option>
+        </select>
+        <input id="newTarget" placeholder="url 或 owner/repo">
+        <input id="newPoints" type="number" placeholder="minPoints（仅 hn）" value="100">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="addSource">添加</button>
+        <span class="muted" id="sourceHint"></span>
+      </div>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th style="width:150px">id</th><th style="width:130px">kind</th><th>目标</th><th style="width:70px"></th></tr></thead>
+        <tbody id="sourceRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="items">
+    <div class="card" id="digestMeta"></div>
+    <div class="card" id="itemList"></div>
+  </section>
+
+  <section id="content">
+    <div class="card">
+      <strong style="font-weight:500">草稿（docs/draft）</strong>
+      <div id="draftList" class="muted" style="margin-top:8px">—</div>
+    </div>
+    <div class="card">
+      <strong style="font-weight:500">已发布（docs/article）</strong>
+      <div id="articleList" class="muted" style="margin-top:8px">—</div>
+    </div>
+  </section>
+
+  <section id="config">
+    <div class="card">
+      <div class="grid">
+        <label>候选上限<input id="cfgLimit" type="number"></label>
+        <label>时间窗（小时）<input id="cfgSince" type="number"></label>
+        <label>半衰期（小时）<input id="cfgHalf" type="number"></label>
+        <label>去重阈值<input id="cfgThreshold" type="number" step="0.05" min="0.3" max="0.95"></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input id="cfgHosts" placeholder="外链白名单域名，逗号分隔" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="saveConfig">保存设置</button>
+        <span class="muted" id="configHint"></span>
+      </div>
+    </div>
+    <div class="card">
+      <strong style="font-weight:500">选题画像</strong>
+      <div class="muted" style="margin-top:6px">受控 tag 词表</div>
+      <div id="tagCloud" style="margin-top:6px"></div>
+      <div class="muted" style="margin-top:10px">关键词</div>
+      <div id="keywordCloud" style="margin-top:6px"></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/hotspot/api';
+let state = null;
+let sources = [];
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function toast(message, isError) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'toast' + (isError ? ' err' : '');
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.display = 'none'; }, 4200);
+}
+
+async function api(path, options) {
+  const response = await fetch(API + path, {
+    headers: { 'content-type': 'application/json' },
+    ...options,
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) throw new Error(payload.message || ('HTTP ' + response.status));
+  return payload.value;
+}
+
+function sourceTarget(source) {
+  if (source.kind === 'github-release') return source.repo || '';
+  if (source.kind === 'hn') return 'points > ' + (source.minPoints ?? 100);
+  return source.url || '';
+}
+
+function renderSources() {
+  const rows = sources.map((source, index) => {
+    return '<tr>' +
+      '<td><code>' + esc(source.id) + '</code></td>' +
+      '<td>' + esc(source.kind) + '</td>' +
+      '<td class="muted" style="word-break:break-all">' + esc(sourceTarget(source)) + '</td>' +
+      '<td><button class="ghost danger" data-del="' + index + '">删除</button></td>' +
+      '</tr>';
+  }).join('');
+  $('sourceRows').innerHTML = rows || '<tr><td colspan="4" class="muted">还没有源，先添加一个</td></tr>';
+  $('sourceRows').querySelectorAll('[data-del]').forEach((button) => {
+    button.onclick = async () => {
+      sources.splice(Number(button.dataset.del), 1);
+      await saveSources();
+    };
+  });
+}
+
+async function saveSources() {
+  try {
+    const value = await api('/sources', { method: 'POST', body: JSON.stringify({ sources }) });
+    sources = value.sources;
+    renderSources();
+    toast('已保存 ' + sources.length + ' 个源');
+  } catch (error) {
+    toast(error.message, true);
+    await load();
+  }
+}
+
+function renderItems() {
+  const digest = state.digest;
+  if (!digest) {
+    $('digestMeta').innerHTML = '<span class="muted">还没有 digest，点右上角「立即抓取」跑一次。</span>';
+    $('itemList').innerHTML = '';
+    return;
+  }
+  const s = digest.status;
+  const health = s.degraded ? '严重降级' : (s.feedsOk === s.feedsTotal ? '正常' : '部分降级');
+  $('digestMeta').innerHTML =
+    '<div class="row"><strong style="font-weight:500">' + esc(digest.date) + '</strong>' +
+    '<span class="muted">抓取 ' + s.feedsOk + '/' + s.feedsTotal + ' 源 · 原始 ' + s.itemsRaw +
+    ' 条 · 去重后 ' + s.itemsDeduped + ' 条 · 候选 ' + s.candidates + ' 条 · ' + health + '</span></div>' +
+    (s.failedSources.length ? '<div class="muted" style="margin-top:6px">失败：' + esc(s.failedSources.join('、')) + '</div>' : '');
+
+  $('itemList').innerHTML = digest.items.map((item) => {
+    const tags = item.tags.map((t) => '<span class="tag">' + esc(t) + '</span>').join('');
+    const sources = (item.sources || []).map((src) =>
+      '<div class="meta">· ' + esc(src.source) + ' — <a href="' + esc(src.url) + '" target="_blank" rel="noreferrer" style="color:var(--muted)">' + esc(src.title).slice(0, 90) + '</a></div>'
+    ).join('');
+    return '<div class="item">' +
+      '<div class="row"><span class="score">' + item.score.toFixed(1) + '</span>' +
+      '<span class="title" style="flex:1">' + esc(item.title) + '</span>' +
+      '<button class="ghost" data-scaffold="' + esc(item.id) + '">生成草稿</button></div>' +
+      '<div class="meta">' + tags + item.sourceCount + ' 个源 · ' + esc(item.id) + '</div>' +
+      '<details><summary>查看来源与摘要</summary>' + sources +
+      '<pre>' + esc(item.summary || '（无摘要）') + '</pre></details>' +
+      '</div>';
+  }).join('') || '<span class="muted">今天没有候选</span>';
+
+  $('itemList').querySelectorAll('[data-scaffold]').forEach((button) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const value = await api('/scaffold', { method: 'POST', body: JSON.stringify({ id: button.dataset.scaffold }) });
+        toast('草稿已生成：' + value.file);
+        await load();
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    };
+  });
+}
+
+function renderContent() {
+  $('draftList').innerHTML = state.drafts.length
+    ? state.drafts.map((d) => '<div class="item"><div class="title">' + esc(d.title) + '</div><div class="meta">' + esc(d.file) + ' · ' + esc(d.date) + '</div></div>').join('')
+    : '没有草稿';
+
+  $('articleList').innerHTML = state.articles.length
+    ? state.articles.map((a) => '<div class="item"><div class="title">' + esc(a.title) + '</div><div class="meta"><a href="/' + 'article/' + esc(a.slug) + '/" target="_blank" style="color:var(--muted)">/article/' + esc(a.slug) + '/</a>' +
+      (a.tags.length ? ' · ' + a.tags.map(esc).join(' / ') : '') + '</div></div>').join('')
+    : '还没有文章';
+}
+
+function renderConfig() {
+  const rank = state.config.rank || {};
+  $('cfgLimit').value = rank.limit ?? 15;
+  $('cfgSince').value = rank.sinceHours ?? 36;
+  $('cfgHalf').value = rank.halfLifeHours ?? 24;
+  $('cfgThreshold').value = rank.clusterThreshold ?? 0.6;
+  $('cfgHosts').value = (state.config.publish?.allowedHosts || []).join(', ');
+
+  $('tagCloud').innerHTML = state.profile.tags.map((t) => '<span class="tag">' + esc(t) + '</span>').join('') || '<span class="muted">—</span>';
+  $('keywordCloud').innerHTML = state.profile.keywords.map((t) => '<span class="tag">' + esc(t) + '</span>').join('') || '<span class="muted">—</span>';
+}
+
+async function load() {
+  try {
+    state = await api('/state');
+    sources = state.config.sources.slice();
+    $('projectPath').textContent = state.projectRoot;
+    renderSources();
+    renderItems();
+    renderContent();
+    renderConfig();
+  } catch (error) {
+    toast('加载失败：' + error.message, true);
+  }
+}
+
+document.querySelectorAll('nav button').forEach((button) => {
+  button.onclick = () => {
+    document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b === button));
+    document.querySelectorAll('section').forEach((s) => s.classList.toggle('on', s.id === button.dataset.tab));
+  };
+});
+
+$('reload').onclick = load;
+
+$('run').onclick = async () => {
+  const button = $('run');
+  button.disabled = true;
+  button.textContent = '抓取中…';
+  try {
+    const value = await api('/run', { method: 'POST', body: '{}' });
+    toast('抓取完成：' + value.status.feedsOk + '/' + value.status.feedsTotal + ' 源，候选 ' + value.status.candidates + ' 条');
+    await load();
+    document.querySelector('nav button[data-tab="items"]').click();
+  } catch (error) {
+    toast('抓取失败：' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '立即抓取';
+  }
+};
+
+$('addSource').onclick = async () => {
+  const kind = $('newKind').value;
+  const source = { id: $('newId').value.trim(), kind };
+  if (kind === 'github-release') source.repo = $('newTarget').value.trim();
+  else if (kind === 'hn') source.minPoints = Number($('newPoints').value) || 100;
+  else source.url = $('newTarget').value.trim();
+
+  if (!source.id) return toast('先填 id', true);
+  sources.push(source);
+  await saveSources();
+  $('newId').value = '';
+  $('newTarget').value = '';
+};
+
+$('saveConfig').onclick = async () => {
+  try {
+    await api('/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        rank: {
+          limit: Number($('cfgLimit').value),
+          sinceHours: Number($('cfgSince').value),
+          halfLifeHours: Number($('cfgHalf').value),
+          clusterThreshold: Number($('cfgThreshold').value),
+        },
+        publish: {
+          allowedHosts: $('cfgHosts').value.split(',').map((s) => s.trim()).filter(Boolean),
+        },
+      }),
+    });
+    toast('设置已保存');
+    await load();
+  } catch (error) {
+    toast(error.message, true);
+  }
+};
+
+load();
+</script>
+</body>
+</html>

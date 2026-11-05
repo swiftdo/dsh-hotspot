@@ -1,0 +1,16 @@
+# hotspot — 把 RSS / release 热点变成博客草稿
+#
+# 这个文件由 dsh 在 profile 组装时作为一层 patch 应用（见 package.json 的 dsh.bundle.patch）。
+# config 就是插件的配置面：改这里，不需要改代码。
+#
+# projectRoot 指向**你自己的**博客仓库（含 docs/ 的那个），克隆后必须改。
+# 路径不存在时会退回进程 cwd 并打一条告警，不会静默变成"零个源"。
+# articleDir / draftDir 省略时用默认值 docs/article 与 docs/draft。
+- insert:
+    - id: hotspot
+      name: hotspot
+      config:
+        projectRoot: /Users/laijihua/Desktop/Code/blog/swiftdo.github.io
+        digestDir: .hotspot
+        limit: 15
+        verbose: false # 排查加载问题时改 true，会往宿主 stdout 打印加载信息
