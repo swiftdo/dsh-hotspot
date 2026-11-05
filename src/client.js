@@ -48,7 +48,8 @@ window.__ModuleLoader__.load({
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 16px;
+        gap: 12px 16px;
+        flex-wrap: wrap;
         padding: 12px 24px;
         background: var(--dsw-alias-bg-base, #131418);
         border-bottom: 1px solid var(--dsw-alias-border-l1, #282a32);
@@ -59,8 +60,14 @@ window.__ModuleLoader__.load({
         display: flex;
         align-items: center;
         gap: 14px;
+        min-width: 0;
+      }
+      .hs-header-actions {
+        margin-left: auto;
       }
       .hs-back-btn {
+        white-space: nowrap;
+        flex-shrink: 0;
         display: inline-flex;
         align-items: center;
         gap: 6px;
@@ -123,6 +130,10 @@ window.__ModuleLoader__.load({
         display: flex;
         align-items: center;
         gap: 6px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .hs-status-dot {
         display: inline-block;
@@ -144,6 +155,7 @@ window.__ModuleLoader__.load({
 
       /* ── 统一按钮规范（带 160ms 物理按压反馈与平滑过渡） ── */
       .hs-btn {
+        white-space: nowrap;
         font-family: inherit;
         font-size: 12px;
         font-weight: 500;
@@ -368,80 +380,299 @@ window.__ModuleLoader__.load({
         margin-top: 2px;
       }
 
-      /* ── 候选项目卡片 (Candidate Item) ── */
-      /* ── 候选页顶部概览（今日状态 + RSS 订阅） ── */
-      .hs-overview {
-        background: var(--dsw-alias-bg-layer-1, #181920);
-        border: 1px solid var(--dsw-alias-border-l1, #282a34);
-        border-radius: 10px;
-        padding: 14px 16px;
-        margin-bottom: 14px;
-      }
-      .hs-overview-top {
+      /* ── 今日状态条：一行说清「今天有几条、什么时候抓的」 ── */
+      .hs-today {
         display: flex;
         align-items: center;
         gap: 10px;
         flex-wrap: wrap;
+        padding: 0 2px 14px;
       }
-      .hs-overview-date {
+      .hs-today-count {
         font-size: 15px;
         font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--dsw-alias-label-primary, #f2f3f5);
         font-variant-numeric: tabular-nums;
       }
-      .hs-status-pill {
-        font-size: 11px;
+      .hs-today-src {
+        font-size: 11.5px;
+        color: #8c909e;
         padding: 1px 8px;
         border-radius: 999px;
-        border: 1px solid currentColor;
-        opacity: 0.9;
-      }
-      .hs-overview-stats {
-        display: flex;
-        gap: 22px;
-        flex-wrap: wrap;
-        margin-top: 10px;
-      }
-      .hs-mini-stat b {
-        display: block;
-        font-size: 17px;
-        font-weight: 600;
-        line-height: 1.2;
-        font-variant-numeric: tabular-nums;
-      }
-      .hs-mini-stat span {
-        font-size: 11px;
-        color: var(--dsw-alias-label-secondary, #8c909e);
-      }
-      .hs-rss-bar {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px dashed var(--dsw-alias-border-l1, #2c2f3a);
-      }
-      .hs-rss-url {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11.5px;
-        color: var(--dsw-alias-brand-primary, #4db6a0);
-        background: var(--dsw-alias-bg-layer-2, #21232d);
-        border: 1px solid var(--dsw-alias-border-l1, #2c2f3a);
-        border-radius: 5px;
-        padding: 3px 8px;
-        max-width: 100%;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        max-width: 320px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .hs-rss-note {
-        font-size: 11px;
-        line-height: 1.6;
+      .hs-today-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11.5px;
         color: var(--dsw-alias-label-secondary, #8c909e);
-        margin-top: 6px;
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #34d399;
+        box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.12);
+        flex-shrink: 0;
+      }
+      .hs-dot.warn {
+        background: #f59e0b;
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+      }
+      .hs-dot.bad {
+        background: #f87171;
+        box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.12);
+      }
+      .hs-detail-panel {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+        gap: 12px 20px;
+        max-width: 640px;
+        padding: 14px 16px;
+        margin: 0 0 16px;
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 10px;
+      }
+      .hs-detail-item b {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 1.2;
+        color: var(--dsw-alias-label-primary, #ececf1);
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-detail-item span {
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
+
+      /* ── 工具条：搜索 + 分段筛选 ── */
+      .hs-tools {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .hs-search {
+        position: relative;
+        display: flex;
+        flex: 1 1 220px;
+      }
+      .hs-search input {
+        width: 100%;
+        padding-left: 32px;
+        padding-right: 28px;
+      }
+      .hs-search .hs-search-icon {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        pointer-events: none;
+      }
+      .hs-search .hs-search-clear {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        cursor: pointer;
+        padding: 0;
+      }
+      .hs-search .hs-search-clear:hover {
+        background: var(--dsw-alias-bg-layer-2, #272a35);
+        color: var(--dsw-alias-label-primary, #ececf1);
+      }
+      .hs-seg {
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 8px;
+      }
+      .hs-seg button {
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 4px 10px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--dsw-alias-label-secondary, #9195a4);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        transition: background-color 140ms var(--hs-ease-out), color 140ms var(--hs-ease-out);
+      }
+      .hs-seg button:hover {
+        color: var(--dsw-alias-label-primary, #ececf1);
+      }
+      .hs-seg button.on {
+        background: rgba(77, 182, 160, 0.14);
+        color: #6fd6c0;
+        box-shadow: inset 0 0 0 1px rgba(77, 182, 160, 0.28);
+      }
+      .hs-seg button b {
+        font-size: 11px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        opacity: 0.7;
+      }
+
+      /* ── 候选列表：一条一条排，不做 15 张浮动卡片 ── */
+      .hs-list {
+        background: var(--dsw-alias-bg-layer-1, #181920);
+        border: 1px solid var(--dsw-alias-border-l1, #282a34);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .hs-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 13px 15px 13px 10px;
+        transition: background-color 140ms var(--hs-ease-out);
+      }
+      .hs-row + .hs-row {
+        border-top: 1px solid var(--dsw-alias-border-l1, #282a34);
+      }
+      .hs-row:hover {
+        background: rgba(255, 255, 255, 0.022);
+      }
+      .hs-row-rank {
+        flex-shrink: 0;
+        width: 24px;
+        padding-top: 2px;
+        text-align: right;
+        font-size: 12px;
+        font-weight: 500;
+        color: #6b7080;
+        font-variant-numeric: tabular-nums;
+      }
+      .hs-row.top .hs-row-rank {
+        color: var(--dsw-alias-brand-primary, #4db6a0);
+        font-weight: 700;
+      }
+      .hs-row-main {
+        flex: 1;
+        min-width: 0;
+      }
+      .hs-row-title {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.45;
+        color: var(--dsw-alias-label-primary, #ececf1);
+        text-decoration: none;
+        transition: color 140ms var(--hs-ease-out);
+      }
+      .hs-row-title:hover {
+        color: var(--dsw-alias-brand-primary, #4db6a0);
+      }
+      .hs-row-summary {
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .hs-row-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 7px;
+        font-size: 11.5px;
+        color: #7d8291;
+      }
+      .hs-badge-multi {
+        font-size: 10.5px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        color: #7fdcc9;
+        background: rgba(77, 182, 160, 0.12);
+        border: 1px solid rgba(77, 182, 160, 0.28);
+        white-space: nowrap;
+      }
+      .hs-row-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        padding-top: 1px;
+      }
+      /* 动作按钮平时压到很低的存在感：列表扫读时不该被 15 个按钮打断。 */
+      .hs-row-btn {
+        padding: 5px 12px;
+        font-size: 12px;
+        opacity: 0.4;
+        transition: opacity 140ms var(--hs-ease-out), background-color 140ms var(--hs-ease-out), border-color 140ms var(--hs-ease-out), color 140ms var(--hs-ease-out);
+      }
+      .hs-row:hover .hs-row-btn,
+      .hs-row-btn:focus-visible {
+        opacity: 1;
+      }
+      .hs-row:hover .hs-row-btn {
+        background: rgba(77, 182, 160, 0.12);
+        border-color: rgba(77, 182, 160, 0.4);
+        color: #7fdcc9;
+      }
+      @media (hover: none) {
+        .hs-row-btn { opacity: 0.85; }
+      }
+
+      /* ── 今日订阅文章（原样保留原始条目，轻量呈现） ── */
+      .hs-rss-url {
+        display: block;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+        background: var(--dsw-alias-bg-base, #131418);
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        border-radius: 7px;
+        padding: 8px 10px;
+        overflow-x: auto;
+        white-space: nowrap;
       }
       .hs-feed-row:hover {
         background: rgba(255, 255, 255, 0.02);
+      }
+      .hs-feed-sum {
+        margin-top: 3px;
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
       }
       .hs-feed-summary {
         display: -webkit-box;
@@ -450,65 +681,6 @@ window.__ModuleLoader__.load({
         overflow: hidden;
         font-size: 11.5px;
         color: var(--dsw-alias-label-secondary, #8c909e);
-      }
-      .hs-candidate-card {
-        background: var(--dsw-alias-bg-layer-1, #181920);
-        border: 1px solid var(--dsw-alias-border-l1, #282a34);
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 12px;
-        transition: transform 160ms var(--hs-ease-out), border-color 160ms var(--hs-ease-out), box-shadow 160ms var(--hs-ease-out);
-        display: flex;
-        gap: 16px;
-        align-items: flex-start;
-      }
-      .hs-candidate-card:hover {
-        border-color: rgba(77, 182, 160, 0.35);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-      }
-      .hs-score-box {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        min-width: 58px;
-        padding: 8px 6px;
-        background: rgba(77, 182, 160, 0.08);
-        border: 1px solid rgba(77, 182, 160, 0.22);
-        border-radius: 8px;
-        flex-shrink: 0;
-      }
-      .hs-score-value {
-        font-size: 17px;
-        font-weight: 700;
-        color: var(--dsw-alias-brand-primary, #4db6a0);
-        font-variant-numeric: tabular-nums;
-        line-height: 1.1;
-      }
-      .hs-score-label {
-        font-size: 10px;
-        color: var(--dsw-alias-label-secondary, #8c909e);
-        margin-top: 3px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-      .hs-candidate-body {
-        flex: 1;
-        min-width: 0;
-      }
-      .hs-candidate-title-link {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--dsw-alias-label-primary, #ececf1);
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        line-height: 1.4;
-        transition: color 150ms var(--hs-ease-out);
-      }
-      .hs-candidate-title-link:hover {
-        color: var(--dsw-alias-brand-primary, #4db6a0);
       }
       .hs-candidate-meta {
         display: flex;
@@ -537,22 +709,6 @@ window.__ModuleLoader__.load({
         color: #a78bfa;
         border-color: rgba(167, 139, 250, 0.3);
         background: rgba(167, 139, 250, 0.08);
-      }
-      .hs-candidate-summary {
-        margin-top: 8px;
-        font-size: 12px;
-        color: var(--dsw-alias-label-secondary, #9da1b0);
-        line-height: 1.6;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-      }
-      .hs-candidate-actions {
-        display: flex;
-        align-items: center;
-        flex-shrink: 0;
-        margin-left: 8px;
       }
 
       /* ── 折叠详情 ── */
@@ -1596,6 +1752,8 @@ window.__ModuleLoader__.load({
       const [toast, setToast] = useState(null);
       // 今日订阅文章默认只展开一小段，避免候选页被上百条原文撑长。
       const [feedExpanded, setFeedExpanded] = useState(false);
+      // 各阶段抓取数字默认收起：候选页先给「写什么」，细节按需展开。
+      const [digestDetailOpen, setDigestDetailOpen] = useState(false);
 
       // 文章列表搜索与过滤状态
       const [articleSearch, setArticleSearch] = useState('');
@@ -2233,11 +2391,19 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // 筛选候选
-      const rawItems = state?.digest?.items || [];
+      // 候选筛选：digest 已按得分降序，「精选」取当天前 30%（至少 3 条），
+      // 不再用 score ≥ 100 这种永远为空的阈值（单源当天候选也就 4–6 分）。
+      const digest = state?.digest || null;
+      const rawItems = digest?.items || [];
+      const pickCount = rawItems.length === 0
+        ? 0
+        : Math.min(rawItems.length, Math.max(3, Math.round(rawItems.length * 0.3)));
+      const pickedIds = new Set(rawItems.slice(0, pickCount).map((item) => item.id));
+      const multiSourceCount = rawItems.filter((item) => (item.sourceCount ?? 1) > 1).length;
+
       const items = rawItems.filter(item => {
-        if (filterTag === 'highScore' && item.score < 100) return false;
-        if (filterTag === 'multiSource' && item.sourceCount <= 1) return false;
+        if (filterTag === 'picked' && !pickedIds.has(item.id)) return false;
+        if (filterTag === 'multi' && (item.sourceCount ?? 1) <= 1) return false;
         if (!filter) return true;
         const q = filter.toLowerCase();
         return (
@@ -2260,22 +2426,24 @@ window.__ModuleLoader__.load({
         );
       });
 
-      // 顶部概览：日期、抓取健康度、各阶段数量与 RSS 订阅地址。
-      // 状态与数字全部派生自 state，页面不自己再存一份。
-      const FEED_PREVIEW = 24;
-      const digest = state?.digest || null;
+      // 今日状态：候选页只需要「几条、什么时候抓的、抓得顺不顺」，
+      // 各阶段数字收进「抓取详情」，不占正文位置。
+      const FEED_PREVIEW = 6;
       const digestDate = digest?.date || '';
       const digestStatus = digest?.status || null;
       const digestGenerated = digest?.generatedAt
         ? new Date(digest.generatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
         : '';
+      const digestTime = digest?.generatedAt
+        ? new Date(digest.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        : '';
       const health = !digestStatus
         ? null
         : digestStatus.degraded
-          ? { text: '严重降级', color: '#f87171' }
+          ? { text: '严重降级', level: 'bad', color: '#f87171' }
           : digestStatus.feedsOk === digestStatus.feedsTotal
-            ? { text: '抓取正常', color: '#34d399' }
-            : { text: '部分降级', color: '#f59e0b' };
+            ? { text: '抓取正常', level: 'ok', color: '#34d399' }
+            : { text: '部分降级', level: 'warn', color: '#f59e0b' };
       const rssPath = state?.feed?.rssPath || '/dsh-hotspot/rss.xml';
       const rssHref = (typeof window !== 'undefined' ? window.location.origin : '') + rssPath;
       const sourceLabelOf = (id) => {
@@ -2283,6 +2451,21 @@ window.__ModuleLoader__.load({
         const all = [...activeSourceList(state), ...(state?.builtinSources || [])];
         return all.find((source) => source.id === id)?.name || id;
       };
+      // 每条候选来自哪些源；整个列表只有一个源时就不必每行重复写源名。
+      const itemSourceNames = (item) => [...new Set((item.sources || []).map((s) => sourceLabelOf(s.source)).filter(Boolean))];
+      const listSourceSet = new Set();
+      for (const item of rawItems) for (const name of itemSourceNames(item)) listSourceSet.add(name);
+      const showSourcePerRow = listSourceSet.size > 1;
+      // 整个列表只有一个源时，不逐行重复源名，在顶部说一次。
+      const listSourceNames = [...new Set(
+        rawItems.flatMap((it) => (it.sources || []).map((s) => sourceLabelOf(s.source) || s.source))
+      )].filter(Boolean);
+      const listSingleSource = listSourceNames.length === 1 ? listSourceNames[0] : '';
+      const feedSourceNames = [...new Set(
+        (state?.feed?.items || []).map((it) => it.sourceName || sourceLabelOf(it.source)).filter(Boolean)
+      )];
+      const feedSingleSource = feedSourceNames.length === 1 ? feedSourceNames[0] : '';
+      const showFeedSource = feedSourceNames.length > 1;
       const overviewStats = [
         ['成功源', digestStatus ? `${digestStatus.feedsOk}/${digestStatus.feedsTotal}` : '—'],
         ['抓取原文', digestStatus?.itemsRaw ?? 0],
@@ -2537,182 +2720,166 @@ window.__ModuleLoader__.load({
               ])
             ]),
 
-            // 今日概览 + RSS：一眼看到抓取健康度与产出，订阅地址可直接复制
-            h('div', { className: 'hs-overview', key: 'overview' }, [
-              h('div', { className: 'hs-overview-top' }, [
-                h('span', { className: 'hs-overview-date' }, digestDate || '今天还没有抓取'),
-                health && h('span', {
-                  className: 'hs-status-pill',
-                  style: { color: health.color }
-                }, health.text),
-                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
-                  digestGenerated ? `生成于 ${digestGenerated}` : '抓取一次后这里会显示各阶段产出'),
-                h('span', { style: { flex: 1 } }),
-                h('button', {
-                  className: 'hs-btn ghost',
-                  style: { padding: '4px 9px', fontSize: 11.5 },
-                  onClick: async () => {
-                    try {
-                      if (typeof navigator === 'undefined' || !navigator.clipboard) throw new Error('clipboard unavailable');
-                      await navigator.clipboard.writeText(rssHref);
-                      showToast('RSS 订阅地址已复制');
-                    } catch {
-                      showToast('复制失败，请手动复制：' + rssHref, true);
-                    }
-                  }
-                }, '复制 RSS'),
-                h('a', {
-                  className: 'hs-btn ghost',
-                  href: rssHref,
-                  target: '_blank',
-                  rel: 'noreferrer',
-                  style: { padding: '4px 9px', fontSize: 11.5, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }
-                }, '打开 RSS')
-              ]),
-              h('div', { className: 'hs-overview-stats' },
-                overviewStats.map(([label, value]) => h('div', { className: 'hs-mini-stat', key: label }, [
-                  h('b', null, String(value)),
-                  h('span', null, label)
-                ]))
+            // 今日一行：几条候选、什么时候抓的、抓得顺不顺。
+            // 各阶段产出（成功源/原文/去重）收进「抓取详情」，不占正文位置。
+            h('div', { className: 'hs-today', key: 'today' }, [
+              h('span', { className: 'hs-today-count' },
+                digest ? `${rawItems.length} 条候选` : '今天还没有候选'
               ),
-              h('div', { className: 'hs-rss-bar' }, [
-                h('span', {
-                  className: 'hs-tag-pill',
-                  style: { fontSize: 10, color: '#34d399', borderColor: 'rgba(52, 211, 153, 0.35)' }
-                }, 'RSS'),
-                h('code', { className: 'hs-rss-url', title: rssHref }, rssHref)
-              ]),
-              h('div', { className: 'hs-rss-note' },
-                `阅读器里候选 ${rawItems.length} 条排最前（按当天生成时间），其后是今日抓到的其余文章，单次最多 80 条。`
-              )
-            ]),
-
-            // 搜索与快捷过滤条
-            h('div', {
-              style: {
-                display: 'flex',
-                gap: 12,
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                marginBottom: 16
-              }
-            }, [
-              h('div', { style: { position: 'relative', flex: '1 1 240px' } }, [
-                h('input', {
-                  className: 'hs-input',
-                  style: { width: '100%', paddingLeft: 34 },
-                  placeholder: '搜索标题、标签或摘要关键词...',
-                  value: filter,
-                  onChange: (e) => setFilter(e.target.value)
+              listSingleSource && h('span', { className: 'hs-today-src' }, listSingleSource),
+              h('span', { className: 'hs-today-meta' }, [
+                health && h('i', {
+                  className: `hs-dot${health.level === 'ok' ? '' : ` ${health.level}`}`,
+                  title: health.text
                 }),
+                health && health.level !== 'ok' && h('span', { style: { color: health.color } }, health.text),
+                health && health.level !== 'ok' && h('span', { style: { opacity: 0.45 } }, '·'),
+                h('span', null, digestTime ? `最近抓取 ${digestTime}` : '还没有抓取记录')
+              ]),
+              h('span', { style: { flex: 1 } }),
+              digest && h('button', {
+                className: 'hs-btn ghost',
+                style: { padding: '3px 8px', fontSize: 11.5 },
+                'aria-expanded': digestDetailOpen ? 'true' : 'false',
+                onClick: () => setDigestDetailOpen((value) => !value)
+              }, [
+                digestDetailOpen ? '收起详情' : '抓取详情',
                 h('svg', {
-                  width: 14,
-                  height: 14,
+                  width: 11,
+                  height: 11,
                   viewBox: '0 0 24 24',
                   fill: 'none',
                   stroke: 'currentColor',
                   strokeWidth: 2,
-                  style: {
-                    position: 'absolute',
-                    left: 11,
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    color: 'var(--dsw-alias-label-secondary, #8c909e)',
-                    pointerEvents: 'none'
-                  }
+                  style: { transform: digestDetailOpen ? 'rotate(180deg)' : 'none', transition: 'transform 160ms var(--hs-ease-out)' }
+                }, [h('polyline', { points: '6 9 12 15 18 9' })])
+              ])
+            ]),
+            digestDetailOpen && digest && h('div', { className: 'hs-detail-panel', key: 'today-detail' },
+              overviewStats.map(([label, value]) => h('div', { className: 'hs-detail-item', key: label }, [
+                h('b', null, String(value)),
+                h('span', null, label)
+              ]))
+            ),
+
+            // 搜索 + 分段筛选
+            h('div', { className: 'hs-tools', key: 'tools' }, [
+              h('div', { className: 'hs-search' }, [
+                h('svg', {
+                  className: 'hs-search-icon',
+                  width: 13,
+                  height: 13,
+                  viewBox: '0 0 24 24',
+                  fill: 'none',
+                  stroke: 'currentColor',
+                  strokeWidth: 2
                 }, [
                   h('circle', { cx: 11, cy: 11, r: 8 }),
                   h('line', { x1: 21, y1: 21, x2: 16.65, y2: 16.65 })
-                ])
+                ]),
+                h('input', {
+                  className: 'hs-input',
+                  placeholder: '搜索标题、摘要或标签',
+                  value: filter,
+                  onChange: (e) => setFilter(e.target.value)
+                }),
+                filter && h('button', {
+                  className: 'hs-search-clear',
+                  title: '清空搜索',
+                  onClick: () => setFilter('')
+                }, '×')
               ]),
-              h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, [
-                h('button', {
-                  className: `hs-btn ${filterTag === 'all' ? 'primary' : 'ghost'}`,
-                  style: { padding: '5px 10px', fontSize: 12 },
-                  onClick: () => setFilterTag('all')
-                }, `全部 (${rawItems.length})`),
-                h('button', {
-                  className: `hs-btn ${filterTag === 'highScore' ? 'primary' : 'ghost'}`,
-                  style: { padding: '5px 10px', fontSize: 12 },
-                  onClick: () => setFilterTag('highScore')
-                }, '🔥 高分精选 (≥100)'),
-                h('button', {
-                  className: `hs-btn ${filterTag === 'multiSource' ? 'primary' : 'ghost'}`,
-                  style: { padding: '5px 10px', fontSize: 12 },
-                  onClick: () => setFilterTag('multiSource')
-                }, '🌐 多源共现 (>1)')
-              ])
+              h('div', { className: 'hs-seg', role: 'group', 'aria-label': '筛选候选' }, [
+                { key: 'all', label: '全部', count: rawItems.length },
+                pickCount > 0 && pickCount < rawItems.length && { key: 'picked', label: '精选', count: pickCount },
+                multiSourceCount > 0 && { key: 'multi', label: '多源', count: multiSourceCount }
+              ].filter(Boolean).map((seg) => h('button', {
+                key: seg.key,
+                className: filterTag === seg.key ? 'on' : '',
+                onClick: () => setFilterTag(seg.key),
+                title: seg.key === 'picked'
+                  ? '今天综合得分最高的几条'
+                  : seg.key === 'multi' ? '同一件事被多个源同时报道' : '显示全部候选'
+              }, [seg.label, h('b', null, seg.count)])))
             ]),
 
             // 候选列表
             items.length === 0
               ? h('div', {
-                  className: 'hs-card',
-                  style: { textAlign: 'center', padding: '40px 20px', color: 'var(--dsw-alias-label-secondary, #8c909e)' }
+                  key: 'empty',
+                  className: 'hs-list',
+                  style: { textAlign: 'center', padding: '44px 20px' }
                 }, [
-                  h('div', { style: { fontSize: 32, marginBottom: 8 } }, '📡'),
-                  h('div', { style: { fontSize: 14, fontWeight: 500 } },
-                    state?.digest ? '没有符合当前筛选条件的候选热点' : '暂无聚合候选热点'
+                  h('div', { style: { fontSize: 26, marginBottom: 10, opacity: 0.8 } },
+                    rawItems.length === 0 ? '📡' : '🔍'
                   ),
-                  h('div', { style: { fontSize: 12, marginTop: 4 } },
-                    '点击右上角「立即扫描抓取」获取最新全网技术热点'
-                  )
+                  h('div', { style: { fontSize: 13.5, fontWeight: 600 } },
+                    rawItems.length === 0 ? '今天还没有候选' : '没有匹配的候选'
+                  ),
+                  h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)', marginTop: 6, lineHeight: 1.6 } },
+                    rawItems.length === 0
+                      ? '抓取一次，插件会并发采集所有订阅源并按跨源共现排序。'
+                      : '换个关键词，或回到「全部」看看今天的全部候选。'
+                  ),
+                  h('div', { style: { display: 'flex', gap: 8, justifyContent: 'center', marginTop: 14, flexWrap: 'wrap' } }, [
+                    rawItems.length === 0
+                      ? h('button', {
+                          className: 'hs-btn primary',
+                          disabled: running,
+                          onClick: handleRun
+                        }, running ? '抓取中…' : '立即抓取一次')
+                      : h('button', {
+                          className: 'hs-btn',
+                          onClick: () => { setFilter(''); setFilterTag('all'); }
+                        }, '清空筛选'),
+                    h('button', {
+                      className: 'hs-btn ghost',
+                      onClick: () => setTab('sources')
+                    }, '管理订阅源')
+                  ])
                 ])
-              : items.map((item, idx) => {
-                  const isHighRank = item.score >= 100;
-                  return h('div', { className: 'hs-candidate-card', key: item.id || idx }, [
-                    // 得分与序号指示盒
-                    h('div', { className: 'hs-score-box' }, [
-                      h('div', { className: 'hs-score-value' }, item.score),
-                      h('div', { className: 'hs-score-label' }, `RANK #${idx + 1}`)
-                    ]),
-                    // 主体信息
-                    h('div', { className: 'hs-candidate-body' }, [
+              : h('div', { className: 'hs-list', key: 'list' }, items.map((item, idx) => {
+                  const rank = idx + 1;
+                  const sourceNames = itemSourceNames(item);
+                  const sourceCount = item.sourceCount ?? sourceNames.length;
+                  const parts = item.scoreParts || {};
+                  const scoreTip = [
+                    `综合得分 ${item.score}`,
+                    parts.cooccurrence !== undefined ? `共现 ${parts.cooccurrence}` : '',
+                    parts.freshness !== undefined ? `新鲜度 ${parts.freshness}` : '',
+                    parts.relevance !== undefined ? `关键词 ${parts.relevance}` : ''
+                  ].filter(Boolean).join(' · ');
+                  const metaNodes = [
+                    showSourcePerRow && sourceNames.length > 0 && h('span', { key: 'src' }, sourceNames.join('、')),
+                    sourceCount > 1 && h('span', { key: 'multi', className: 'hs-badge-multi' }, `${sourceCount} 个源共现`),
+                    ...(item.tags || []).map((t) => {
+                      const isAI = /ai|gpt|llm|agent|model/i.test(t);
+                      const isCode = /swift|rust|go|python|js|ts/i.test(t);
+                      const cls = isAI ? 'hs-tag-pill ai' : isCode ? 'hs-tag-pill code' : 'hs-tag-pill';
+                      return h('span', { className: cls, key: `tag-${t}` }, `#${t}`);
+                    })
+                  ].filter(Boolean);
+                  return h('div', { className: `hs-row${rank <= 3 ? ' top' : ''}`, key: item.id || idx }, [
+                    h('div', { className: 'hs-row-rank', title: scoreTip }, String(rank).padStart(2, '0')),
+                    h('div', { className: 'hs-row-main' }, [
                       h('a', {
-                        className: 'hs-candidate-title-link',
+                        className: 'hs-row-title',
                         href: item.url,
                         target: '_blank',
-                        rel: 'noreferrer'
-                      }, [
-                        item.title,
-                        h('svg', {
-                          width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, style: { opacity: 0.7, flexShrink: 0 }
-                        }, [
-                          h('path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }),
-                          h('polyline', { points: '15 3 21 3 21 9' }),
-                          h('line', { x1: 10, y1: 14, x2: 21, y2: 3 })
-                        ])
-                      ]),
-                      h('div', { className: 'hs-candidate-meta' }, [
-                        h('span', { style: { color: isHighRank ? 'var(--dsw-alias-brand-primary, #4db6a0)' : 'inherit', fontWeight: 500 } },
-                          `来源：${
-                            [...new Set((item.sources || []).map((s) => sourceLabelOf(s.source)).filter(Boolean))].join('、') ||
-                            (item.sourceCount > 1 ? `${item.sourceCount} 个源` : '未知')
-                          }${item.sourceCount > 1 ? ` · ${item.sourceCount} 源共现` : ''}`
-                        ),
-                        item.slugHint && h('span', { className: 'hs-tag-pill' }, `slug: ${item.slugHint}`),
-                        (item.tags || []).map(t => {
-                          const isAI = /ai|gpt|llm|agent|model/i.test(t);
-                          const isCode = /swift|rust|go|python|js|ts/i.test(t);
-                          const cls = isAI ? 'hs-tag-pill ai' : isCode ? 'hs-tag-pill code' : 'hs-tag-pill';
-                          return h('span', { className: cls, key: t }, `#${t}`);
-                        })
-                      ]),
-                      item.summary && h('div', { className: 'hs-candidate-summary' }, item.summary),
-                      // 来源详情
-                      item.sources && item.sources.length > 0 && h('details', { className: 'hs-details' }, [
-                        h('summary', null, [
-                          h('svg', { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
-                            h('polyline', { points: '6 9 12 15 18 9' })
-                          ]),
-                          `查看 ${item.sources.length} 个原文来源与佐证`
-                        ]),
+                        rel: 'noreferrer',
+                        title: item.title
+                      }, item.title),
+                      item.summary && h('div', { className: 'hs-row-summary' }, item.summary),
+                      metaNodes.length > 0 && h('div', { className: 'hs-row-meta' }, metaNodes),
+                      // 只有真的多个来源时才值得展开；单源已经在上面写过了。
+                      item.sources && item.sources.length > 1 && h('details', { className: 'hs-details' }, [
+                        h('summary', null, `另有 ${item.sources.length - 1} 个来源`),
                         h('div', { className: 'hs-details-panel' }, [
-                          item.sources.map((s, sIdx) => h('div', { key: sIdx, style: { marginBottom: 6, fontSize: 12 } }, [
+                          item.sources.map((s, sIdx) => h('div', { key: sIdx, style: { marginBottom: sIdx === item.sources.length - 1 ? 0 : 6, fontSize: 12 } }, [
                             h('span', {
                               className: 'hs-tag-pill',
                               style: { marginRight: 6, fontSize: 10 }
-                            }, sourceLabelOf(s.source) || s.sourceId || 'source'),
+                            }, sourceLabelOf(s.source) || 'source'),
                             h('a', {
                               href: s.url,
                               target: '_blank',
@@ -2723,29 +2890,21 @@ window.__ModuleLoader__.load({
                         ])
                       ])
                     ]),
-                    // 操作按钮
-                    h('div', { className: 'hs-candidate-actions' }, [
+                    h('div', { className: 'hs-row-actions' }, [
                       h('button', {
-                        className: `hs-btn ${!isBlogConfigured ? 'primary' : ''}`,
+                        className: 'hs-btn hs-row-btn',
+                        title: '用这条候选生成草稿',
                         onClick: () => handleScaffold(item)
-                      }, [
-                        h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
-                          h('path', { d: 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7' }),
-                          h('path', { d: 'M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z' })
-                        ]),
-                        !isBlogConfigured ? '指定路径生成草稿' : '生成草稿'
-                      ])
+                      }, '生成草稿')
                     ])
                   ]);
-                }),
-
-            // 今日订阅文章：候选排在前面，这里只补候选之外的当天原文条目。
-            // 默认折叠到 24 条 —— raw 一天上百条，全量铺开会把候选页拉得很长。
+                })),
+            // 今日订阅文章：候选之外的当天原文，默认只露 6 条，需要再展开。
             feedDate && feedItems.length > 0 && h('div', { key: 'feed-items', style: { marginTop: 26 } }, [
               h('div', {
                 style: {
                   display: 'flex',
-                  alignItems: 'flex-end',
+                  alignItems: 'center',
                   gap: 10,
                   flexWrap: 'wrap',
                   padding: '0 2px 10px',
@@ -2753,13 +2912,10 @@ window.__ModuleLoader__.load({
                   borderBottom: '1px solid var(--dsw-alias-border-l1, #2d303b)'
                 }
               }, [
-                h('div', null, [
-                  h('div', { className: 'hs-card-title' }, [
-                    '今日订阅文章 ',
-                    h('span', { style: { color: 'var(--dsw-alias-brand-primary, #4db6a0)' } }, `(${feedItems.length})`)
-                  ]),
-                  h('div', { className: 'hs-card-subtitle' },
-                    `${feedDate} · 候选 ${rawItems.length} 条已排在上方，这里是候选之外抓到的原文`
+                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } }, [
+                  h('span', { className: 'hs-card-title', style: { fontSize: 13 } }, '今日其他文章'),
+                  h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary, #8c909e)' } },
+                    `候选之外的 ${feedItems.length} 条${feedSingleSource ? ` · ${feedSingleSource}` : ''}`
                   )
                 ]),
                 h('span', { style: { flex: 1 } }),
@@ -2767,16 +2923,9 @@ window.__ModuleLoader__.load({
                   className: 'hs-btn ghost',
                   style: { padding: '4px 9px', fontSize: 11.5 },
                   onClick: () => setFeedExpanded((value) => !value)
-                }, feedExpanded ? '收起' : `展开全部 ${feedItems.length} 条`),
-                h('a', {
-                  href: rssHref,
-                  target: '_blank',
-                  rel: 'noreferrer',
-                  className: 'hs-btn ghost',
-                  style: { padding: '4px 9px', fontSize: 11.5, textDecoration: 'none' }
-                }, '订阅 RSS')
+                }, feedExpanded ? '收起' : '展开全部')
               ]),
-              h('div', { className: 'hs-card', style: { padding: '2px 0' } },
+              h('div', { className: 'hs-list' },
                 visibleFeedItems.map((item, idx) => {
                   const when = item.publishedAt ? new Date(item.publishedAt) : null;
                   const whenText = when && !Number.isNaN(when.getTime())
@@ -2810,13 +2959,13 @@ window.__ModuleLoader__.load({
                           whiteSpace: 'nowrap'
                         }
                       }, item.title || item.url),
-                      h('div', { className: 'hs-candidate-meta', style: { marginTop: 3 } }, [
-                        sourceName && h('span', {
+                      item.summary && h('div', { className: 'hs-feed-sum' }, item.summary),
+                      h('div', { className: 'hs-candidate-meta', style: { marginTop: 4, gap: 6 } }, [
+                        showFeedSource && sourceName && h('span', {
                           className: 'hs-tag-pill',
                           style: { fontSize: 10 }
                         }, sourceName),
-                        whenText && h('span', { style: { fontSize: 11 } }, whenText),
-                        item.summary && h('span', { className: 'hs-feed-summary', style: { minWidth: 0 } }, item.summary)
+                        whenText && h('span', { style: { fontSize: 11 } }, whenText)
                       ])
                     ]),
                     h('button', {
@@ -2834,14 +2983,7 @@ window.__ModuleLoader__.load({
                     }, '生成草稿')
                   ]);
                 })
-              ),
-              !feedExpanded && feedItems.length > FEED_PREVIEW && h('div', { style: { textAlign: 'center', padding: '8px 0 0' } }, [
-                h('button', {
-                  className: 'hs-btn ghost',
-                  style: { fontSize: 11.5 },
-                  onClick: () => setFeedExpanded(true)
-                }, `还有 ${feedItems.length - FEED_PREVIEW} 条，展开查看`)
-              ])
+              )
             ])
           ]),
 
@@ -3006,6 +3148,37 @@ window.__ModuleLoader__.load({
                   ]))
                 ])
               ])
+            ]),
+
+            // RSS 属于「源」：订阅地址放这里，不占候选页的位置。
+            h('div', { className: 'hs-card', style: { marginTop: 12 } }, [
+              h('div', { className: 'hs-card-header', style: { marginBottom: 8 } }, [
+                h('div', null, [
+                  h('div', { className: 'hs-card-title' }, 'RSS 订阅'),
+                  h('div', { className: 'hs-card-subtitle' }, '把候选和当天原文一起丢进阅读器')
+                ]),
+                h('div', { style: { display: 'flex', gap: 8 } }, [
+                  h('button', {
+                    className: 'hs-btn',
+                    onClick: async () => {
+                      try {
+                        await navigator.clipboard.writeText(rssHref);
+                        showToast('RSS 地址已复制');
+                      } catch {
+                        showToast('复制失败，请手动复制：' + rssHref, true);
+                      }
+                    }
+                  }, '复制地址'),
+                  h('a', {
+                    href: rssHref,
+                    target: '_blank',
+                    rel: 'noreferrer',
+                    className: 'hs-btn ghost',
+                    style: { textDecoration: 'none' }
+                  }, '打开')
+                ])
+              ]),
+              h('code', { className: 'hs-rss-url', title: rssHref }, rssHref)
             ])
           ]),
 

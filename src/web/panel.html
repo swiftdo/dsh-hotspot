@@ -65,8 +65,24 @@
   .item:last-child { border-bottom: 0; }
   .item .title { font-weight: 500; }
   .item .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .score { font-variant-numeric: tabular-nums; color: var(--accent); }
-  .stats { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 10px; }
+  .topline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .topline-count { font-size: 15px; font-weight: 600; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px rgba(77, 182, 160, .5); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 6px rgba(224, 163, 74, .5); }
+  .linkish { border: 0; background: transparent; color: var(--muted); padding: 2px 4px; }
+  .linkish:hover { color: var(--accent); }
+  .hit { display: flex; gap: 12px; padding: 12px 2px; border-top: 1px solid var(--line); }
+  .hit:first-of-type { border-top: 0; }
+  .hit-rank { width: 22px; flex: 0 0 22px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+  .hit-rank.top { color: var(--accent); font-weight: 600; }
+  .hit-main { flex: 1; min-width: 0; }
+  .hit-title { color: var(--text); font-weight: 500; text-decoration: none; }
+  .hit-title:hover { color: var(--accent); }
+  .hit-sum { color: var(--muted); font-size: 12.5px; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .hit-meta { color: var(--muted); font-size: 11.5px; margin-top: 5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .hit-act { align-self: flex-start; opacity: .55; }
+  .hit:hover .hit-act { opacity: 1; }
+  .stats { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
   .stat b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
   .stat span { color: var(--muted); font-size: 11px; }
   .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
@@ -145,6 +161,16 @@
         <thead><tr><th style="width:150px">id</th><th style="width:130px">kind</th><th>目标</th><th style="width:70px"></th></tr></thead>
         <tbody id="sourceRows"></tbody>
       </table>
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:8px">
+        <strong style="font-weight:500">RSS 订阅</strong>
+        <span class="muted">把候选和当天原文一起丢进阅读器</span>
+        <span style="flex:1"></span>
+        <button class="ghost" id="rssCardCopy">复制地址</button>
+        <a class="link-btn" id="rssCardOpen" target="_blank" rel="noreferrer">打开</a>
+      </div>
+      <code class="rss-url" id="rssCardUrl"></code>
     </div>
   </section>
 
@@ -337,11 +363,14 @@ async function copyText(text, message) {
 }
 
 let feedExpanded = false;
-const FEED_PREVIEW = 24;
+let detailExpanded = false;
+const FEED_PREVIEW = 6;
 
 function renderItems() {
   const digest = state.digest;
   const rss = rssUrl();
+  $('rssCardUrl').textContent = rss;
+  $('rssCardOpen').href = rss;
 
   if (!digest) {
     $('digestMeta').innerHTML =
@@ -352,78 +381,101 @@ function renderItems() {
   }
 
   const status = digest.status || {};
-  const health = status.degraded
-    ? '<span class="badge warn">严重降级</span>'
-    : (status.feedsOk === status.feedsTotal
-      ? '<span class="badge ok">抓取正常</span>'
-      : '<span class="badge warn">部分降级</span>');
+  const healthText = status.degraded
+    ? '抓取严重降级'
+    : (status.feedsOk === status.feedsTotal ? '抓取正常' : '部分源抓取失败');
+  const healthClass = healthText === '抓取正常' ? '' : ' warn';
   const stat = (value, label) => '<div class="stat"><b>' + esc(value) + '</b><span>' + esc(label) + '</span></div>';
+  const sourceNames = [...new Set((digest.items || [])
+    .flatMap((item) => (item.sources || []).map((src) => sourceLabelOf(src.source)))
+    .filter(Boolean))];
+  const generated = fmtTime(digest.generatedAt);
 
   $('digestMeta').innerHTML =
-    '<div class="row" style="justify-content:space-between">' +
-      '<div class="row"><strong style="font-weight:500;font-size:15px">' + esc(digest.date) + '</strong>' + health + '</div>' +
-      '<span class="muted">生成于 ' + esc(fmtTime(digest.generatedAt) || '—') + '</span>' +
+    '<div class="topline">' +
+      '<strong class="topline-count">' + digest.items.length + ' 条候选</strong>' +
+      (sourceNames.length === 1 ? '<span class="tag">' + esc(sourceNames[0]) + '</span>' : '') +
+      '<span class="dot' + healthClass + '" title="' + esc(healthText) + '"></span>' +
+      (generated ? '<span class="muted">最近抓取 ' + esc(generated) + '</span>' : '') +
+      '<span style="flex:1"></span>' +
+      '<button class="linkish" data-toggle-detail>' + (detailExpanded ? '收起详情' : '抓取详情') + '</button>' +
     '</div>' +
-    '<div class="stats">' +
-      stat((status.feedsOk ?? 0) + '/' + (status.feedsTotal ?? 0), '成功源') +
-      stat(status.itemsRaw ?? 0, '抓取原文') +
-      stat(status.itemsDeduped ?? 0, '去重后') +
-      stat(status.candidates ?? digest.items.length, '候选') +
-      stat(state.feed?.items?.length ?? 0, '今日文章') +
-    '</div>' +
-    (status.failedSources?.length
-      ? '<div class="muted" style="margin-top:8px">失败源：' + esc(status.failedSources.join('、')) + '</div>'
-      : '') +
-    '<div class="rss-card">' +
-      '<span class="badge ok">RSS</span>' +
-      '<code class="rss-url" title="' + esc(rss) + '">' + esc(rss) + '</code>' +
-      '<button class="ghost" data-copy-rss>复制订阅地址</button>' +
-      '<a class="link-btn" href="' + esc(rss) + '" target="_blank" rel="noreferrer">打开订阅源</a>' +
-    '</div>' +
-    '<div class="muted" style="margin-top:8px;font-size:11px">阅读器里候选 ' + (digest.items.length) +
-      ' 条排最前（用当天生成时间），其后是今天抓到的其余文章，单次最多 80 条。</div>';
+    (detailExpanded
+      ? '<div class="stats">' +
+          stat((status.feedsOk ?? 0) + '/' + (status.feedsTotal ?? 0), '成功源') +
+          stat(status.itemsRaw ?? 0, '抓取原文') +
+          stat(status.itemsDeduped ?? 0, '去重后') +
+          stat(status.candidates ?? digest.items.length, '候选') +
+          stat(state.feed?.items?.length ?? 0, '今日文章') +
+        '</div>' +
+        (status.failedSources?.length
+          ? '<div class="muted" style="margin-top:8px;font-size:12px">失败源：' + esc(status.failedSources.join('、')) + '</div>'
+          : '')
+      : '');
 
-  $('digestMeta').querySelector('[data-copy-rss]').onclick = () => copyText(rss, 'RSS 订阅地址已复制');
+  $('digestMeta').querySelector('[data-toggle-detail]').onclick = () => {
+    detailExpanded = !detailExpanded;
+    renderItems();
+  };
 
+  const showSource = sourceNames.length > 1;
   const itemsHtml = digest.items.map((item, index) => {
     const tags = (item.tags || []).map((t) => '<span class="tag">' + esc(t) + '</span>').join('');
-    const sources = (item.sources || []).map((src) =>
-      '<div class="meta">· ' + esc(src.source) + ' — <a href="' + esc(src.url) + '" target="_blank" rel="noreferrer" style="color:var(--muted)">' + esc(src.title).slice(0, 90) + '</a></div>'
-    ).join('');
-    return '<div class="item">' +
-      '<div class="row"><span class="rank">#' + (index + 1) + '</span>' +
-      '<span class="score">' + (Number(item.score) || 0).toFixed(1) + '</span>' +
-      '<span class="title" style="flex:1">' + esc(item.title) + '</span>' +
-      '<a class="link-btn" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">原文</a>' +
-      '<button class="ghost" data-scaffold="' + esc(item.id) + '">生成草稿</button></div>' +
-      '<div class="meta">' + tags + '来源：' + esc([...new Set((item.sources || []).map((src) => sourceLabelOf(src.source)))].join('、') || '未知') +
-        (item.sourceCount > 1 ? ' · ' + item.sourceCount + ' 源共现' : '') + '</div>' +
-      '<details><summary>查看来源与摘要</summary>' + sources +
-      '<pre>' + esc(item.summary || '（无摘要）') + '</pre></details>' +
+    const suppliers = [...new Set((item.sources || []).map((src) => sourceLabelOf(src.source)).filter(Boolean))];
+    const sourceLine = item.sourceCount > 1
+      ? '<span>' + item.sourceCount + ' 个源共现</span>'
+      : (showSource && suppliers.length ? '<span>' + esc(suppliers[0]) + '</span>' : '');
+    const others = (item.sources || []).length - 1;
+    const moreSources = others > 0
+      ? '<details><summary>另有 ' + others + ' 个来源</summary>' +
+          (item.sources || []).slice(1).map((src) =>
+            '<div class="hit-meta" style="margin-top:4px">· <a href="' + esc(src.url) + '" target="_blank" rel="noreferrer" style="color:var(--muted)">' +
+              esc(String(src.title || src.url).slice(0, 90)) + '</a></div>'
+          ).join('') +
+        '</details>'
+      : '';
+    return '<div class="hit">' +
+      '<span class="hit-rank' + (index < 3 ? ' top' : '') + '" title="综合得分 ' + (Number(item.score) || 0).toFixed(2) + '">' +
+        String(index + 1).padStart(2, '0') + '</span>' +
+      '<div class="hit-main">' +
+        '<a class="hit-title" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.title) + '</a>' +
+        (item.summary ? '<div class="hit-sum">' + esc(item.summary) + '</div>' : '') +
+        '<div class="hit-meta">' + tags + sourceLine + '</div>' + moreSources +
+      '</div>' +
+      '<button class="ghost hit-act" data-scaffold="' + esc(item.id) + '">生成草稿</button>' +
       '</div>';
-  }).join('') || '<span class="muted">今天没有候选</span>';
+  }).join('') || '<div class="muted">今天没有候选</div>';
 
   const feedItems = (state.feed?.items || []).filter((item) => !item.candidate);
   let feedHtml = '';
   if (feedItems.length) {
     const shown = feedExpanded ? feedItems : feedItems.slice(0, FEED_PREVIEW);
+    const feedSourceNames = [...new Set(feedItems
+      .map((item) => item.sourceName || sourceLabelOf(item.source))
+      .filter(Boolean))];
+    const showFeedSource = feedSourceNames.length > 1;
+    const singleFeedSource = feedSourceNames.length === 1 ? feedSourceNames[0] : '';
     const rows = shown.map((item) => {
       const when = fmtTime(item.publishedAt);
       const summary = String(item.summary || '').trim();
+      const name = item.sourceName || sourceLabelOf(item.source);
       return '<div class="feed-row">' +
         '<div class="title"><a href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.title || item.url) + '</a></div>' +
-        '<div class="meta">' + ((item.sourceName || item.source) ? '<span class="tag">' + esc(item.sourceName || item.source) + '</span>' : '') +
-        esc(when) + (summary ? (when ? ' · ' : '') + esc(summary) : '') + '</div>' +
+        (summary ? '<div class="summary">' + esc(summary) + '</div>' : '') +
+        '<div class="meta">' +
+          (showFeedSource && name ? '<span class="tag">' + esc(name) + '</span>' : '') +
+          esc(when) +
+        '</div>' +
         '</div>';
     }).join('');
     const missingMeta = feedItems.filter((item) => !item.source && !item.publishedAt).length;
     const toggle = feedItems.length > FEED_PREVIEW
-      ? '<button class="ghost" data-toggle-feed>' + (feedExpanded ? '收起' : '展开全部 ' + feedItems.length + ' 条') + '</button>'
+      ? '<button class="ghost" data-toggle-feed>' + (feedExpanded ? '收起' : '展开全部') + '</button>'
       : '';
     feedHtml =
       '<div class="feed-head">' +
-        '<strong>今日订阅文章 <span class="count">' + feedItems.length + '</span></strong>' +
-        '<span class="muted">' + esc(state.feed?.date || '') + ' · 候选 ' + (digest.items.length) + ' 条已排在上方</span>' +
+        '<strong>今日其他文章 <span class="count">' + feedItems.length + '</span></strong>' +
+        '<span class="muted">候选之外的条目' + (singleFeedSource ? ' · ' + esc(singleFeedSource) : '') + '</span>' +
         '<span style="flex:1"></span>' + toggle +
       '</div>' +
       (missingMeta
@@ -594,6 +646,8 @@ document.querySelectorAll('nav button').forEach((button) => {
 });
 
 $('rssTop').onclick = () => copyText(rssUrl(), 'RSS 订阅地址已复制，粘到阅读器里即可订阅');
+$('rssCardCopy').onclick = () => copyText(rssUrl(), 'RSS 订阅地址已复制，粘到阅读器里即可订阅');
+$('rssCardOpen').href = rssUrl();
 $('reload').onclick = load;
 $('writerMode').onchange = saveWriterSelection;
 $('writerModel').onchange = saveWriterSelection;
