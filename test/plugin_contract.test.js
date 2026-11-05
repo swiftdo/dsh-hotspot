@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
  * 那份测试同一套思路：能挡住「改着改着工具没了 / 闸门绕过了」这类回归。
  */
 const source = readFileSync('src/plugin.js', 'utf8');
+const toolsSource = readFileSync('src/tools.js', 'utf8');
 
 test('注册 7 个工具：写作闭环在会话里能走完', () => {
   for (const name of [
@@ -21,19 +22,19 @@ test('注册 7 个工具：写作闭环在会话里能走完', () => {
     'hotspot_promote',
     'hotspot_write',
   ]) {
-    assert.ok(source.includes(`name: '${name}'`), `缺少工具 ${name}`);
+    assert.ok(toolsSource.includes(`name: '${name}'`), `缺少工具 ${name}`);
   }
 });
 
 test('转正走闸门，不直接调 target.promote', () => {
-  assert.ok(source.includes('promoteChecked('), 'hotspot_promote 必须过闸');
-  assert.ok(!source.includes('target.promote('), '插件里不该出现绕过闸门的 target.promote(');
+  assert.ok(toolsSource.includes('promoteChecked('), 'hotspot_promote 必须过闸');
+  assert.ok(!toolsSource.includes('target.promote('), '工具里不该出现绕过闸门的 target.promote(');
 });
 
 test('候选解析统一走 core/candidates.js', () => {
-  assert.ok(source.includes("from './core/candidates.js'"));
-  assert.ok(source.includes('pickCandidate('));
-  assert.ok(!source.includes('endsWith(key)'), '就地解析会把 #3 匹配到 h-…-13');
+  assert.ok(toolsSource.includes("from './core/candidates.js'"));
+  assert.ok(toolsSource.includes('pickCandidate('));
+  assert.ok(!toolsSource.includes('endsWith(key)'), '就地解析会把 #3 匹配到 h-…-13');
 });
 
 test('未绑定根目录时用进程内 store，不往 cwd 写 .hotspot', () => {

@@ -1,13 +1,23 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
 import { canonicalUrl, slugify } from '../core/normalize.js';
 import { buildFeedItems, buildRssXml } from '../core/rss.js';
 import { BUILTIN_SOURCES, configuredSources, resolveSources } from '../core/sources.js';
 import { describeViolations } from '../core/promote.js';
+import { guard, readJson, sendHtml, sendJson } from './http.js';
+import {
+  DEPLOY_TIMEOUT_MS,
+  appendDeployHistory,
+  describeDeploy,
+  readDeployHistory,
+  runDeployPlan,
+} from './deploy.js';
+import { createStateBuilder, sourceLabel } from './state.js';
+import { LEGACY_PREFIX, PREFIX } from './prefix.js';
 
 /**
  * 管理界面的服务端。
@@ -22,290 +32,12 @@ import { describeViolations } from '../core/promote.js';
  */
 
 const PANEL_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web', 'panel.html');
-export const PREFIX = '/dsh-hotspot';
-export const LEGACY_PREFIX = '/hotspot';
-const MAX_BODY = 64 * 1024;
+export { LEGACY_PREFIX, PREFIX } from './prefix.js';
 // 「今日订阅文章」单次最多返回这么多条：raw 一天可能上千条，面板一次全给会卡。
-const FEED_LIMIT = 300;
 
 export { BUILTIN_SOURCES };
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
-
-// 站点部署：命令来自项目配置的 deploy 段（build 可选、script 必填），
-// 在博客根目录下用「用户登录 shell」执行。
-//
-// 为什么不用 /bin/sh -c：面板跑在 DSH 进程里，GUI 从 Finder 启动时 PATH 只有
-// launchd 的最小集合，yarn / nvm / corepack / ssh-agent 都不在里面。用户在终端
-// 里能跑通的部署脚本，面板一点就 command not found —— 这是「部署逻辑没打通」
-// 最常见的原因。用 -l 让登录 shell 重新加载用户的 PATH，与终端行为对齐。
-const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
-const DEPLOY_OUTPUT_LIMIT = 64 * 1024;
-const DEPLOY_HISTORY_LIMIT = 10;
-
-function tail(text, limit = DEPLOY_OUTPUT_LIMIT) {
-  if (text.length <= limit) return text;
-  return `…（输出超过 ${limit} 字符，已保留末尾）\n${text.slice(-limit)}`;
-}
-
-/** 优先用用户的登录 shell；找不到就退回 /bin/sh。 */
-export function resolveLoginShell() {
-  for (const candidate of [process.env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh']) {
-    if (typeof candidate === 'string' && candidate.startsWith('/') && existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return '/bin/sh';
-}
-
-/**
- * 执行单条命令，永不 reject：失败也把 stdout/stderr/退出码交回给调用方。
- * @param {string} script
- * @param {string} cwd
- * @param {{ timeoutMs?: number }} [options]
- * @returns {Promise<{ success: boolean, code: number|null, signal: string|null, stdout: string, stderr: string, durationMs: number, timedOut: boolean }>}
- */
-export function runDeployScript(script, cwd, options = {}) {
-  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEPLOY_TIMEOUT_MS;
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let settled = false;
-    let timer = null;
-
-    const finish = (code, signal, error) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolve({
-        success: !timedOut && !error && code === 0,
-        code,
-        signal: signal ?? null,
-        stdout: tail(stdout),
-        stderr: tail(stderr),
-        durationMs: Date.now() - startedAt,
-        timedOut,
-      });
-    };
-
-    let child;
-    try {
-      child = spawn(resolveLoginShell(), ['-l', '-c', script], {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (error) {
-      stderr = error.message;
-      finish(null, null, error);
-      return;
-    }
-
-    timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* 进程可能已经退出 */
-      }
-    }, timeoutMs);
-
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-      if (stdout.length > DEPLOY_OUTPUT_LIMIT * 2) stdout = stdout.slice(-DEPLOY_OUTPUT_LIMIT);
-    });
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-      if (stderr.length > DEPLOY_OUTPUT_LIMIT * 2) stderr = stderr.slice(-DEPLOY_OUTPUT_LIMIT);
-    });
-    child.on('error', (error) => finish(null, null, error));
-    child.on('close', (code, signal) => finish(code, signal));
-  });
-}
-
-/**
- * 探测博客根目录里现成的部署入口，给面板一个「一键绑定」的建议值。
- * 只做只读判断，不改配置、不执行任何东西。
- */
-export function detectDeployPlan(root) {
-  const detected = { script: '', build: '' };
-  if (!root || !existsSync(root)) return detected;
-
-  for (const rel of ['deploy.sh', 'scripts/deploy.sh', 'bin/deploy.sh']) {
-    if (existsSync(path.join(root, rel))) {
-      detected.script = `./${rel}`;
-      break;
-    }
-  }
-
-  try {
-    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
-    if (pkg?.scripts?.build) {
-      if (existsSync(path.join(root, 'pnpm-lock.yaml'))) detected.build = 'pnpm run build';
-      else if (existsSync(path.join(root, 'yarn.lock'))) detected.build = 'yarn build';
-      else detected.build = 'npm run build';
-    }
-  } catch {
-    /* 没有 package.json 就不是前端站点，留空即可 */
-  }
-  return detected;
-}
-
-/**
- * 把配置里的 deploy 段摊平成面板与接口共用的一份描述。
- * 未配置 timeoutMs 时用默认值，配置值不允许超过默认上限。
- */
-export function describeDeploy(config, root) {
-  const script = String(config?.deploy?.script ?? '').trim();
-  const build = String(config?.deploy?.build ?? '').trim();
-  const rawTimeout = Number(config?.deploy?.timeoutMs);
-  const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0
-    ? Math.min(Math.floor(rawTimeout), DEPLOY_TIMEOUT_MS)
-    : DEPLOY_TIMEOUT_MS;
-  return {
-    script,
-    build,
-    timeoutMs,
-    configured: Boolean(script),
-    detected: detectDeployPlan(root),
-  };
-}
-
-/**
- * 按 build → script 的顺序执行部署计划，任一步失败即停。
- * 顶层字段取「最后执行的那一步」，并额外带 steps，兼容旧的单脚本调用方。
- */
-export async function runDeployPlan(plan, cwd) {
-  const startedAt = Date.now();
-  const steps = [];
-
-  const runOne = async (name, script) => {
-    const result = await runDeployScript(script, cwd, { timeoutMs: plan.timeoutMs });
-    steps.push({ name, script, ...result });
-    return result;
-  };
-
-  if (plan.build) {
-    const built = await runOne('build', plan.build);
-    if (!built.success) {
-      return { success: false, failedStep: 'build', steps, durationMs: Date.now() - startedAt };
-    }
-  }
-
-  const deployed = await runOne('deploy', plan.script);
-  return {
-    success: deployed.success,
-    failedStep: deployed.success ? null : 'deploy',
-    steps,
-    durationMs: Date.now() - startedAt,
-  };
-}
-
-function deployHistoryFile(root, digestDir) {
-  return path.join(root, digestDir || '.hotspot', 'deploy-history.json');
-}
-
-/** 部署历史只是面板的辅助信息，读写失败不能影响部署结果本身。 */
-export async function readDeployHistory(root, digestDir) {
-  if (!root) return [];
-  try {
-    const raw = await readFile(deployHistoryFile(root, digestDir), 'utf8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.slice(0, DEPLOY_HISTORY_LIMIT) : [];
-  } catch {
-    return [];
-  }
-}
-
-async function appendDeployHistory(root, digestDir, entry) {
-  if (!root) return [];
-  const file = deployHistoryFile(root, digestDir);
-  const history = [entry, ...(await readDeployHistory(root, digestDir))].slice(0, DEPLOY_HISTORY_LIMIT);
-  try {
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, `${JSON.stringify(history, null, 2)}\n`, 'utf8');
-  } catch {
-    /* 历史写不进去不影响本次部署 */
-  }
-  return history;
-}
-
-function sendJson(res, status, value) {
-  const body = JSON.stringify(value, null, 2);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-length': Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function sendHtml(res, html) {
-  res.writeHead(200, {
-    'content-type': 'text/html; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-length': Buffer.byteLength(html),
-  });
-  res.end(html);
-}
-
-function readJson(req) {
-  return new Promise((resolve) => {
-    let size = 0;
-    const chunks = [];
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > MAX_BODY) {
-        req.destroy();
-        resolve(undefined);
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (chunks.length === 0) return resolve({});
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      } catch {
-        resolve(undefined);
-      }
-    });
-    req.on('error', () => resolve(undefined));
-  });
-}
-
-function isLoopback(req) {
-  const address = req.socket?.remoteAddress ?? '';
-  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
-}
-
-function isAllowed(req) {
-  if (req.headers['sec-fetch-site'] === 'cross-site') return false;
-  const host = req.headers.host;
-  const origin = req.headers.origin;
-  if (origin && host) {
-    try {
-      if (new URL(origin).host !== host) return false;
-    } catch {
-      return false;
-    }
-  }
-  return isLoopback(req);
-}
-
-function guard(req, res, methods) {
-  if (!isAllowed(req)) {
-    sendJson(res, 403, { ok: false, message: '只接受本机同源请求' });
-    return false;
-  }
-  if (methods && !methods.includes(req.method)) {
-    sendJson(res, 405, { ok: false, message: `不支持 ${req.method}` });
-    return false;
-  }
-  return true;
-}
 
 export async function pickNativeDirectory() {
   const platform = process.platform;
@@ -338,6 +70,27 @@ export async function pickNativeDirectory() {
       );
     }
   });
+}
+
+/**
+ * 草稿目录的管辖判断：用 path.relative 而不是子串匹配。
+ *
+ * 以前用 `file.includes('draft')`，于是 `docs/mydrafts/x.md`、`docs/draft-notes/y.md`
+ * 都会被当成草稿放行；把草稿搬到 `.drafts/` 之后，靠子串更不可能对。
+ */
+function outsideDraftDir(target, file) {
+  const draftDir = path.resolve(target?.draftDir || path.join(target?.root || process.cwd(), '.drafts'));
+  const full = path.isAbsolute(String(file))
+    ? path.resolve(String(file))
+    : path.resolve(target?.root || process.cwd(), String(file));
+  const rel = path.relative(draftDir, full);
+  return rel === '' || rel.startsWith('..') || path.isAbsolute(rel);
+}
+
+function relativeDraftDir(target) {
+  const draftDir = target?.draftDir || '.drafts';
+  const root = target?.root || '';
+  return root ? path.relative(root, draftDir) || draftDir : draftDir;
 }
 
 function validateSource(input) {
@@ -488,167 +241,15 @@ export function createRoutes(deps) {
     };
   }
 
-/**
- * 源的展示名：配置里有 name 就用 name；github-release / hn 没有 name，
- * 按 kind 拼一个可读的名字，实在不行退回域名，避免页面和 RSS 里直接出现源 id。
- *
- * @param {any} source
- * @returns {string}
- */
-function sourceLabel(source) {
-  if (!source) return '';
-  if (source.name) return String(source.name);
-  if (source.kind === 'github-release' && source.repo) return `GitHub · ${source.repo}`;
-  if (source.kind === 'hn') return 'Hacker News';
-  if (source.url) {
-    try {
-      return new URL(String(source.url)).hostname.replace(/^www\./, '');
-    } catch {
-      /* 非法 url 退回 id */
-    }
-  }
-  return String(source.id || '');
-}
 
-  async function buildState() {
-    const config = await readConfig();
-    const hasConfiguredRoot = Boolean(
-      (config.projectRoot && existsSync(path.resolve(config.projectRoot))) ||
-      (currentProjectRoot && existsSync(path.resolve(currentProjectRoot)))
-    );
-    const activeProjectRoot = hasConfiguredRoot
-      ? path.resolve(config.projectRoot || currentProjectRoot)
-      : '';
-
-    const [profile, drafts, digest] = await Promise.all([
-      currentTarget?.profile().catch(() => ({ tagVocabulary: [], keywords: [], articles: [] })),
-      currentTarget?.listDrafts().catch(() => []),
-      currentStore?.loadDigest('latest').catch(() => null),
-    ]);
-
-    // 有效源与扫描共用同一套判定（core/sources.js）。config.sources 只回配置文件里的
-    // 真实内容（可能为空），有效集合另给 sourcesMode / activeSources —— 以前把兜底值
-    // 写进 config.sources，面板于是认为内置源「已启用」，扫描却按真实配置报
-    // 「没有配置任何 sources」，两边说法相反。
-    const { sources: activeSources, mode: sourcesMode } = resolveSources(config);
-    const sourceList = configuredSources(config);
-
-    // digest 只留聚合后的候选；raw 里才有当天每个源的全部条目。
-    // 面板据此在候选之后补一段「今日订阅文章」，候选标记出来避免重复展示。
-    const rawItems = digest && typeof currentStore?.loadRaw === 'function'
-      ? await currentStore.loadRaw(digest.date).catch(() => [])
-      : [];
-    // 源的 id → 展示名 / 源地址：面板与 RSS 都要标「这条来自哪个源」。
-    const sourceNames = Object.fromEntries(
-      // 配置里的源排在后面：同名 id 时以用户的配置为准，内置源只做兜底。
-      [...BUILTIN_SOURCES, ...activeSources]
-        .filter((source) => source && source.id)
-        .map((source) => [source.id, sourceLabel(source)]),
-    );
-    const candidateUrls = new Set();
-    for (const item of digest?.items ?? []) {
-      candidateUrls.add(canonicalUrl(item.url));
-      for (const source of item.sources ?? []) candidateUrls.add(canonicalUrl(source.url));
-    }
-    const feed = {
-      date: digest?.date ?? '',
-      // 候选条数按 digest 计，面板与 RSS 用同一个数，不各自去数一遍。
-      candidateCount: Array.isArray(digest?.items) ? digest.items.length : 0,
-      rssPath: `${PREFIX}/rss.xml`,
-      items: (Array.isArray(rawItems) ? rawItems : [])
-        .map((item) => ({
-          id: item.id ?? '',
-          title: item.title ?? '',
-          url: item.url ?? '',
-          source: item.source ?? '',
-          sourceName: sourceNames[item.source] || item.source || '',
-          sourceKind: item.sourceKind ?? '',
-          publishedAt: item.publishedAt ?? '',
-          summary: String(item.summary ?? '').slice(0, 200),
-          candidate: candidateUrls.has(canonicalUrl(item.url)),
-        }))
-        .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))
-        .slice(0, FEED_LIMIT),
-    };
-
-    return {
-      configured: hasConfiguredRoot,
-      projectRoot: activeProjectRoot,
-      builtinSources: BUILTIN_SOURCES,
-      // 'config' = 抓配置里的源；'builtin' = 配置没写源，正在用内置默认源。
-      sourcesMode,
-      activeSources,
-      blog: {
-        configured: hasConfiguredRoot,
-        projectRoot: activeProjectRoot,
-        articleDir: config.articleDir || (currentTarget?.articleDir || 'docs'),
-        draftDir: config.draftDir || (currentTarget?.draftDir || 'docs/draft'),
-        digestDir: config.digestDir || '.hotspot',
-      },
-      config: {
-        projectRoot: config.projectRoot || '',
-        articleDir: config.articleDir || 'docs',
-        draftDir: config.draftDir || 'docs/draft',
-        digestDir: config.digestDir || '.hotspot',
-        sources: sourceList,
-        rank: {
-          limit: 15,
-          sinceHours: 36,
-          halfLifeHours: 24,
-          clusterThreshold: 0.6,
-          ...(config.rank ?? {}),
-        },
-        publish: {
-          maxPerDay: 3,
-          allowedHosts: ['sopilot.net', 'github.com'],
-          autoTiers: ['tier-1', 'tier-2'],
-          ...(config.publish ?? {}),
-        },
-        // 面板据此显示「配置保存到哪个文件」，避免用户保存后不知道写去了哪里。
-        configFile: configFileIn(activeProjectRoot || currentProjectRoot),
-        // deploy.script 为空时面板不渲染「部署站点」按钮 —— 没绑定命令就不给入口。
-        // detected 只是只读探测出来的建议值，面板可据此一键绑定。
-        deploy: {
-          ...describeDeploy(config, activeProjectRoot),
-          history: await readDeployHistory(activeProjectRoot, config.digestDir || '.hotspot'),
-        },
-      },
-      profile: {
-        tags: (profile?.tagVocabulary || []).slice(0, 30),
-        keywords: (profile?.keywords || []).slice(0, 30).map((k) => k.term),
-        articleCount: (profile?.articles || []).length,
-      },
-      // 插件管辖范围明确收敛至草稿（生成、修改、转正、删除），不将已发布文章作为管理对象
-      articles: (drafts || []).map((d) => ({
-        ...d,
-        isDraft: true,
-        status: 'draft',
-      })),
-      drafts: drafts || [],
-      // 后台写作任务的当前状态：面板据此给草稿卡片标「写作中 / 失败可重试」。
-      jobs: typeof deps.jobs?.list === 'function' ? deps.jobs.list() : [],
-      feed,
-      digest: digest
-        ? {
-            date: digest.date,
-            generatedAt: digest.generatedAt,
-            status: digest.status,
-            items: digest.items.map((it) => ({
-              id: it.id,
-              title: it.title,
-              url: it.url,
-              score: it.score,
-              scoreParts: it.scoreParts,
-              sourceCount: it.sourceCount,
-              tags: it.tags,
-              slugHint: it.slugHint,
-              summary: it.summary,
-              sources: it.sources,
-            })),
-          }
-        : null,
-    };
-  }
+  const buildState = createStateBuilder({
+    readConfig,
+    configFileIn,
+    getTarget: () => currentTarget,
+    getStore: () => currentStore,
+    getProjectRoot: () => currentProjectRoot,
+    jobs: deps.jobs,
+  });
 
   const baseRoutes = [
     {
@@ -900,7 +501,7 @@ function sourceLabel(source) {
           config.articleDir = String(body.articleDir).trim() || 'docs';
         }
         if (body.draftDir !== undefined) {
-          config.draftDir = String(body.draftDir).trim() || 'docs/draft';
+          config.draftDir = String(body.draftDir).trim() || '.drafts';
         }
         if (body.digestDir !== undefined) {
           config.digestDir = String(body.digestDir).trim() || '.hotspot';
@@ -981,7 +582,7 @@ function sourceLabel(source) {
           value: {
             projectRoot: config.projectRoot || currentProjectRoot,
             articleDir: config.articleDir || 'docs',
-            draftDir: config.draftDir || 'docs/draft',
+            draftDir: config.draftDir || '.drafts',
             digestDir: config.digestDir || '.hotspot',
             rank: config.rank ?? {},
             publish: config.publish ?? {},
@@ -1060,7 +661,7 @@ function sourceLabel(source) {
               : createVitePressTarget({
                   root: customRoot,
                   articleDir: config.articleDir || 'docs',
-                  draftDir: config.draftDir || 'docs/draft',
+                  draftDir: config.draftDir || '.drafts',
                 });
         }
 
@@ -1266,12 +867,12 @@ function sourceLabel(source) {
             sendJson(res, 400, { ok: false, error: '缺少必需字段 file 或 content' });
             return;
           }
-          const normalizedFile = String(file).replace(/\\/g, '/');
-          if (!normalizedFile.includes('draft') && !normalizedFile.includes('docs/draft')) {
+          const foreign = outsideDraftDir(target, file);
+          if (foreign) {
             sendJson(res, 403, {
               ok: false,
               code: 'ERR_ARTICLE_PROTECTED',
-              error: '超出管辖范围：已发布文章受保护，插件仅支持修改草稿（docs/draft）下的文件',
+              error: `超出管辖范围：已发布文章受保护，插件只改草稿目录（${relativeDraftDir(target)}）下的文件`,
             });
             return;
           }
@@ -1365,12 +966,11 @@ function sourceLabel(source) {
           sendJson(res, 400, { ok: false, error: '缺少必需字段 file' });
           return;
         }
-        const normalizedFile = String(file).replace(/\\/g, '/');
-        if (!normalizedFile.includes('draft') && !normalizedFile.includes('docs/draft')) {
+        if (outsideDraftDir(target, file)) {
           sendJson(res, 403, {
             ok: false,
             code: 'ERR_ARTICLE_PROTECTED',
-            error: '超出管辖范围：已发布文章受保护，插件仅支持删除草稿（docs/draft）下的文件',
+            error: `超出管辖范围：已发布文章受保护，插件只删草稿目录（${relativeDraftDir(target)}）下的文件`,
           });
           return;
         }
