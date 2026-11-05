@@ -437,6 +437,17 @@ export function createRoutes(deps) {
     return primary;
   }
 
+  /** 生成/润色完立刻用同一套闸门验一遍 —— 面板直接显示违规，不必再切回终端。 */
+  async function draftChecks(slug) {
+    if (typeof deps.checkDraft !== 'function') return null;
+    try {
+      const report = await deps.checkDraft({ target: currentTarget, store: currentStore, slug });
+      return { ok: report.result.ok, violations: report.result.violations };
+    } catch {
+      return null;
+    }
+  }
+
 /**
  * 源的展示名：配置里有 name 就用 name；github-release / hn 没有 name，
  * 按 kind 拼一个可读的名字，实在不行退回域名，避免页面和 RSS 里直接出现源 id。
@@ -1226,19 +1237,72 @@ function sourceLabel(source) {
             // 没显式传 mode 时交给已保存的选择决定，不能在这里默认成 agent。
             mode: body?.mode === 'direct' ? 'direct' : body?.mode === 'agent' ? 'agent' : undefined,
           });
-          // 生成完立刻用同一套闸门验一遍 —— 面板直接显示违规，不必再切回终端。
-          let checks = null;
-          if (typeof deps.checkDraft === 'function') {
-            try {
-              const report = await deps.checkDraft({ target, store: currentStore, slug });
-              checks = { ok: report.result.ok, violations: report.result.violations };
-            } catch {
-              checks = null;
-            }
-          }
+          const checks = await draftChecks(slug);
           sendJson(res, 200, {
             ok: true,
             message: `已生成 ${value.bodyChars} 字正文`,
+            value: { ...value, checks },
+          });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+      },
+    },
+    {
+      method: 'POST',
+      kind: 'exact',
+      path: `${PREFIX}/api/polish`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        if (typeof deps.polish !== 'function') {
+          sendJson(res, 501, {
+            ok: false,
+            code: 'ERR_NO_POLISHER',
+            error: '当前环境没有接入润色模型，无法在面板里润色正文',
+          });
+          return;
+        }
+        const target = currentTarget;
+        if (!target) {
+          sendJson(res, 400, {
+            ok: false,
+            code: 'ERR_NO_BLOG_ROOT',
+            error: '尚未配置博客项目根目录',
+          });
+          return;
+        }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (e) {
+          sendJson(res, 400, { ok: false, error: `JSON 解析失败: ${e.message}` });
+          return;
+        }
+        const slug = String(body?.slug ?? '').trim();
+        if (!slug) {
+          sendJson(res, 400, { ok: false, error: '缺少必需字段 slug' });
+          return;
+        }
+        // 要求可以为空：空就是默认的「去 AI 味、整体通顺」，但长度必须可控。
+        const instruction = body?.instruction == null ? '' : String(body.instruction).trim();
+        if (instruction.length > 2000) {
+          sendJson(res, 400, { ok: false, error: '润色要求过长（上限 2000 字），请分几次说' });
+          return;
+        }
+        try {
+          const value = await deps.polish({
+            slug,
+            target,
+            projectRoot: currentProjectRoot,
+            instruction,
+            provider: body?.provider ? String(body.provider) : undefined,
+            model: body?.model ? String(body.model) : undefined,
+          });
+          const checks = await draftChecks(slug);
+          const warn = value?.factWarning ? `；注意：${value.factWarning}` : '';
+          sendJson(res, 200, {
+            ok: true,
+            message: `已润色（${value.beforeChars} → ${value.bodyChars} 字）${warn}`,
             value: { ...value, checks },
           });
         } catch (err) {

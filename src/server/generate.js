@@ -11,6 +11,14 @@ import {
   resolveRoute,
 } from '../core/writer-route.js';
 import { slugify } from '../core/normalize.js';
+import {
+  MAX_POLISH_BODY_CHARS,
+  buildPolishPrompt,
+  cleanPolishedBody,
+  compareFacts,
+  describeFactDiff,
+  hasBodyContent,
+} from '../core/polish.js';
 
 /**
  * 宿主侧的「让 agent 写正文」。
@@ -23,6 +31,9 @@ import { slugify } from '../core/normalize.js';
  */
 
 export const DEFAULT_WRITER_TIMEOUT_MS = 8 * 60 * 1000;
+
+/** 润色是一次 completion，不联网、不发子代理：给 3 分钟已经足够，超时说明路由卡住了。 */
+export const DEFAULT_POLISH_TIMEOUT_MS = 3 * 60 * 1000;
 
 function textOf(result) {
   if (typeof result === 'string') return result;
@@ -290,6 +301,113 @@ export function createWriter({
       provider: route.provider,
       model: route.model || '',
       artifact: mode === 'agent' ? path.relative(projectRoot || '.', writerArtifactPath(absDirOf(projectRoot), clean)) : '',
+    };
+  };
+}
+
+/**
+ * 宿主侧的「正文润色」。
+ *
+ * 与 createWriter 的分工：写正文要联网、要落证据，走子代理；润色只在已有正文上改表达，
+ * 走一次 completion 就够 —— 子代理反而可能顺手重写事实，也慢得多。
+ * 落盘仍然走 target.writeBody，frontmatter 与标题由适配器保留。
+ */
+export function createPolisher({
+  getLlm,
+  digestDir = '.hotspot',
+  timeoutMs = DEFAULT_POLISH_TIMEOUT_MS,
+  log = () => {},
+} = {}) {
+  const dirOf = () => (typeof digestDir === 'function' ? digestDir() : digestDir);
+  const absDirOf = (projectRoot) => {
+    const dir = String(dirOf() || '.hotspot');
+    return path.isAbsolute(dir) ? dir : path.join(projectRoot || '.', dir);
+  };
+
+  return async function polish({
+    slug,
+    target,
+    projectRoot,
+    instruction,
+    provider: wantedProvider,
+    model: wantedModel,
+  }) {
+    const clean = String(slug ?? '').trim();
+    if (!clean) throw new Error('缺少 slug');
+    if (!target) throw new Error('还没有绑定博客项目根目录');
+
+    // 草稿定位交给适配器：它同时认识 draft/<slug>/index.md 与 draft/<slug>.md 两种布局。
+    const drafts = typeof target.listDrafts === 'function' ? await target.listDrafts() : [];
+    const item = (Array.isArray(drafts) ? drafts : []).find((d) => d && d.slug === clean) ?? null;
+    if (!item) throw new Error(`找不到草稿：${clean}`);
+
+    const article = await target.readArticle(item.file);
+    const before = String(article?.body ?? '');
+    if (!hasBodyContent(before)) throw new Error('正文还是空的，先补全正文再润色');
+    if ([...before].length > MAX_POLISH_BODY_CHARS) {
+      throw new Error(`正文 ${[...before].length} 字，超过单次润色上限 ${MAX_POLISH_BODY_CHARS} 字，请拆成几篇或手动分段润色`);
+    }
+
+    const llm = typeof getLlm === 'function' ? getLlm() : null;
+    if (!llm || typeof llm.stream !== 'function') {
+      throw new Error('宿主没有提供 llm 服务，无法润色正文');
+    }
+    const catalog = await listCatalog(llm);
+    const stored = await readWriterSelection(absDirOf(projectRoot));
+    const selection = normalizeWriterSelection({
+      provider: wantedProvider || stored.provider,
+      model: wantedModel || stored.model,
+    });
+    const route = resolveRoute(catalog, selection);
+    if (!route) throw new Error('宿主没有可用的模型路由，请先在面板里选一个模型');
+
+    const ask = String(instruction ?? '').trim();
+    const prompt = buildPolishPrompt({
+      title: String(article?.data?.title ?? item.title ?? clean),
+      body: before,
+      instruction: ask,
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`润色超时（${Math.round(timeoutMs / 1000)}s）`)),
+      timeoutMs,
+    );
+    let text = '';
+    try {
+      text = await streamOnce(llm, route, {
+        system: '你是中文技术博客编辑，只做表达层润色：不新增事实，也不丢已有的事实、数字与链接。',
+        prompt,
+        signal: controller.signal,
+        maxTokens: 8192,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const body = cleanPolishedBody(text);
+    if (!body) throw new Error('模型没有返回润色后的正文');
+
+    const facts = compareFacts(before, body);
+    const written = await target.writeBody(clean, body);
+    log(
+      `润色完成 ${route.provider}/${route.model}：${[...before].length} → ${[...body].length} 字` +
+        (facts.ok ? '' : `（事实差异：${describeFactDiff(facts)}）`),
+    );
+
+    return {
+      slug: clean,
+      file: written.file,
+      title: written.title,
+      mode: 'polish',
+      instruction: ask,
+      provider: route.provider,
+      model: route.model || '',
+      beforeChars: [...before].length,
+      bodyChars: [...body].length,
+      deltaChars: [...body].length - [...before].length,
+      facts,
+      factWarning: describeFactDiff(facts),
     };
   };
 }

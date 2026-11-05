@@ -11,6 +11,7 @@ import { createVitePressTarget } from './adapters/target-vitepress.js';
 import { registerCandidateSources } from './core/supplement.js';
 import { checkDraft } from './core/checks.js';
 import {
+  createPolisher,
   createWriter,
   listCatalog,
   readWriterSelection,
@@ -473,6 +474,13 @@ export function apply(ctx, config = {}) {
         digestDir: writerConfigDir,
         log,
       });
+      // 润色只改表达，走一次 completion；模型选择与写正文共用 .hotspot/writer-config.json，
+      // 免得面板里出现两套「用哪个模型」的选择。
+      const polisher = createPolisher({
+        getLlm: () => (typeof ctx.get === 'function' ? ctx.get('llm') : null),
+        digestDir: writerConfigDir,
+        log,
+      });
       for (const route of createRoutes({
         projectRoot,
         store,
@@ -480,6 +488,7 @@ export function apply(ctx, config = {}) {
         runScan,
         onConfigUpdated: updateRuntime,
         generate: writer,
+        polish: polisher,
         // 面板的模型下拉：目录来自宿主的 llm 服务，选择存在 .hotspot/writer-config.json。
         listModels: async () => {
           const llm = typeof ctx.get === 'function' ? ctx.get('llm') : null;

@@ -1111,6 +1111,106 @@ window.__ModuleLoader__.load({
         opacity: 0.72;
       }
 
+      /* ── 润色面板：填要求 → 润色，可反复改要求再润 ── */
+      .hs-polish {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex-shrink: 0;
+        margin: 12px 18px 0;
+        padding: 14px 16px;
+        border-radius: 10px;
+        border: 1px solid rgba(245, 158, 11, 0.26);
+        background: rgba(245, 158, 11, 0.07);
+      }
+      .hs-polish-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .hs-polish-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--dsw-alias-label-primary, #f4f4f7);
+      }
+      .hs-polish-sub {
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-tertiary, #7c8192);
+      }
+      .hs-polish-input {
+        width: 100%;
+        box-sizing: border-box;
+        resize: vertical;
+        min-height: 64px;
+        padding: 9px 11px;
+        border-radius: 8px;
+        border: 1px solid var(--dsw-alias-border-secondary, rgba(255, 255, 255, 0.12));
+        background: var(--dsw-alias-bg-secondary, rgba(255, 255, 255, 0.03));
+        color: var(--dsw-alias-label-primary, #f4f4f7);
+        font-family: inherit;
+        font-size: 12.5px;
+        line-height: 1.6;
+      }
+      .hs-polish-input:focus {
+        outline: none;
+        border-color: rgba(245, 158, 11, 0.55);
+      }
+      .hs-polish-input:disabled {
+        opacity: 0.6;
+      }
+      .hs-polish-presets {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .hs-polish-presets-label {
+        font-size: 11.5px;
+        color: var(--dsw-alias-label-tertiary, #7c8192);
+      }
+      .hs-polish-chip {
+        padding: 3px 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: transparent;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+        font-family: inherit;
+        font-size: 11.5px;
+        cursor: pointer;
+        transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      .hs-polish-chip:hover:not(:disabled) {
+        color: #fcd34d;
+        border-color: rgba(245, 158, 11, 0.45);
+        background: rgba(245, 158, 11, 0.1);
+      }
+      .hs-polish-chip:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .hs-polish-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .hs-polish-hint {
+        flex: 1;
+        min-width: 180px;
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: var(--dsw-alias-label-tertiary, #7c8192);
+      }
+      .hs-polish-empty {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 12.5px;
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+      }
+
       /* ── 动画关键帧（遵守 Emil 规范：入场 scale 从 0.96 开始，退出迅捷） ── */
       @keyframes hs-fade-mask {
         from { opacity: 0; }
@@ -1372,6 +1472,16 @@ window.__ModuleLoader__.load({
       return meaningful.length === 0;
     }
 
+    /** 润色要求的一键预设：点一下追加到输入框，用户还能接着改。 */
+    const POLISH_PRESETS = [
+      { label: '去 AI 味', text: '去掉「赋能、抓手、闭环、底层逻辑」这类词和空泛排比，像懂行的人在讲' },
+      { label: '更口语', text: '更口语一点，句子短一些，允许用「其实」「换句话说」这类过渡' },
+      { label: '精简七成', text: '压缩到原文的七成：删掉重复解释和铺垫，但事实、数字、链接一个都不能少' },
+      { label: '每节加例子', text: '每个小标题下补一个具体的例子或对比，例子只能用原文已有的信息，不许编' },
+      { label: '先结论后解释', text: '段落顺序不动，但每段开头先给结论，再解释为什么' },
+      { label: '只修语病', text: '只修语病和别扭的句子，不改语气，不动句子顺序' },
+    ];
+
     function HotspotMainPanel(props) {
       ensureStyles();
 
@@ -1432,6 +1542,9 @@ window.__ModuleLoader__.load({
       const [isPromotingArticle, setIsPromotingArticle] = useState(false);
       const [isDeletingArticle, setIsDeletingArticle] = useState(false);
       const [isWritingBody, setIsWritingBody] = useState(false);
+      const [isPolishingBody, setIsPolishingBody] = useState(false);
+      const [showPolishPanel, setShowPolishPanel] = useState(false);
+      const [polishInstruction, setPolishInstruction] = useState('');
 
       const handlePickDirectory = async () => {
         if (pickingDir) return null;
@@ -1529,6 +1642,9 @@ window.__ModuleLoader__.load({
             setEditSupplements(data.value.supplements || null);
             setShowEvidence(false);
             setEditViewMode('split');
+            // 换一篇草稿时不带着上一篇的润色要求
+            setShowPolishPanel(false);
+            setPolishInstruction('');
           } else {
             showToast(data.error || '读取文章内容失败', true);
           }
@@ -1592,6 +1708,65 @@ window.__ModuleLoader__.load({
           showToast(`完成正文失败：${err.message || err}`, true);
         } finally {
           setIsWritingBody(false);
+        }
+      };
+
+      /**
+       * 按用户填的要求把正文再润色一遍。
+       *
+       * 与「写正文」不同，润色不联网、不碰证据：走 POST /api/polish 的一次 completion，
+       * 服务端只改表达并把数字/链接的前后差异报回来（差异不拦截，但要在 toast 里说清楚）。
+       * 结果写盘后立刻读回编辑器，用户可以直接接着改要求再润色一次。
+       */
+      const handlePolishBody = async () => {
+        if (!editModalItem || !editModalItem.file || isPolishingBody) return;
+        const item = editModalItem;
+        const instruction = polishInstruction.trim();
+        // 润色以磁盘内容为底稿：未保存的修改不会进入润色，必须让用户先知道
+        if (editContent !== editOriginalContent) {
+          const ok = window.confirm(
+            '当前有未保存的修改。\n\n润色会以磁盘上的内容为底稿，这些修改不会进入润色结果（也会被覆盖）。\n建议先保存，或者接受现在这份内容被替换。'
+          );
+          if (!ok) return;
+        }
+
+        setIsPolishingBody(true);
+        try {
+          const res = await fetch(`${API_BASE}/polish`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ slug: item.slug, instruction })
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || data.message || '润色失败');
+
+          const reread = await fetch(`${API_BASE}/article?file=${encodeURIComponent(item.file)}`);
+          const article = await reread.json();
+          if (article.ok && article.value) {
+            setEditContent(article.value.content || '');
+            setEditOriginalContent(article.value.content || '');
+            setEditSupplements(article.value.supplements || null);
+          }
+
+          const value = data.value || {};
+          const size = value.beforeChars != null
+            ? `${value.beforeChars} → ${value.bodyChars || 0} 字`
+            : `${value.bodyChars || 0} 字`;
+          const warn = value.factWarning ? `；${value.factWarning}` : '';
+          const checks = value.checks;
+          const violations = checks && Array.isArray(checks.violations) ? checks.violations : [];
+          if (checks && checks.ok === false) {
+            showToast(`已润色（${size}）${warn}；校验还有 ${violations.length} 条违规`, true);
+          } else if (value.factWarning) {
+            showToast(`已润色（${size}）${warn}，请确认这些差异是否可接受`, true);
+          } else {
+            showToast(`✅ 已润色：${size}`);
+          }
+          await loadState();
+        } catch (err) {
+          showToast(`润色失败：${err.message || err}`, true);
+        } finally {
+          setIsPolishingBody(false);
         }
       };
 
@@ -3466,14 +3641,14 @@ window.__ModuleLoader__.load({
                 editModalItem.isDraft && h('button', {
                   className: 'hs-btn sm',
                   title: draftBodyEmpty
-                    ? '草稿正文还是空的：让写作子代理联网补料并补全正文'
-                    : '用写作子代理重写正文（会覆盖当前正文）',
-                  disabled: isWritingBody || isPromotingArticle || isSavingArticle || isDeletingArticle,
-                  onClick: handleWriteBody
-                }, isWritingBody ? '✍️ 写作中...' : (draftBodyEmpty ? '✨ 完成正文' : '✨ 重写正文')),
+                    ? '正文还是空的，先补全正文再来润色'
+                    : '按你的要求把正文再润色一遍：只改表达，数字与链接原样保留',
+                  disabled: isWritingBody || isPolishingBody || isPromotingArticle || isSavingArticle || isDeletingArticle,
+                  onClick: () => setShowPolishPanel((v) => !v)
+                }, showPolishPanel ? '✕ 收起润色' : '✨ 正文润色'),
                 editModalItem.isDraft && h('button', {
                   className: 'hs-btn sm primary',
-                  disabled: isWritingBody || isPromotingArticle || isSavingArticle || isDeletingArticle,
+                  disabled: isWritingBody || isPolishingBody || isPromotingArticle || isSavingArticle || isDeletingArticle,
                   onClick: () => handlePromoteArticle(editModalItem.slug)
                 }, isPromotingArticle ? '转正中...' : '🚀 转正发布'),
                 h('button', {
@@ -3497,6 +3672,64 @@ window.__ModuleLoader__.load({
                   }
                 }, '✕ 关闭')
               ])
+            ]),
+
+            // 润色面板：填要求 → 润色；写完还能接着改要求再润一次
+            editModalItem.isDraft && (showPolishPanel || isPolishingBody) && h('div', {
+              className: 'hs-polish',
+              key: 'polish-panel'
+            }, [
+              h('div', { className: 'hs-polish-head' }, [
+                h('span', { className: 'hs-polish-title' }, '✨ 正文润色'),
+                h('span', { className: 'hs-polish-sub' }, '只改表达：数字、版本号、日期、链接、引用原话都原样保留')
+              ]),
+              draftBodyEmpty
+                ? h('div', { className: 'hs-polish-empty' }, [
+                    h('span', null, isWritingBody ? '正文还没写，正在生成中…' : '正文还是空的，没有东西可润色。'),
+                    !isWritingBody && h('button', {
+                      className: 'hs-btn sm primary',
+                      onClick: handleWriteBody
+                    }, '✨ 先让子代理写正文')
+                  ])
+                : h('div', null, [
+                    h('textarea', {
+                      className: 'hs-polish-input',
+                      rows: 3,
+                      placeholder: '这次想怎么改？例如「更口语，去掉赋能/抓手这类词」「压到 800 字以内」「讲清楚和上一版的差别」…留空就按默认的整体润色（去 AI 味、句子有起伏）',
+                      value: polishInstruction,
+                      disabled: isPolishingBody,
+                      onInput: (e) => setPolishInstruction(e.target.value)
+                    }),
+                    h('div', { className: 'hs-polish-presets' }, [
+                      h('span', { className: 'hs-polish-presets-label' }, '常用：'),
+                      ...POLISH_PRESETS.map((preset) => h('button', {
+                        key: preset.label,
+                        className: 'hs-polish-chip',
+                        type: 'button',
+                        disabled: isPolishingBody,
+                        onClick: () => setPolishInstruction((prev) => {
+                          const cur = String(prev || '').trim();
+                          return cur ? `${cur}；${preset.text}` : preset.text;
+                        })
+                      }, preset.label))
+                    ]),
+                    h('div', { className: 'hs-polish-actions' }, [
+                      h('span', { className: 'hs-polish-hint' },
+                        isPolishingBody
+                          ? '正在润色，最长 3 分钟；生成完会自动读回正文'
+                          : (polishInstruction.trim() ? '按上面这段要求改，改完直接写盘' : '不填也行：默认去 AI 味、整体通顺')),
+                      h('button', {
+                        className: 'hs-btn sm',
+                        disabled: isPolishingBody,
+                        onClick: () => setShowPolishPanel(false)
+                      }, '收起'),
+                      h('button', {
+                        className: 'hs-btn sm primary',
+                        disabled: isPolishingBody || isSavingArticle,
+                        onClick: handlePolishBody
+                      }, isPolishingBody ? '✍️ 润色中...' : '✨ 开始润色')
+                    ])
+                  ])
             ]),
 
             // 生成正文进行中：写作子代理最长要跑 8 分钟，明确告诉用户别关面板
@@ -3563,13 +3796,13 @@ window.__ModuleLoader__.load({
                     h('span', null, '这篇草稿还没有正文')
                   ]),
                   h('div', { className: 'hs-body-empty-desc' },
-                    'scaffold 只写了标题、摘要和来源，正文是空的。点下面的按钮，写作子代理会先联网补料、把来源登记进证据账本，再按这些材料把正文写完；结果直接写进这个文件，你可以继续手动修改。'),
+                    'scaffold 只写了标题、摘要和来源，正文是空的，所以还不能润色。点下面的按钮，写作子代理会先联网补料、把来源登记进证据账本，再按这些材料把正文写完；写完就可以用头部的「✨ 正文润色」按你的要求反复润。'),
                   h('div', { className: 'hs-body-empty-actions' }, [
                     h('button', {
                       className: 'hs-btn primary',
                       disabled: isWritingBody,
                       onClick: handleWriteBody
-                    }, isWritingBody ? '✍️ 正在生成正文...' : '✨ 完成正文'),
+                    }, isWritingBody ? '✍️ 正在生成正文...' : '✨ 让子代理写正文'),
                     h('span', { className: 'hs-body-empty-hint' },
                       isWritingBody
                         ? '最长 8 分钟，请勿关闭面板'

@@ -5,7 +5,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createVitePressTarget } from '../src/adapters/target-vitepress.js';
-import { createWriter, pickProvider, readWriterSelection, saveWriterSelection } from '../src/server/generate.js';
+import {
+  createPolisher,
+  createWriter,
+  pickProvider,
+  readWriterSelection,
+  saveWriterSelection,
+} from '../src/server/generate.js';
 
 const CANDIDATE = {
   id: 'h-20261105-01',
@@ -191,4 +197,67 @@ test('模型选择：存盘后下一次生成沿用，缺省是 agent 模式', a
     model: '',
     mode: 'agent',
   });
+});
+
+test('润色：只走一次 completion，写回正文并把事实差异一并报出', async () => {
+  const { root, target } = await setup();
+  await target.writeBody('demo-post', '# Demo Post\n\n原文提到版本 1.2.3，共 42 个用例。\n');
+
+  const prompts = [];
+  const llm = {
+    async listProviders() {
+      return [{ provider: 'deepseek', name: 'DeepSeek' }];
+    },
+    async listModels() {
+      return [{ id: 'chat', name: 'Chat' }];
+    },
+    async *stream(options) {
+      prompts.push(options);
+      yield { type: 'chunk', chunk: { type: 'text-delta', text: '以下是润色后的正文：\n' } };
+      yield { type: 'text-chunks', texts: ['# Demo Post\n\n', '这段改得更顺了，版本 1.2.3 还在，用例数没提。\n'] };
+    },
+  };
+
+  const polish = createPolisher({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+  const value = await polish({
+    slug: 'demo-post',
+    target,
+    projectRoot: root,
+    instruction: '更口语一点',
+  });
+
+  assert.equal(value.mode, 'polish');
+  assert.equal(value.provider, 'deepseek');
+  assert.equal(value.model, 'chat');
+  assert.equal(prompts.length, 1, '润色只发一次 completion，不分子代理');
+  assert.match(prompts[0].messages[0].content[0].text, /更口语一点/);
+  assert.match(prompts[0].system, /只做表达层润色/);
+
+  const text = readFileSync(path.join(root, value.file), 'utf8');
+  assert.match(text, /^---/);
+  assert.match(text, /这段改得更顺了/);
+  // 开场白必须被削掉，不能留在正文里
+  assert.doesNotMatch(text, /以下是润色后的正文/);
+  // 丢了「42 个用例」要被识别成事实差异（只报不拦）
+  assert.equal(value.facts.ok, false);
+  assert.match(value.factWarning, /42/);
+});
+
+test('润色：正文为空时拒绝，不把 scaffold 骨架当正文改', async () => {
+  const { root, target } = await setup();
+  const llm = { async listProviders() { return [{ provider: 'deepseek' }]; }, async listModels() { return [{ id: 'chat' }]; }, async *stream() { throw new Error('不应调用模型'); } };
+  const polish = createPolisher({ getLlm: () => llm, digestDir: '.hotspot', log: () => {} });
+  await assert.rejects(
+    () => polish({ slug: 'demo-post', target, projectRoot: root, instruction: '' }),
+    /正文还是空的/,
+  );
+});
+
+test('润色：草稿不存在时明确报错', async () => {
+  const { root, target } = await setup({ draft: false });
+  const polish = createPolisher({ getLlm: () => null, digestDir: '.hotspot' });
+  await assert.rejects(
+    () => polish({ slug: 'nope', target, projectRoot: root, instruction: '' }),
+    /找不到草稿/,
+  );
 });
