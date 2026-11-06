@@ -146,10 +146,9 @@
     <div class="card">
       <div class="row" style="margin-bottom:10px">
         <strong style="font-weight:500">新增源</strong>
-        <span class="muted">kind 决定要填哪些字段</span>
+        <span class="muted">id 自动从域名推导 · 先测再添加</span>
       </div>
       <div class="grid">
-        <input id="newId" placeholder="id（小写-连字符）">
         <select id="newKind">
           <option value="rss">rss</option>
           <option value="github-release">github-release</option>
@@ -159,14 +158,16 @@
         <input id="newPoints" type="number" placeholder="minPoints（仅 hn）" value="100">
       </div>
       <div class="row" style="margin-top:10px">
+        <button id="testSource">测试</button>
         <button class="primary" id="addSource">添加</button>
         <span class="muted" id="sourceHint"></span>
       </div>
+      <div class="row" style="margin-top:6px"><span class="muted" id="derivedId"></span></div>
     </div>
     <div class="card">
       <div class="row" style="margin-bottom:8px"><span class="muted" id="sourcesMode"></span></div>
       <table>
-        <thead><tr><th style="width:150px">id</th><th style="width:130px">kind</th><th>目标</th><th style="width:70px"></th></tr></thead>
+        <thead><tr><th style="width:190px">源</th><th style="width:110px">kind</th><th>目标</th><th style="width:170px"></th></tr></thead>
         <tbody id="sourceRows"></tbody>
       </table>
     </div>
@@ -283,39 +284,99 @@ function sourceTarget(source) {
   return source.url || '';
 }
 
-// 与扫描同一套判定：配置里有源就抓配置里的，一个都没有就用内置默认源。
-function builtinMode() {
-  if (state?.sourcesMode) return state.sourcesMode === 'builtin';
-  return !(Array.isArray(state?.config?.sources) && state.config.sources.length > 0);
+// 内置源常驻、默认全开（可关不可删）；sources 里只放自定义源。
+function builtinList() {
+  return (state?.builtinSources || []).map((source) => ({ ...source, enabled: source.enabled !== false }));
+}
+
+/** 把「表单当前值」拼成一条源（还没入库），用于先测再添加。 */
+function formSource() {
+  const kind = $('newKind').value;
+  const target = $('newTarget').value.trim();
+  if (kind === 'github-release') return { kind, repo: target };
+  if (kind === 'hn') return { kind, minPoints: Number($('newPoints').value) || 100 };
+  return { kind, url: target };
+}
+
+async function testSource(source, resultEl) {
+  if (!resultEl) return;
+  resultEl.textContent = '测试中…';
+  resultEl.style.color = '';
+  try {
+    const value = await api('/sources/test', { method: 'POST', body: JSON.stringify(source) });
+    resultEl.textContent = value.ok ? '✓ ' + value.items + ' 条 · ' + value.ms + 'ms' : '✗ ' + (value.error || '失败');
+    resultEl.style.color = value.ok ? '#34d399' : '#f87171';
+  } catch (error) {
+    resultEl.textContent = '✗ ' + error.message;
+    resultEl.style.color = '#f87171';
+  }
 }
 
 function renderSources() {
-  const builtinIds = new Set((state?.builtinSources || []).map((source) => source.id));
-  const rows = sources.map((source, index) => {
-    const builtin = builtinIds.has(source.id) ? ' <span class="tag">内置</span>' : '';
-    const action = builtinMode()
-      ? '<span class="muted" style="font-size:11px">默认生效</span>'
-      : '<button class="ghost danger" data-del="' + index + '">删除</button>';
-    return '<tr>' +
-      '<td><code>' + esc(source.id) + '</code>' + builtin + '</td>' +
+  const builtins = builtinList();
+  const rows = [];
+  for (const builtin of [...builtins.filter((s) => s.enabled), ...builtins.filter((s) => !s.enabled)]) {
+    rows.push('<tr>' +
+      '<td><code>' + esc(builtin.id) + '</code> <span class="tag">内置</span>' +
+        (builtin.enabled ? '' : ' <span class="tag">已关闭</span>') + '</td>' +
+      '<td>' + esc(builtin.kind) + '</td>' +
+      '<td class="muted" style="word-break:break-all">' + esc(builtin.url || '') + '</td>' +
+      '<td><button class="ghost" data-test-builtin="' + esc(builtin.id) + '">测试</button>' +
+        '<button class="ghost" data-toggle="' + esc(builtin.id) + '" data-enabled="' + (builtin.enabled ? '0' : '1') + '">' +
+        (builtin.enabled ? '关闭' : '开启') + '</button>' +
+        '<span class="muted" style="font-size:11px" data-result></span></td>' +
+      '</tr>');
+  }
+  sources.forEach((source, index) => {
+    rows.push('<tr>' +
+      '<td><code>' + esc(source.id) + '</code></td>' +
       '<td>' + esc(source.kind) + '</td>' +
       '<td class="muted" style="word-break:break-all">' + esc(sourceTarget(source)) + '</td>' +
-      '<td>' + action + '</td>' +
-      '</tr>';
-  }).join('');
-  $('sourceRows').innerHTML = rows || '<tr><td colspan="4" class="muted">还没有源，先添加一个</td></tr>';
-  // 内置默认源正在生效时，删掉它也会立刻回落到默认源，所以不给删除按钮。
-  if (!builtinMode()) {
-    $('sourceRows').querySelectorAll('[data-del]').forEach((button) => {
-      button.onclick = async () => {
-        sources.splice(Number(button.dataset.del), 1);
-        await saveSources();
-      };
-    });
-  }
-  $('sourcesMode').textContent = builtinMode()
-    ? '配置里没有自定义源，扫描直接使用内置默认源；添加任意自定义源后以配置为准'
-    : '聚合扫描时会并发采集下面所有源';
+      '<td><button class="ghost" data-test-custom="' + index + '">测试</button>' +
+        '<button class="ghost danger" data-del="' + index + '">删除</button>' +
+        '<span class="muted" style="font-size:11px" data-result></span></td>' +
+      '</tr>');
+  });
+  $('sourceRows').innerHTML = rows.join('') || '<tr><td colspan="4" class="muted">还没有源，先添加一个</td></tr>';
+
+  $('sourceRows').querySelectorAll('[data-del]').forEach((button) => {
+    button.onclick = async () => {
+      sources.splice(Number(button.dataset.del), 1);
+      await saveSources();
+    };
+  });
+  $('sourceRows').querySelectorAll('[data-test-builtin]').forEach((button) => {
+    button.onclick = () => {
+      const builtin = builtins.find((item) => item.id === button.dataset.testBuiltin);
+      if (builtin) testSource({ kind: builtin.kind, url: builtin.url }, button.parentElement.querySelector('[data-result]'));
+    };
+  });
+  $('sourceRows').querySelectorAll('[data-test-custom]').forEach((button) => {
+    button.onclick = () => {
+      const source = sources[Number(button.dataset.testCustom)];
+      if (source) testSource(source, button.parentElement.querySelector('[data-result]'));
+    };
+  });
+  $('sourceRows').querySelectorAll('[data-toggle]').forEach((button) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        await api('/sources/builtin', {
+          method: 'POST',
+          body: JSON.stringify({ id: button.dataset.toggle, enabled: button.dataset.enabled === '1' }),
+        });
+        await load();
+      } catch (error) {
+        toast(error.message, true);
+        button.disabled = false;
+      }
+    };
+  });
+
+  const enabledCount = builtins.filter((s) => s.enabled).length;
+  $('sourcesMode').textContent =
+    '内置源 ' + enabledCount + '/' + builtins.length + ' 个生效（可关不可删）· 自定义源 ' + sources.length +
+    ' 个 · 聚合扫描会并发采集全部生效源';
 }
 
 async function saveSources() {
@@ -634,7 +695,7 @@ function renderConfig() {
 async function load() {
   try {
     state = await api('/state');
-    sources = (state.activeSources || state.config.sources || []).slice();
+    sources = (state.customSources || state.config.sources || []).slice();
     $('projectPath').textContent = state.projectRoot;
     renderSources();
     renderItems();
@@ -677,19 +738,77 @@ $('run').onclick = async () => {
   }
 };
 
-$('addSource').onclick = async () => {
-  const kind = $('newKind').value;
-  const source = { id: $('newId').value.trim(), kind };
-  if (kind === 'github-release') source.repo = $('newTarget').value.trim();
-  else if (kind === 'hn') source.minPoints = Number($('newPoints').value) || 100;
-  else source.url = $('newTarget').value.trim();
+// 添加前的门禁：先测通才能加；测挂了要再点一次「添加」确认
+let formTestState = 'untested';
+let formTestKey = '';
 
-  if (!source.id) return toast('先填 id', true);
+$('testSource').onclick = async () => {
+  const source = formSource();
+  formTestKey = JSON.stringify(source);
+  const result = $('sourceHint');
+  result.textContent = '测试中…';
+  result.style.color = '';
+  try {
+    const value = await api('/sources/test', { method: 'POST', body: JSON.stringify(source) });
+    formTestState = value.ok ? 'passed' : 'failed';
+    result.textContent = value.ok
+      ? '✓ ' + value.items + ' 条 · ' + value.ms + 'ms，可以添加'
+      : '✗ ' + (value.error || '失败') + '（确认要加就再点一次「添加」）';
+    result.style.color = value.ok ? '#34d399' : '#f87171';
+  } catch (error) {
+    formTestState = 'failed';
+    result.textContent = '✗ ' + error.message;
+    result.style.color = '#f87171';
+  }
+};
+
+$('addSource').onclick = async () => {
+  const source = formSource();
+  const key = JSON.stringify(source);
+  if (formTestKey !== key || formTestState === 'untested') {
+    return toast('先点「测试」确认能连通', true);
+  }
+  if (formTestState === 'failed') {
+    // 第一次点只是确认：把状态翻成「已确认」，再点一次才真的加
+    if (formTestState !== 'confirmed') {
+      formTestState = 'confirmed';
+      return toast('测试没通过，确认要加就再点一次「添加」', true);
+    }
+  }
   sources.push(source);
   await saveSources();
-  $('newId').value = '';
   $('newTarget').value = '';
+  $('derivedId').textContent = '';
+  formTestState = 'untested';
+  formTestKey = '';
+  $('sourceHint').textContent = '';
 };
+
+// id 预览：问服务端要推导结果，本地不复制一套规则
+let deriveTimer = null;
+function scheduleDerive() {
+  clearTimeout(deriveTimer);
+  deriveTimer = setTimeout(async () => {
+    const kind = $('newKind').value;
+    const target = $('newTarget').value.trim();
+    if (kind !== 'hn' && !target) {
+      $('derivedId').textContent = '';
+      return;
+    }
+    try {
+      const params = new URLSearchParams({ kind });
+      if (kind === 'github-release') params.set('repo', target);
+      else if (kind !== 'hn') params.set('url', target);
+      const value = await api('/sources/derive?' + params.toString());
+      $('derivedId').textContent = '来源标注 id：' + value.id + '（自动推导，不用手填）';
+    } catch {
+      $('derivedId').textContent = '';
+    }
+  }, 300);
+}
+$('newKind').onchange = () => { formTestState = 'untested'; scheduleDerive(); };
+$('newTarget').oninput = () => { formTestState = 'untested'; scheduleDerive(); };
+$('newPoints').oninput = () => { formTestState = 'untested'; };
 
 function renderDeployResult(value) {
   const out = $('deployOut');
