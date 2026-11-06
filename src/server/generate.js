@@ -407,9 +407,10 @@ export function createTitleSuggester({
         system: '你是中文技术博客编辑，只根据给定材料起标题，不编造事实。',
         prompt,
         signal: controller.signal,
-        // 给 2000 而不是几百：思考型模型会先花掉一段预算再吐正文，
-        // 预算给小了会表现成「模型没有返回任何文本」（写正文用 4096，同理）。
-        maxTokens: 2000,
+        // 给 4096 而不是几百：思考型模型会先花掉一段预算再吐正文，预算给小了
+        // 会表现成「模型没有返回任何文本」。maxTokens 是上限不是开销 ——
+        // 模型写完标题自己会停，把上限抬高只是把这条路堵死。
+        maxTokens: 4096,
         onChunk: probe.onChunk,
       });
     } finally {
@@ -500,8 +501,9 @@ export function createDescriptionSuggester({
         system: '你是中文技术博客编辑，只根据给定材料写简介，不编造事实。',
         prompt,
         signal: controller.signal,
-        // 思考型模型会先花掉一段预算：给 1200 而不是几百（起标题那边同理）。
-        maxTokens: 1200,
+        // 与起标题同一条理由：思考型模型先烧预算，上限给足（它是上限，不是开销）。
+        // 真机上 1200 会只吐 reasoning-delta、一个字正文都没有。
+        maxTokens: 4096,
         onChunk: probe.onChunk,
       });
     } finally {

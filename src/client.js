@@ -17,13 +17,6 @@ window.__ModuleLoader__.load({
      * 早期版本这里读 state.config.sources —— 那是「配置文件里的真实内容」，
      * 可能为空，拿它当基底添加源会把默认源一起丢掉。
      */
-    const activeSourceList = (state) => {
-      if (Array.isArray(state?.activeSources) && state.activeSources.length > 0) return state.activeSources;
-      const configured = Array.isArray(state?.config?.sources) ? state.config.sources : [];
-      if (configured.length > 0) return configured;
-      return Array.isArray(state?.builtinSources) ? state.builtinSources : [];
-    };
-
     // ── 样式体系：融合 DSH 原生主题变量与 Emil Kowalski 高质感设计工程原则 ───
     const STYLES = `
       :root {
@@ -1592,6 +1585,38 @@ window.__ModuleLoader__.load({
       .hs-preview-pane a:hover {
         text-decoration: underline;
       }
+      /* ── 订阅源行：内置徽标 / 关闭态 / 行内测试结果 ── */
+      .hs-src-desc {
+        margin-top: 2px;
+        font-size: 11px;
+        color: var(--dsw-alias-label-secondary, #8c909e);
+      }
+      .hs-src-test {
+        margin-left: 8px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-variant-numeric: tabular-nums;
+        border: 1px solid var(--dsw-alias-border-l1, #2d303b);
+        color: var(--dsw-alias-label-secondary, #9da1b0);
+      }
+      .hs-src-test.ok {
+        border-color: rgba(16, 185, 129, 0.35);
+        background: rgba(16, 185, 129, 0.12);
+        color: #34d399;
+      }
+      .hs-src-test.fail {
+        border-color: rgba(248, 113, 113, 0.35);
+        background: rgba(248, 113, 113, 0.1);
+        color: #f87171;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: inline-block;
+        vertical-align: bottom;
+      }
+
       .hs-preview-frontmatter {
         background: rgba(0, 0, 0, 0.25);
         border: 1px dashed var(--dsw-alias-border-l1, #282a34);
@@ -2373,7 +2398,10 @@ window.__ModuleLoader__.load({
       const [articleTagFilter, setArticleTagFilter] = useState('all');
 
       // 新增源表单
-      const [newId, setNewId] = useState('');
+      // 源 id 不再手填：由服务端从域名推导（面板只读展示）
+      const [derivedId, setDerivedId] = useState('');
+      // 连接测试结果：key 是源 id（表单里用 '__form__'），值 { state, items, ms, error, sample }
+      const [sourceTests, setSourceTests] = useState({});
       const [newKind, setNewKind] = useState('rss');
       const [newTarget, setNewTarget] = useState('');
       const [newPoints, setNewPoints] = useState(100);
@@ -2422,6 +2450,8 @@ window.__ModuleLoader__.load({
       const [descriptionState, setDescriptionState] = useState('idle'); // idle | loading | done | failed
       // 连点几个标题时，只认最后一次请求的结果
       const descriptionToken = useRef(0);
+      // 当前弹窗里的候选：起标题/写简介是异步链，setState 还没生效时也要拿到 id
+      const scaffoldItemRef = useRef(null);
       // 进度弹窗：按 slug 看一条后台写作任务的六步链路
       const [progressSlug, setProgressSlug] = useState(null);
       // 博客正文查看：按草稿读出正文，套博客排版看发布后大概长什么样
@@ -2951,7 +2981,8 @@ window.__ModuleLoader__.load({
        */
       const suggestDescription = async (title) => {
         const finalTitle = String(title ?? '').trim();
-        if (!finalTitle || !scaffoldModalItem?.id) {
+        const itemId = scaffoldItemRef.current?.id || scaffoldModalItem?.id;
+        if (!finalTitle || !itemId) {
           setDescriptionState('failed');
           return;
         }
@@ -2962,7 +2993,7 @@ window.__ModuleLoader__.load({
           const res = await fetch(`${API_BASE}/description-suggest`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ id: scaffoldModalItem.id, title: finalTitle })
+            body: JSON.stringify({ id: itemId, title: finalTitle })
           });
           const data = await res.json();
           if (token !== descriptionToken.current) return;
@@ -2990,6 +3021,7 @@ window.__ModuleLoader__.load({
        * 标题不再默认复制原文 —— 弹窗一打开就去要 3 个模型起的标题。
        */
       const handleScaffold = (item) => {
+        scaffoldItemRef.current = item;
         setScaffoldModalItem(item);
         setScaffoldTitle(String(item?.title || ''));
         setScaffoldSlug(item?.slugHint || suggestSlug(item));
@@ -3131,6 +3163,7 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.ok) {
+            scaffoldItemRef.current = null;
             setScaffoldModalItem(null);
             setTitleSuggestions([]);
             setTitleSuggestState('idle');
@@ -3189,14 +3222,69 @@ window.__ModuleLoader__.load({
         }
       };
 
+      // 表单里的 id 预览：问服务端要，本地不复制一套推导规则（复制必然漂）
+      useEffect(() => {
+        const target = String(newTarget || '').trim();
+        if (newKind === 'hn') {
+          setDerivedId('hn');
+          return undefined;
+        }
+        if (!target) {
+          setDerivedId('');
+          return undefined;
+        }
+        let alive = true;
+        const timer = setTimeout(async () => {
+          try {
+            const params = new URLSearchParams({ kind: newKind });
+            if (newKind === 'github-release') params.set('repo', target);
+            else params.set('url', target);
+            const res = await fetch(`${API_BASE}/sources/derive?${params.toString()}`);
+            const data = await res.json();
+            if (alive && data.ok) setDerivedId(data.value?.id || '');
+          } catch {
+            /* 预览失败不打扰用户，提交时服务端还会再推导一次 */
+          }
+        }, 300);
+        return () => {
+          alive = false;
+          clearTimeout(timer);
+        };
+      }, [newKind, newTarget]);
+
+      /**
+       * 连接测试：真的抓一次，只报告能不能用（不入库、不改配置）。
+       * @param {{ key: string, source: object }} input
+       */
+      const testSource = async ({ key, source }) => {
+        setSourceTests((prev) => ({ ...prev, [key]: { state: 'testing' } }));
+        try {
+          const res = await fetch(`${API_BASE}/sources/test`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(source)
+          });
+          const data = await res.json();
+          const value = data.ok ? data.value : null;
+          setSourceTests((prev) => ({
+            ...prev,
+            [key]: value
+              ? { state: value.ok ? 'ok' : 'fail', items: value.items, ms: value.ms, error: value.error, sample: value.sample }
+              : { state: 'fail', error: data.message || '测试失败' }
+          }));
+        } catch (err) {
+          setSourceTests((prev) => ({ ...prev, [key]: { state: 'fail', error: err.message } }));
+        }
+      };
+
       const handleAddSource = async () => {
-        if (!newId || !newTarget) {
-          showToast('请完整填写 ID 与目标', true);
+        if (!newTarget && newKind !== 'hn') {
+          showToast('请填写订阅源地址', true);
           return;
         }
-        // 基数组用「有效源」：配置里没写源时内置源正在生效，用它当基底才不会把默认源挤掉。
-        const currentSources = activeSourceList(state);
-        const source = { id: newId.trim(), kind: newKind };
+        // 基数组用「自定义源」：内置源常驻、不能写进 sources，否则会被服务端当成占用内置 id
+        const currentSources = (state?.customSources || state?.config?.sources || []).filter((item) => item && item.id);
+        const source = { kind: newKind };
         if (newKind === 'github-release') {
           source.repo = newTarget.trim();
         } else if (newKind === 'hn') {
@@ -3213,9 +3301,10 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.ok) {
-            showToast('源已成功添加');
-            setNewId('');
+            showToast(`源已添加：${data.value?.sources?.slice(-1)[0]?.id || 'ok'}`);
+            setDerivedId('');
             setNewTarget('');
+            setSourceTests((prev) => ({ ...prev, __form__: undefined }));
             await loadState();
           } else {
             showToast(data.message || '添加源失败', true);
@@ -3225,59 +3314,53 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const handleAddPresetSource = async (preset) => {
-        const currentSources = activeSourceList(state);
-        if (currentSources.some((s) => s.url === preset.url || s.id === preset.id)) {
-          showToast('该订阅源已在列表中');
-          return;
-        }
+      /** 开关内置源：只能关/开，不能删、不能改地址。 */
+      const handleToggleBuiltin = async (id, enabled) => {
         try {
-          const res = await fetch(`${API_BASE}/sources`, {
+          const res = await fetch(`${API_BASE}/sources/builtin`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sources: [...currentSources, preset] })
+            body: JSON.stringify({ id, enabled })
           });
           const data = await res.json();
           if (data.ok) {
-            showToast('已成功添加内置订阅源');
+            showToast(enabled ? '内置源已开启' : '内置源已关闭（可随时再开）');
             await loadState();
           } else {
-            showToast(data.message || '添加订阅源失败', true);
+            showToast(data.message || '切换失败', true);
           }
         } catch (err) {
           showToast(err.message, true);
         }
       };
 
-      const handleEnableBuiltins = async () => {
-        const currentSources = activeSourceList(state);
-        const pending = (state?.builtinSources || []).filter(
-          (preset) => !currentSources.some((s) => s.url === preset.url || s.id === preset.id)
-        );
-        if (pending.length === 0) {
-          showToast('内置源已全部启用');
+      /** 一键把关掉的内置源全部打开。 */
+      const handleEnableAllBuiltins = async () => {
+        const disabled = (state?.builtinSources || []).filter((source) => source.enabled === false);
+        if (disabled.length === 0) {
+          showToast('内置源已全部开启');
           return;
         }
         try {
-          const res = await fetch(`${API_BASE}/sources`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sources: [...currentSources, ...pending] })
-          });
-          const data = await res.json();
-          if (data.ok) {
-            showToast(`已启用 ${pending.length} 个内置源`);
-            await loadState();
-          } else {
-            showToast(data.message || '启用内置源失败', true);
+          for (const source of disabled) {
+            const res = await fetch(`${API_BASE}/sources/builtin`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ id: source.id, enabled: true })
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || '开启失败');
           }
+          showToast(`已开启 ${disabled.length} 个内置源`);
+          await loadState();
         } catch (err) {
           showToast(err.message, true);
         }
       };
 
       const handleDeleteSource = async (id) => {
-        const currentSources = activeSourceList(state).filter(s => s.id !== id);
+        // 只改自定义源：内置源不写进 sources，删它会连带把用户自己的源抹掉
+        const currentSources = (state?.customSources || state?.config?.sources || []).filter((item) => item && item.id && item.id !== id);
         try {
           const res = await fetch(`${API_BASE}/sources`, {
             method: 'POST',
@@ -3516,7 +3599,7 @@ window.__ModuleLoader__.load({
       const rssHref = (typeof window !== 'undefined' ? window.location.origin : '') + rssPath;
       const sourceLabelOf = (id) => {
         if (!id) return '';
-        const all = [...activeSourceList(state), ...(state?.builtinSources || [])];
+        const all = [...(state?.builtinSources || []), ...(state?.config?.sources || [])];
         return all.find((source) => source.id === id)?.name || id;
       };
       // 每条候选来自哪些源；整个列表只有一个源时就不必每行重复写源名。
@@ -3543,18 +3626,13 @@ window.__ModuleLoader__.load({
       ];
       const visibleFeedItems = feedExpanded ? feedItems : feedItems.slice(0, FEED_PREVIEW);
 
-      // 内置源不再单开一块：并进订阅源清单，用「内置」标签区分。
-      const builtinSources = state?.builtinSources || [];
-      const builtinIds = new Set(builtinSources.map((s) => s.id));
-      const configuredSources = state?.config?.sources || [];
-      const configuredSourceIds = new Set(configuredSources.map((s) => s.id));
-      // 配置里一个源都没写时，内置默认源直接生效（sourcesMode='builtin'）。
-      // 这时清单里列的就是正在抓的源，但不可移除 —— 删掉也会立刻回落到默认源。
-      const builtinMode = (state?.sourcesMode || (configuredSources.length > 0 ? 'config' : 'builtin')) === 'builtin';
-      const listedSources = builtinMode ? activeSourceList(state) : configuredSources;
-      const missingBuiltins = builtinMode
-        ? []
-        : builtinSources.filter((s) => !configuredSourceIds.has(s.id));
+      // 内置源常驻、默认全开（可关不可删）；自定义源叠在后面。
+      const builtinSources = (state?.builtinSources || []).map((source) => ({ ...source, enabled: source.enabled !== false }));
+      const enabledBuiltins = builtinSources.filter((source) => source.enabled);
+      const disabledBuiltins = builtinSources.filter((source) => !source.enabled);
+      // 用服务端去重后的自定义源：与内置源同 id 同地址的复制不会重复显示
+      const customSources = (state?.customSources || state?.config?.sources || []).filter((source) => source && source.id);
+      const activeSourceCount = enabledBuiltins.length + customSources.length;
 
       const deployConfigured = Boolean(state?.config?.deploy?.configured);
       const savedDeployScript = state?.config?.deploy?.script || '';
@@ -4017,7 +4095,7 @@ window.__ModuleLoader__.load({
             key: 'tab-s'
           }, [
             '订阅源管理',
-            h('span', { className: 'hs-tab-count' }, activeSourceList(state).length)
+            h('span', { className: 'hs-tab-count' }, activeSourceCount)
           ]),
           h('button', {
             className: `hs-tab ${tab === 'drafts' || tab === 'articles' ? 'active' : ''}`,
@@ -4347,11 +4425,8 @@ window.__ModuleLoader__.load({
             ])
           ]),
 
-          // ── TAB: 订阅源管理（添加一行 + 行式清单；内置源不单开 hero） ──
+          // ── TAB: 订阅源管理（内置常驻·可关不可删；自定义可增删；id 自动推导 + 连接测试） ──
           tab === 'sources' && (() => {
-            const enabledCount = listedSources.length;
-            const customCount = builtinMode ? 0 : configuredSources.length;
-            const builtinEnabled = listedSources.filter(s => builtinIds.has(s.id)).length;
             const feedsTotal = state?.digest?.status?.feedsTotal;
             const feedsOk = state?.digest?.status?.feedsOk;
             const kindLabel = (kind) => (
@@ -4369,40 +4444,109 @@ window.__ModuleLoader__.load({
               if (source.kind === 'hn') return `Hacker News 榜单 · minPoints ${source.minPoints ?? '—'}`;
               return '';
             };
-
             const kindOptions = [
               { value: 'rss', label: 'RSS / Atom' },
               { value: 'github-release', label: 'GitHub Release' },
               { value: 'hn', label: 'Hacker News' }
             ];
 
+            /** 表单当前值 → 一条「还没入库」的源，用来先测再提交。 */
+            const formSource = () => {
+              if (newKind === 'github-release') return { kind: newKind, repo: String(newTarget || '').trim() };
+              if (newKind === 'hn') return { kind: newKind, minPoints: Number(newPoints) || 100 };
+              return { kind: newKind, url: String(newTarget || '').trim() };
+            };
+            const formTest = sourceTests.__form__;
+            // HN 不需要地址，其余必须填了才能测/提交
+            const formReady = newKind === 'hn' || Boolean(String(newTarget || '').trim());
+
+            const testBadge = (result) => {
+              if (!result) return null;
+              if (result.state === 'testing') return h('span', { className: 'hs-src-test' }, '测试中…');
+              if (result.state === 'ok') {
+                return h('span', {
+                  className: 'hs-src-test ok',
+                  title: (result.sample || []).join('\n') || '窗口内没有条目'
+                }, `✓ ${result.items} 条 · ${result.ms}ms`);
+              }
+              return h('span', {
+                className: 'hs-src-test fail',
+                title: result.error || ''
+              }, `✗ ${String(result.error || '失败').slice(0, 48)}`);
+            };
+
+            /** 一行源：内置的只能开关，自定义的能移除；两种都能单独测一次。 */
+            const sourceRow = (source, { builtin }) => {
+              const testKey = `test:${source.id}`;
+              const result = sourceTests[testKey];
+              const off = builtin && source.enabled === false;
+              return h('div', {
+                key: `${builtin ? 'builtin' : 'custom'}-${source.id}`,
+                className: `hs-src-row${off ? ' pending' : ''}`
+              }, [
+                h('span', { className: `hs-src-kind ${kindClass(source.kind)}` }, kindLabel(source.kind)),
+                h('div', { className: 'hs-src-main' }, [
+                  h('div', { className: 'hs-src-title' }, [
+                    source.name || source.id,
+                    builtin && h('span', { className: 'hs-src-kind hs-src-builtin' }, '内置'),
+                    off && h('span', { className: 'hs-src-kind' }, '已关闭'),
+                    testBadge(result)
+                  ]),
+                  h('div', { className: 'hs-src-target', title: targetOf(source) }, targetOf(source)),
+                  (builtin ? source.description : `来源标注：${source.id}`) && h('div', {
+                    className: 'hs-src-desc'
+                  }, builtin ? source.description : `来源标注：${source.id}`)
+                ]),
+                h('div', { className: 'hs-src-actions' }, [
+                  h('button', {
+                    className: 'hs-btn ghost',
+                    style: { padding: '3px 8px', fontSize: 11 },
+                    disabled: result?.state === 'testing',
+                    onClick: () => testSource({ key: testKey, source })
+                  }, result?.state === 'testing' ? '测试中' : '测试'),
+                  builtin
+                    ? h('button', {
+                        className: 'hs-btn ghost',
+                        style: { padding: '3px 8px', fontSize: 11 },
+                        onClick: () => handleToggleBuiltin(source.id, off)
+                      }, off ? '开启' : '关闭')
+                    : h('button', {
+                        className: 'hs-btn ghost',
+                        style: { padding: '3px 8px', fontSize: 11, color: '#f87171' },
+                        onClick: () => handleDeleteSource(source.id)
+                      }, '移除')
+                ])
+              ]);
+            };
+
             return h('div', { key: 'sources-panel' }, [
               h('div', { className: 'hs-cfg-head' }, [
                 h('div', null, [
                   h('div', { className: 'hs-cfg-title' }, '订阅源'),
                   h('div', { className: 'hs-cfg-subtitle' },
-                    '聚合扫描会并发采集所有启用的源；同一件事被多个源覆盖时，候选的「跨源共现」分才站得住')
+                    '内置源默认开启、可关闭但不可删除；自定义源叠加在它们之上。同一件事被多个源覆盖时，候选的「跨源共现」分才站得住')
                 ]),
-                builtinMode
-                  ? h('span', { className: 'hs-cfg-state warn' }, [h('span', { className: 'hs-cfg-dot' }), '内置默认源生效中'])
-                  : h('span', { className: 'hs-cfg-state ok' }, [h('span', { className: 'hs-cfg-dot' }), `${enabledCount} 个源生效中`])
+                h('span', { className: 'hs-cfg-state ok' }, [
+                  h('span', { className: 'hs-cfg-dot' }),
+                  `${activeSourceCount} 个源生效中`
+                ])
               ]),
 
               h('div', { className: 'hs-cfg-overview' }, [
                 h('div', { className: 'hs-cfg-stat' }, [
                   h('div', { className: 'hs-cfg-stat-label' }, '生效中'),
-                  h('div', { className: 'hs-cfg-stat-value' }, [String(enabledCount), h('span', { className: 'weak' }, '个源')])
-                ]),
-                h('div', { className: 'hs-cfg-stat' }, [
-                  h('div', { className: 'hs-cfg-stat-label' }, '自定义'),
-                  h('div', { className: 'hs-cfg-stat-value' }, [String(customCount), h('span', { className: 'weak' }, '个')])
+                  h('div', { className: 'hs-cfg-stat-value' }, [String(activeSourceCount), h('span', { className: 'weak' }, '个源')])
                 ]),
                 h('div', { className: 'hs-cfg-stat' }, [
                   h('div', { className: 'hs-cfg-stat-label' }, '内置'),
                   h('div', { className: 'hs-cfg-stat-value' }, [
-                    String(builtinEnabled),
-                    h('span', { className: 'weak' }, missingBuiltins.length ? `另有 ${missingBuiltins.length} 个未启用` : '个')
+                    String(enabledBuiltins.length),
+                    h('span', { className: 'weak' }, disabledBuiltins.length ? `另有 ${disabledBuiltins.length} 个已关闭` : '个全开')
                   ])
+                ]),
+                h('div', { className: 'hs-cfg-stat' }, [
+                  h('div', { className: 'hs-cfg-stat-label' }, '自定义'),
+                  h('div', { className: 'hs-cfg-stat-value' }, [String(customSources.length), h('span', { className: 'weak' }, '个')])
                 ]),
                 h('div', { className: 'hs-cfg-stat' }, [
                   h('div', { className: 'hs-cfg-stat-label' }, '最近抓取'),
@@ -4419,7 +4563,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'hs-cfg-section' }, [
                 h('div', { className: 'hs-cfg-section-head' }, [
                   h('div', { className: 'hs-cfg-section-title' }, '添加'),
-                  h('div', { className: 'hs-cfg-section-note' }, 'RSS / Atom · GitHub Release · Hacker News')
+                  h('div', { className: 'hs-cfg-section-note' }, 'id 自动从域名推导 · 可以先测试再添加')
                 ]),
                 h('div', { className: 'hs-card' }, [
                   h('div', { className: `hs-src-add ${newKind === 'hn' ? 'hn' : ''}` }, [
@@ -4430,15 +4574,9 @@ window.__ModuleLoader__.load({
                     }, kindOptions.map(o => h('option', { key: o.value, value: o.value }, o.label))),
                     h('input', {
                       className: 'hs-input hs-cfg-mono',
-                      placeholder: 'swift-org',
-                      value: newId,
-                      onChange: (e) => setNewId(e.target.value)
-                    }),
-                    h('input', {
-                      className: 'hs-input hs-cfg-mono',
                       placeholder: newKind === 'github-release'
                         ? 'apple/swift'
-                        : (newKind === 'hn' ? '留空即可，HN 不需要 URL' : 'https://www.swift.org/atom.xml'),
+                        : (newKind === 'hn' ? '留空即可，HN 不需要 URL' : 'https://www.ifanr.com/feed'),
                       value: newTarget,
                       disabled: newKind === 'hn',
                       onChange: (e) => setNewTarget(e.target.value)
@@ -4450,10 +4588,23 @@ window.__ModuleLoader__.load({
                       value: newPoints,
                       onChange: (e) => setNewPoints(e.target.value)
                     }),
-                    h('button', { className: 'hs-btn primary', onClick: handleAddSource }, '+ 添加')
+                    h('button', {
+                      className: 'hs-btn',
+                      disabled: !formReady || formTest?.state === 'testing',
+                      onClick: () => testSource({ key: '__form__', source: formSource() })
+                    }, formTest?.state === 'testing' ? '测试中…' : '测试'),
+                    h('button', {
+                      className: 'hs-btn primary',
+                      disabled: !formReady,
+                      onClick: handleAddSource
+                    }, '+ 添加')
                   ]),
-                  h('div', { className: 'hs-form-hint' },
-                    'ID 用于来源标注，改一次就是新源；GitHub Release 填 owner/repo，Hacker News 只需要最低热度')
+                  h('div', { className: 'hs-form-hint' }, [
+                    derivedId
+                      ? `来源标注 id：${derivedId}（自动推导，不用手填）`
+                      : '填好地址后自动推导来源 id，用于「来源：xxx」标注',
+                    formTest && h('span', { style: { marginLeft: 10 } }, testBadge(formTest))
+                  ])
                 ])
               ]),
 
@@ -4461,64 +4612,28 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'hs-cfg-section-head' }, [
                   h('div', { className: 'hs-cfg-section-title' }, '订阅源清单'),
                   h('div', { className: 'hs-cfg-section-note' },
-                    builtinMode
-                      ? '配置里没有自定义源，扫描直接用内置默认源'
-                      : '带「内置」标签的来自插件自带推荐源')
+                    '单源失败只记录下来，不中断其他源；失败名单出现在候选页的抓取详情里')
                 ]),
                 h('div', { className: 'hs-card' }, [
                   h('div', { className: 'hs-card-header' }, [
                     h('div', null, [
-                      h('div', { className: 'hs-card-title' }, `生效中 ${enabledCount} 个`),
-                      h('div', { className: 'hs-card-subtitle' }, '单源失败只记录下来，不中断其他源；失败名单出现在候选页的抓取详情里')
+                      h('div', { className: 'hs-card-title' }, `生效中 ${activeSourceCount} 个`),
+                      h('div', { className: 'hs-card-subtitle' }, '内置源来自插件自带推荐；关掉不会删除，随时可以再开')
                     ]),
-                    !builtinMode && missingBuiltins.length > 0 && h('button', {
+                    disabledBuiltins.length > 0 && h('button', {
                       className: 'hs-btn',
-                      onClick: handleEnableBuiltins
-                    }, `⚡ 启用全部内置（${missingBuiltins.length}）`)
+                      onClick: handleEnableAllBuiltins
+                    }, `⚡ 全部开启内置（${disabledBuiltins.length}）`)
                   ]),
 
-                  enabledCount === 0 && h('div', {
+                  activeSourceCount === 0 && h('div', {
                     style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary, #8c909e)', padding: '6px 2px' }
-                  }, '还没有任何源：先加一个自定义源，或启用下面的内置推荐源。'),
+                  }, '当前一个源都没生效：把内置源打开，或在上面加一个自定义源。'),
 
                   h('div', { className: 'hs-src-rows' }, [
-                    listedSources.map(source => h('div', { key: source.id, className: 'hs-src-row' }, [
-                      h('span', { className: `hs-src-kind ${kindClass(source.kind)}` }, kindLabel(source.kind)),
-                      h('div', { className: 'hs-src-main' }, [
-                        h('div', { className: 'hs-src-title' }, [
-                          source.id,
-                          builtinIds.has(source.id) && h('span', { className: 'hs-src-kind hs-src-builtin' }, '内置')
-                        ]),
-                        h('div', { className: 'hs-src-target', title: targetOf(source) }, targetOf(source))
-                      ]),
-                      h('div', { className: 'hs-src-actions' }, builtinMode
-                        ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #9da1b0)' } }, '默认生效')
-                        : h('button', {
-                            className: 'hs-btn ghost',
-                            style: { padding: '3px 8px', fontSize: 11, color: '#f87171' },
-                            onClick: () => handleDeleteSource(source.id)
-                          }, '移除'))
-                    ])),
-
-                    missingBuiltins.map(builtin => h('div', {
-                      key: `builtin-${builtin.id}`,
-                      className: 'hs-src-row pending'
-                    }, [
-                      h('span', { className: `hs-src-kind ${kindClass(builtin.kind)}` }, kindLabel(builtin.kind)),
-                      h('div', { className: 'hs-src-main' }, [
-                        h('div', { className: 'hs-src-title' }, [
-                          builtin.id,
-                          h('span', { className: 'hs-src-kind hs-src-builtin' }, '内置'),
-                          h('span', { className: 'hs-src-kind' }, '未启用')
-                        ]),
-                        h('div', { className: 'hs-src-target', title: targetOf(builtin) }, targetOf(builtin))
-                      ]),
-                      h('div', { className: 'hs-src-actions' }, h('button', {
-                        className: 'hs-btn',
-                        style: { padding: '3px 10px', fontSize: 11 },
-                        onClick: () => handleAddPresetSource(builtin)
-                      }, '启用'))
-                    ]))
+                    enabledBuiltins.map((source) => sourceRow(source, { builtin: true })),
+                    customSources.map((source) => sourceRow(source, { builtin: false })),
+                    disabledBuiltins.map((source) => sourceRow(source, { builtin: true }))
                   ])
                 ])
               ]),
@@ -5532,7 +5647,23 @@ window.__ModuleLoader__.load({
         renderProgressModal(),
 
         // ── 博客正文查看：套博客排版的只读预览 ──
-        blogPreview && h('div', { className: 'hs-modal-mask', key: 'blog-preview-modal', style: { zIndex: 1150 } }, [
+        blogPreview && (() => {
+          // 正文开头的 H1 就是站点上的标题：抽出来单独渲染，正文里不再重复
+          const raw = String(blogPreview.content || '');
+          const lines = raw.split(/\r?\n/);
+          let cursor = 0;
+          if (lines[0] && lines[0].trim() === '---') {
+            cursor = 1;
+            while (cursor < lines.length && lines[cursor].trim() !== '---') cursor += 1;
+            cursor += 1;
+          }
+          while (cursor < lines.length && !lines[cursor].trim()) cursor += 1;
+          const heading = (lines[cursor] || '').match(/^#\s+(.*)$/);
+          const previewTitle = heading ? heading[1].trim() : '';
+          const previewBody = heading
+            ? [...lines.slice(0, cursor), ...lines.slice(cursor + 1)].join('\n')
+            : raw;
+          return h('div', { className: 'hs-modal-mask', key: 'blog-preview-modal', style: { zIndex: 1150 } }, [
           h('div', { className: 'hs-bp-modal' }, [
             h('div', { className: 'hs-bp-header' }, [
               h('div', { style: { minWidth: 0 } }, [
@@ -5548,7 +5679,9 @@ window.__ModuleLoader__.load({
             ]),
             h('div', { className: 'hs-bp-scroll' }, [
               h('article', { className: 'hs-bp' }, [
-                h('h1', { className: 'hs-bp-title' }, blogPreview.item?.title || blogPreview.item?.slug || '未命名'),
+                // 站点上标题来自正文里的 H1，meta 插在它后面：这里按同样的顺序排，
+                // 既不会出现两个标题，也不会让日期跑到标题上面
+                h('h1', { className: 'hs-bp-title' }, previewTitle || blogPreview.item?.title || blogPreview.item?.slug || '未命名'),
                 h('div', { className: 'hs-bp-meta' }, [
                   blogPreview.item?.date && h('span', null, blogPreview.item.date),
                   ...(Array.isArray(blogPreview.item?.tags) ? blogPreview.item.tags : [])
@@ -5559,17 +5692,16 @@ window.__ModuleLoader__.load({
                 blogPreview.loading && h('div', { className: 'hs-bp-empty' }, '正在读取正文…'),
                 blogPreview.error && h('div', { className: 'hs-bp-empty', style: { color: '#f87171' } }, blogPreview.error),
                 !blogPreview.loading && !blogPreview.error && (() => {
-                  const body = String(blogPreview.content || '');
-                  const hasBody = body.split('\n').slice(1).join('\n').trim().length > 0;
-                  if (!hasBody) {
+                  if (!previewBody.trim()) {
                     return h('div', { className: 'hs-bp-empty' }, '正文还是空的（只有标题与来源引用），先在编辑器里写或点「AI 写正文」');
                   }
-                  return renderMarkdownAst(body, { frontmatter: false });
+                  return renderMarkdownAst(previewBody, { frontmatter: false });
                 })()
               ])
             ])
           ])
-        ]),
+          ]);
+        })(),
 
         // ── 在线文章与草稿编辑器 / 预览全屏模态框 ──
         editModalItem && h('div', { className: 'hs-modal-mask', key: 'edit-modal', style: { zIndex: 1050 } }, [

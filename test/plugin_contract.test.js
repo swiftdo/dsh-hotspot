@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 /**
  * 插件壳的契约测试。
@@ -90,12 +90,18 @@ test('面板契约：生成草稿先确认标题与 slug，写作可取消', () 
   assert.ok(client.includes('正文待写'), '骨架草稿要能一眼看出来');
 });
 
-test('订阅源页：内置源 hero 已移除，清单改成行式', () => {
+test('订阅源页：内置源常驻可关不可删，id 自动推导，行内可测连通性', () => {
   const client = readFileSync('src/client.js', 'utf8');
   assert.ok(!client.includes('内置精选源'), 'hero 不再出现在页面上');
   assert.ok(!client.includes('hs-hero-banner'), 'hero 的样式与标记一起删掉');
   assert.ok(client.includes('hs-src-rows'), '清单用行式渲染');
-  assert.ok(client.includes('⚡ 启用全部内置'), '批量启用入口还在（移到了清单卡头）');
+  assert.ok(client.includes('sources/builtin'), '内置源走开关接口（可关不可删）');
+  assert.ok(client.includes('全部开启内置'), '被关掉的内置源要能一键全开');
+  assert.ok(!client.includes('handleAddPresetSource'), '不再把内置源复制进自定义源列表');
+  assert.ok(client.includes('sources/derive'), 'id 由服务端从域名推导，面板只读展示');
+  assert.ok(!client.includes('setNewId'), '添加表单不再手填 id');
+  assert.ok(client.includes('sources/test'), '每行都能测一次连通性');
+  assert.ok(client.includes('hs-src-test'), '测试结果就地显示在那一行');
   assert.ok(client.includes('hs-src-rss'), 'RSS 地址条保留');
 });
 
@@ -134,4 +140,13 @@ test('部署实时日志：弹窗读 /api/deploy/status，关掉不中断部署'
   assert.ok(client.includes('查看部署日志'), '部署中按钮要能接回日志弹窗');
   assert.ok(client.includes('关掉不影响部署'), '要讲清关闭不中断');
   assert.ok(!client.includes('/deploy/cancel'), '不提供取消部署');
+});
+
+test('README 里的截图链接都指向真实存在的文件', () => {
+  const readme = readFileSync('README.md', 'utf8');
+  const images = [...readme.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1]);
+  assert.ok(images.length >= 5, 'README 应该带产品截图');
+  for (const rel of images) {
+    assert.ok(existsSync(rel), `README 引用的图片不存在：${rel}`);
+  }
 });

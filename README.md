@@ -4,6 +4,34 @@
 
 零运行时依赖，纯 ESM JavaScript（Node ≥ 20.6）。`npm test` 用内置 `node:test`，不需要装任何东西。
 
+## 界面
+
+截图来自真实运行（DeepSeek Harness 侧栏里的 dsh-hotspot 面板），不是设计稿。
+
+### 候选：每天 15 条，跨源共现与新鲜度算分
+
+![热点候选](docs/screenshots/candidates.png)
+
+### 订阅源：内置源常驻（可关不可删）+ 自定义源，id 自动推导，每行可测连通性
+
+![订阅源管理](docs/screenshots/sources.png)
+
+### 生成草稿：模型起 3 个中文标题，定稿后按标题重写简介
+
+![生成草稿](docs/screenshots/scaffold.png)
+
+### 六步链路进度：关掉弹窗任务照跑，回来点卡片上的「写作中」能再看
+
+![生成进度](docs/screenshots/progress.png)
+
+### 博客正文查看：草稿落在站点目录外，先按站点排版近似预览
+
+![博客正文查看](docs/screenshots/preview.png)
+
+### 设置：连接 / 生成 / 发布 / 画像 / 诊断，保存后服务端热生效
+
+![设置](docs/screenshots/settings.png)
+
 ## 支持哪些博客
 
 **目前只有 VitePress。** 其他生成器（Hexo、Hugo、Astro）需要另写一个 `Target` 适配器——core 不用改，但适配器现在还不存在，`target.kind` 只认 `vitepress`。
@@ -180,7 +208,19 @@ node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 
 
 `init` 写出的 `sources` 只是示例，务必换成你自己领域的源——跨源共现信号要多个源覆盖同一领域才有意义（见「已知限制」）。
 
-`sources` 为空（或干脆没写这个字段）时，扫描不会报错，而是回落到插件自带的默认源（`sopilot-hottweets`）：配置里写了源就只抓配置里的，一个都没写就用默认源。这条判定由 `src/core/sources.js` 的 `resolveSources()` 统一给出，面板的「订阅源清单」和 `hotspot_run` 读的是同一个结果——所以面板显示的生效源一定就是实际被抓的源。清空全部自定义源等于回到默认源。
+**内置源常驻、默认全开**，与 `sources` 里的自定义源叠加（内置在前）。内置源**可以关闭，但不能删除、不能改地址**——关闭记在配置的 `disabledBuiltins: ["ifanr"]` 里，只记「关掉的」，所以升级新增内置源时你不用补任何配置。这条判定由 `src/core/sources.js` 的 `resolveSources()` 统一给出，面板的「订阅源清单」和 `hotspot_run` 读的是同一个结果——面板显示的生效源一定就是实际被抓的源。
+
+| 内置源 | 地址 | 说明 |
+|---|---|---|
+| `sopilot-hottweets` | `https://sopilot.net/rss/hottweets` | SoPilot AI 爆款推文 |
+| `appinn` | `https://www.appinn.com/feed/` | 小众软件 |
+| `people-headlines` | `https://plink.anyfeeder.com/people` | 人民网头条（anyfeeder 镜像） |
+| `ifanr` | `https://www.ifanr.com/feed` | 爱范儿 |
+| `geekpark` | `http://www.geekpark.net/rss` | 极客公园 |
+
+> 36氪（`https://36kr.com/feed`）没进内置池：直连返回的是火山引擎的人机校验页（HTML），服务端拿不到 RSS，anyfeeder 的 `36kr` 镜像同样是 HTML。放进来的话每次扫描都会多一条「抓取失败」。
+
+**自定义源不用填 id**：面板会从域名推导（`www.ifanr.com/feed` → `ifanr`、`plink.anyfeeder.com/people` → `anyfeeder-people`、GitHub Release `apple/swift` → `apple-swift`、HN → `hn`），撞上已有 id 自动加 `-2`。id 只用于「来源：xxx」标注，推导结果在表单里只读展示。**每条源都能单独测连通性**：点「测试」就地抓一次，行内显示 `✓ 12 条 · 380ms` 或失败原因，不入库、不改配置。
 
 ## 怎么确认它真的可用
 
@@ -694,7 +734,10 @@ Desktop 的 `desktop` profile 由 Electron 独占管理，`dsh plugin --profile 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/hotspot/api/state` | 一次返回 sources / config / articles / drafts / 最新 digest |
-| POST | `/hotspot/api/sources` | 整体写入源列表（带 id 与字段校验） |
+| POST | `/hotspot/api/sources` | 整体写入**自定义**源列表（`id` 可省略，服务端从域名推导；与内置源同 URL → 409 `ERR_BUILTIN_URL`，占用内置 id → 400 `ERR_BUILTIN_ID`） |
+| POST | `/hotspot/api/sources/builtin` | 开关内置源 `{ id, enabled }`；关闭记进 `disabledBuiltins`，未知 id → 404 `ERR_UNKNOWN_BUILTIN` |
+| GET | `/hotspot/api/sources/derive` | 只读推导源 id（`?kind=&url=` 或 `?kind=github-release&repo=`），面板表单的只读预览用它 |
+| POST | `/hotspot/api/sources/test` | 连接测试：真的抓一次，返回 `{ ok, items, ms, sample, error }`；抓取失败仍是 HTTP 200（测试完成了，只是源不通） |
 | POST | `/hotspot/api/config` | 局部更新 projectRoot / 目录 / rank / publish / deploy.{build,script}（合并语义，只传 build 不会抹掉 script） |
 | POST | `/hotspot/api/run` | 触发一次抓取；已有一次在跑时回 409 `ERR_SCAN_BUSY` |
 | POST | `/hotspot/api/scaffold` | 按候选 id 生成草稿（`slug` / `title` / `description` 可覆盖）；`generate:true` 时建完立刻在后台写正文并返回 job；slug 推导不出回 400 `ERR_SLUG_REQUIRED` |

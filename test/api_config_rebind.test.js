@@ -96,13 +96,17 @@ test('换绑博客根目录时，目标根已有的 sources 必须保留', async
   assert.equal(saved.publish.maxPerDay, 2, '目标根的 publish 被覆盖丢失');
   assert.equal(saved.projectRoot, blogDir);
 
-  // 面板状态也要跟着说真话：配置里有源 → config 模式，生效源就是这两条。
+  // 面板状态也要跟着说真话：配置里有自定义源 → config 模式；
+  // 生效源 = 内置源（默认全开）+ 自定义源，不再「有自定义源就把内置源挤掉」。
   const { req: sReq, res: sRes, result: sResult } = mockReqRes('GET', '/dsh-hotspot/api/state');
   await stateRoute.handler(sReq, sRes);
   const state = sResult().json().value;
   assert.equal(state.sourcesMode, 'config');
   assert.deepEqual(state.config.sources.map((s) => s.id), ['sopilot-hottweets', 'swift-org']);
-  assert.deepEqual(state.activeSources.map((s) => s.id), ['sopilot-hottweets', 'swift-org']);
+  const activeIds = state.activeSources.map((s) => s.id);
+  assert.ok(activeIds.includes('swift-org'), '自定义源必须在生效集合里');
+  assert.ok(activeIds.includes('appinn'), '内置源默认全开，应与自定义源叠加');
+  assert.deepEqual(state.disabledBuiltins, []);
 });
 
 test('未绑定状态下换绑到已有配置的根，也不会清空对方的 sources', async (t) => {

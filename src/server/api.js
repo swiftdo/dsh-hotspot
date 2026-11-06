@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { createVitePressTarget } from '../adapters/target-vitepress.js';
 import { canonicalUrl, slugify } from '../core/normalize.js';
 import { buildFeedItems, buildRssXml } from '../core/rss.js';
-import { BUILTIN_SOURCES, configuredSources, resolveSources } from '../core/sources.js';
+import { BUILTIN_IDS, BUILTIN_SOURCES, configuredSources, deriveSourceId, isBuiltinDuplicate, resolveSources } from '../core/sources.js';
 import { describeViolations } from '../core/promote.js';
 import { guard, readJson, sendHtml, sendJson } from './http.js';
 import {
@@ -19,6 +19,7 @@ import {
 } from './deploy.js';
 import { createStateBuilder, sourceLabel } from './state.js';
 import { writeSteps } from './write-steps.js';
+import { createSources } from '../adapters/source-rss.js';
 import { LEGACY_PREFIX, PREFIX } from './prefix.js';
 
 /**
@@ -40,6 +41,9 @@ export { LEGACY_PREFIX, PREFIX } from './prefix.js';
 export { BUILTIN_SOURCES };
 
 const VALID_KINDS = new Set(['rss', 'atom', 'github-release', 'hn']);
+
+/** 连接测试只等这么久：测的是「能不能连通」，不是「把当天的都抓下来」。 */
+const SOURCE_TEST_TIMEOUT_MS = 20 * 1000;
 
 /**
  * 候选定位：完整 id（h-20261105-03）、尾号（03 / 3）、序号（3）都认。
@@ -131,14 +135,11 @@ function relativeDraftDir(target) {
   return root ? path.relative(root, draftDir) || draftDir : draftDir;
 }
 
-function validateSource(input) {
+function validateSource(input, { taken = [] } = {}) {
   const source = {
     id: String(input?.id ?? '').trim(),
     kind: String(input?.kind ?? '').trim(),
   };
-  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(source.id)) {
-    return { error: 'id 只能是小写字母、数字、连字符，长度 1–32' };
-  }
   if (!VALID_KINDS.has(source.kind)) {
     return { error: `kind 必须是 ${[...VALID_KINDS].join(' / ')}` };
   }
@@ -151,6 +152,11 @@ function validateSource(input) {
   } else {
     source.url = String(input?.url ?? '').trim();
     if (!/^https?:\/\//i.test(source.url)) return { error: 'url 必须是 http(s) 地址' };
+  }
+  // 不填 id 就从域名推导：面板不再让人手编 id，命令行也照旧能用
+  if (!source.id) source.id = deriveSourceId(source, taken);
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(source.id)) {
+    return { error: 'id 只能是小写字母、数字、连字符，长度 1–32' };
   }
   return { source };
 }
@@ -519,11 +525,33 @@ export function createRoutes(deps) {
 
         const seen = new Set();
         const sources = [];
+        const builtinByUrl = new Map(
+          BUILTIN_SOURCES.filter((source) => source.url).map((source) => [source.url.replace(/\/+$/, ''), source]),
+        );
         for (const raw of body.sources) {
-          const result = validateSource(raw);
+          // 同 id 同地址的内置源复制：直接丢掉，不算错误（用户可能早就手动加过）
+          if (isBuiltinDuplicate(raw)) continue;
+          const result = validateSource(raw, { taken: [...seen, ...BUILTIN_IDS] });
           if (result.error) return sendJson(res, 400, { ok: false, message: result.error });
           if (seen.has(result.source.id)) {
             return sendJson(res, 400, { ok: false, message: `源 id 重复：${result.source.id}` });
+          }
+          // 地址与内置源一模一样：再存一份只会抓两遍
+          const sameUrl = result.source.url ? builtinByUrl.get(result.source.url.replace(/\/+$/, '')) : null;
+          if (sameUrl) {
+            return sendJson(res, 409, {
+              ok: false,
+              code: 'ERR_BUILTIN_URL',
+              message: `这个地址已经是内置源「${sameUrl.name}」（${sameUrl.id}），无需再添加`,
+            });
+          }
+          // 内置源常驻且不可删除：自定义源占用它的 id 会让面板出现两行同名源
+          if (BUILTIN_IDS.has(result.source.id)) {
+            return sendJson(res, 400, {
+              ok: false,
+              code: 'ERR_BUILTIN_ID',
+              message: `「${result.source.id}」是内置源的 id，自定义源请换一个 id`,
+            });
           }
           seen.add(result.source.id);
           sources.push(result.source);
@@ -533,6 +561,112 @@ export function createRoutes(deps) {
         config.sources = sources;
         await writeConfig(config);
         sendJson(res, 200, { ok: true, value: { sources } });
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/sources/builtin`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        const body = await readJson(req);
+        if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
+
+        const id = String(body.id ?? '').trim();
+        if (!BUILTIN_IDS.has(id)) {
+          return sendJson(res, 404, { ok: false, code: 'ERR_UNKNOWN_BUILTIN', message: `没有这个内置源：${id || '(空)'}` });
+        }
+        if (typeof body.enabled !== 'boolean') {
+          return sendJson(res, 400, { ok: false, message: 'enabled 必须是布尔值' });
+        }
+
+        const config = await readConfig();
+        // 只记「关掉的」：默认全开，配置里空数组就等于全开，省得每次升级新增内置源都要补一条
+        const disabled = new Set(Array.isArray(config.disabledBuiltins) ? config.disabledBuiltins : []);
+        if (body.enabled) disabled.delete(id);
+        else disabled.add(id);
+        const list = [...disabled].filter((entry) => BUILTIN_IDS.has(entry));
+        if (list.length > 0) config.disabledBuiltins = list;
+        else delete config.disabledBuiltins;
+        await writeConfig(config);
+
+        const resolved = resolveSources(config);
+        sendJson(res, 200, {
+          ok: true,
+          value: {
+            id,
+            enabled: body.enabled,
+            disabledBuiltins: resolved.disabledBuiltins,
+            activeSources: resolved.sources,
+          },
+        });
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/sources/derive`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['GET'])) return;
+        const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+        const config = await readConfig();
+        const taken = [
+          ...configuredSources(config).map((source) => source.id),
+          ...BUILTIN_IDS,
+        ];
+        const id = deriveSourceId(
+          {
+            kind: parsedUrl.searchParams.get('kind') || 'rss',
+            url: parsedUrl.searchParams.get('url') || '',
+            repo: parsedUrl.searchParams.get('repo') || '',
+          },
+          taken,
+        );
+        sendJson(res, 200, { ok: true, value: { id } });
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${PREFIX}/api/sources/test`,
+      handler: async (req, res) => {
+        if (!guard(req, res, ['POST'])) return;
+        const body = await readJson(req);
+        if (body === undefined) return sendJson(res, 400, { ok: false, message: '请求体不是合法 JSON' });
+
+        // 测的是「这条源能不能用」，不是「配置写没写对」：所以不入库、不改配置，只跑一次抓取
+        const checked = validateSource(body, { taken: [] });
+        if (checked.error) return sendJson(res, 400, { ok: false, code: 'ERR_SOURCE_INVALID', message: checked.error });
+
+        const config = await readConfig();
+        const sinceHours = Number(config.rank?.sinceHours) > 0 ? Number(config.rank.sinceHours) : 36;
+        const since = new Date(Date.now() - sinceHours * 3600 * 1000);
+        const startedAt = Date.now();
+        try {
+          const [adapter] = createSources([checked.source]);
+          const items = await adapter.fetch(since, { timeoutMs: SOURCE_TEST_TIMEOUT_MS });
+          sendJson(res, 200, {
+            ok: true,
+            value: {
+              ok: true,
+              id: checked.source.id,
+              items: items.length,
+              sinceHours,
+              ms: Date.now() - startedAt,
+              sample: items.slice(0, 3).map((item) => item.title),
+            },
+          });
+        } catch (error) {
+          // 抓取失败也算「测试完成」：HTTP 200 + value.ok=false，面板就地显示原因
+          sendJson(res, 200, {
+            ok: true,
+            value: {
+              ok: false,
+              id: checked.source.id,
+              items: 0,
+              sinceHours,
+              ms: Date.now() - startedAt,
+              error: error?.message || String(error),
+            },
+          });
+        }
       },
     },
     {

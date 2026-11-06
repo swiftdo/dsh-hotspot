@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { canonicalUrl } from '../core/normalize.js';
-import { BUILTIN_SOURCES, configuredSources, resolveSources } from '../core/sources.js';
+import { BUILTIN_SOURCES, configuredSources, customSources, resolveSources } from '../core/sources.js';
 import { describeDeploy, readDeployHistory } from './deploy.js';
 import { PREFIX } from './prefix.js';
 
@@ -70,7 +70,9 @@ export function createStateBuilder({ readConfig, configFileIn, getTarget, getSto
     // 真实内容（可能为空），有效集合另给 sourcesMode / activeSources —— 以前把兜底值
     // 写进 config.sources，面板于是认为内置源「已启用」，扫描却按真实配置报
     // 「没有配置任何 sources」，两边说法相反。
-    const { sources: activeSources, mode: sourcesMode } = resolveSources(config);
+    const resolved = resolveSources(config);
+    const { sources: activeSources, mode: sourcesMode } = resolved;
+    const disabledBuiltinSet = new Set(resolved.disabledBuiltins);
     const sourceList = configuredSources(config);
 
     // digest 只留聚合后的候选；raw 里才有当天每个源的全部条目。
@@ -114,10 +116,19 @@ export function createStateBuilder({ readConfig, configFileIn, getTarget, getSto
     return {
       configured: hasConfiguredRoot,
       projectRoot: activeProjectRoot,
-      builtinSources: BUILTIN_SOURCES,
-      // 'config' = 抓配置里的源；'builtin' = 配置没写源，正在用内置默认源。
+      // 'config' 只表示「有自定义源」；内置源现在总是生效，与自定义源叠加。
       sourcesMode,
       activeSources,
+      // 内置源清单（含描述与开关状态）：面板要能「关掉但不删除」，所以状态得逐条给出
+      builtinSources: BUILTIN_SOURCES.map(({ id, name, kind, url, description }) => ({
+        id,
+        name,
+        kind,
+        url,
+        description,
+        enabled: !disabledBuiltinSet.has(id),
+      })),
+      disabledBuiltins: resolved.disabledBuiltins,
       // 以 target 的实际目录为准：它才是读写文件时用的那套路径。
       // 反过来（配置优先）会出现「面板显示 .drafts，实际去 docs/draft 找」的错觉。
       blog: {
@@ -127,6 +138,8 @@ export function createStateBuilder({ readConfig, configFileIn, getTarget, getSto
         draftDir: relativeDir(activeProjectRoot, getTarget()?.draftDir) || config.draftDir || '.drafts',
         digestDir: config.digestDir || '.hotspot',
       },
+      // 去掉「内置源复制」之后的自定义源：面板列表按这一份渲染，不会出现两行同名源
+      customSources: customSources(config),
       config: {
         projectRoot: config.projectRoot || '',
         articleDir: config.articleDir || 'docs',
