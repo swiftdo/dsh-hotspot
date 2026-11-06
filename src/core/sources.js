@@ -49,6 +49,55 @@ export const BUILTIN_SOURCES = [
     url: 'http://www.geekpark.net/rss',
     description: '科技公司与产品动态，偏国内互联网行业',
   },
+  {
+    id: 'ithome',
+    name: 'IT之家',
+    kind: 'rss',
+    url: 'https://www.ithome.com/rss/',
+    description: '国内科技新闻，硬件与互联网产品动态',
+  },
+  {
+    id: 'xueqiu-hot',
+    name: '雪球今日话题',
+    kind: 'rss',
+    url: 'https://www.xueqiu.com/hots/topic/rss',
+    description: '投资者视角的热门话题，常覆盖 AI 与芯片',
+  },
+  {
+    id: 'huggingface-blog',
+    name: 'Hugging Face Blog',
+    kind: 'rss',
+    url: 'https://huggingface.co/blog/feed.xml',
+    description: '开源模型与工具发布（英文，历史文章很多，按时间窗过滤）',
+  },
+  {
+    id: 'jiqizhixin',
+    name: '机器之心',
+    kind: 'rss',
+    url: 'https://decemberpei.cyou/rssbox/wechat-jiqizhixin.xml',
+    description: '国内 AI 媒体，微信公众号镜像（条目少而慢）',
+  },
+  {
+    id: 'arxiv-cs-ai',
+    name: 'arXiv cs.AI',
+    kind: 'rss',
+    url: 'https://rss.arxiv.org/rss/cs.AI',
+    description: '当日 AI 论文更新，量大，适合挑选题而不是读全文',
+  },
+  {
+    id: 'producthunt',
+    name: 'Product Hunt',
+    kind: 'atom',
+    url: 'https://www.producthunt.com/feed',
+    description: '每日新产品（英文，Atom），看工具形态',
+  },
+  {
+    id: 'tldr-ai',
+    name: 'TLDR AI',
+    kind: 'rss',
+    url: 'https://tldr.tech/api/rss/ai',
+    description: '每日 AI 简报（英文），一期一条，信息密度高',
+  },
 ];
 
 /** 内置源 id 集合：判断「这个 id 能不能被自定义源占用」。 */
@@ -133,6 +182,16 @@ const NOISE_SEGMENTS = new Set([
   'feed', 'feeds', 'rss', 'atom', 'index', 'default', 'xml', 'v2', 'v1', 'all', 'latest', 'home',
 ]);
 
+/** 与 validateSource 的上限一致：id 超过 32 个字符就会被接口拒掉。 */
+const MAX_ID_LENGTH = 32;
+
+/** 截到上限并去掉尾部连字符：`decemberpei-rssbox-wechat-jiqizhixin` 这种长域名不能原样当 id。 */
+function clipId(value) {
+  const text = String(value ?? '');
+  if (text.length <= MAX_ID_LENGTH) return text;
+  return text.slice(0, MAX_ID_LENGTH).replace(/-+$/g, '');
+}
+
 function slug(value, max = 40) {
   return String(value ?? '')
     .toLowerCase()
@@ -187,11 +246,13 @@ export function deriveSourceId(source = {}, taken = []) {
     base = [slug(site), ...segments.slice(0, 2)].filter(Boolean).join('-');
   }
 
-  const root = base || 'source';
+  const root = clipId(base || 'source');
   if (!used.has(root)) return root;
   for (let i = 2; i < 100; i += 1) {
-    const candidate = `${root}-${i}`;
+    const suffix = `-${i}`;
+    // 加后缀也要留在 32 字符内，否则推导出来的 id 会被校验拒掉
+    const candidate = `${clipId(root.slice(0, MAX_ID_LENGTH - suffix.length))}${suffix}`;
     if (!used.has(candidate)) return candidate;
   }
-  return `${root}-${Date.now().toString(36).slice(-4)}`;
+  return clipId(`${root}-${Date.now().toString(36).slice(-4)}`);
 }

@@ -139,3 +139,18 @@ test('resolveSources：配置里留着内置源的手工复制时，只生效一
   assert.ok(ids.includes('mine'));
   assert.deepEqual(customSources(config).map((s) => s.id), ['mine']);
 });
+
+test('deriveSourceId：超长域名/路径截到 32 字符内，加后缀也不超', () => {
+  const long = deriveSourceId({ kind: 'rss', url: 'https://decemberpei.cyou/rssbox/wechat-jiqizhixin.xml' }, []);
+  assert.ok(long.length <= 32, `推导出的 id 超过 32 字符会被接口拒掉：${long}`);
+  assert.match(long, /^[a-z0-9][a-z0-9-]*$/, 'id 只能用允许的字符');
+  assert.ok(!long.endsWith('-'), '不能以连字符结尾');
+
+  // 撞名后加后缀也要留在上限内
+  const collided = deriveSourceId(
+    { kind: 'rss', url: 'https://decemberpei.cyou/rssbox/wechat-jiqizhixin.xml' },
+    [long],
+  );
+  assert.ok(collided.length <= 32, `加后缀后超长：${collided}`);
+  assert.notEqual(collided, long);
+});

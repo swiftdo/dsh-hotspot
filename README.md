@@ -217,8 +217,17 @@ node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 
 | `people-headlines` | `https://plink.anyfeeder.com/people` | 人民网头条（anyfeeder 镜像） |
 | `ifanr` | `https://www.ifanr.com/feed` | 爱范儿 |
 | `geekpark` | `http://www.geekpark.net/rss` | 极客公园 |
+| `ithome` | `https://www.ithome.com/rss/` | IT之家 |
+| `xueqiu-hot` | `https://www.xueqiu.com/hots/topic/rss` | 雪球今日话题 |
+| `huggingface-blog` | `https://huggingface.co/blog/feed.xml` | Hugging Face Blog（英文） |
+| `jiqizhixin` | `https://decemberpei.cyou/rssbox/wechat-jiqizhixin.xml` | 机器之心（微信公众号镜像） |
+| `arxiv-cs-ai` | `https://rss.arxiv.org/rss/cs.AI` | arXiv cs.AI（当日论文） |
+| `producthunt` | `https://www.producthunt.com/feed` | Product Hunt（Atom，英文） |
+| `tldr-ai` | `https://tldr.tech/api/rss/ai` | TLDR AI 每日简报（英文） |
 
 > 36氪（`https://36kr.com/feed`）没进内置池：直连返回的是火山引擎的人机校验页（HTML），服务端拿不到 RSS，anyfeeder 的 `36kr` 镜像同样是 HTML。放进来的话每次扫描都会多一条「抓取失败」。
+>
+> **量大不等于候选多**。arXiv cs.AI 一天三百多条、Hugging Face 的历史文章近九百条，它们都会进当天 raw（`sinceHours` 只挡超过时间窗的），但候选仍按 `rank.limit`（默认 15）截断 —— 这些源的用处是「选题面宽」，不是「候选变多」。想压掉噪音就把它们的 `keywords` / 黑名单调严，或者直接在面板里关掉。
 
 **自定义源不用填 id**：面板会从域名推导（`www.ifanr.com/feed` → `ifanr`、`plink.anyfeeder.com/people` → `anyfeeder-people`、GitHub Release `apple/swift` → `apple-swift`、HN → `hn`），撞上已有 id 自动加 `-2`。id 只用于「来源：xxx」标注，推导结果在表单里只读展示。**每条源都能单独测连通性**：点「测试」就地抓一次，行内显示 `✓ 12 条 · 380ms` 或失败原因，不入库、不改配置。
 
