@@ -2402,6 +2402,8 @@ window.__ModuleLoader__.load({
       const [derivedId, setDerivedId] = useState('');
       // 连接测试结果：key 是源 id（表单里用 '__form__'），值 { state, items, ms, error, sample }
       const [sourceTests, setSourceTests] = useState({});
+      // 测不通时的二次确认条：点「仍然添加」才出现，避免把临时超时当成源坏了
+      const [confirmAdd, setConfirmAdd] = useState(false);
       const [newKind, setNewKind] = useState('rss');
       const [newTarget, setNewTarget] = useState('');
       const [newPoints, setNewPoints] = useState(100);
@@ -3257,7 +3259,9 @@ window.__ModuleLoader__.load({
        * @param {{ key: string, source: object }} input
        */
       const testSource = async ({ key, source }) => {
-        setSourceTests((prev) => ({ ...prev, [key]: { state: 'testing' } }));
+        // 记下「测的是哪一份表单」：字段一改，这次通过就不再作数
+        const forKey = JSON.stringify(source);
+        setSourceTests((prev) => ({ ...prev, [key]: { state: 'testing', forKey } }));
         try {
           const res = await fetch(`${API_BASE}/sources/test`, {
             method: 'POST',
@@ -3269,17 +3273,34 @@ window.__ModuleLoader__.load({
           setSourceTests((prev) => ({
             ...prev,
             [key]: value
-              ? { state: value.ok ? 'ok' : 'fail', items: value.items, ms: value.ms, error: value.error, sample: value.sample }
-              : { state: 'fail', error: data.message || '测试失败' }
+              ? { state: value.ok ? 'ok' : 'fail', forKey, items: value.items, ms: value.ms, error: value.error, sample: value.sample }
+              : { state: 'fail', forKey, error: data.message || '测试失败' }
           }));
         } catch (err) {
-          setSourceTests((prev) => ({ ...prev, [key]: { state: 'fail', error: err.message } }));
+          setSourceTests((prev) => ({ ...prev, [key]: { state: 'fail', forKey, error: err.message } }));
         }
       };
 
-      const handleAddSource = async () => {
+      /** 当前这份表单是否「刚测过且通过」——字段一改就失效（forKey 是测试时的快照）。 */
+      const formTestPassed = () => {
+        const result = sourceTests.__form__;
+        if (result?.state !== 'ok' || !result.forKey) return false;
+        const source = newKind === 'github-release'
+          ? { kind: newKind, repo: String(newTarget || '').trim() }
+          : newKind === 'hn'
+            ? { kind: newKind, minPoints: Number(newPoints) || 100 }
+            : { kind: newKind, url: String(newTarget || '').trim() };
+        return result.forKey === JSON.stringify(source);
+      };
+
+      const handleAddSource = async (force = false) => {
         if (!newTarget && newKind !== 'hn') {
           showToast('请填写订阅源地址', true);
+          return;
+        }
+        // 没测过就不让加；测不通要显式确认一次（临时超时和真挂了分不出来）
+        if (!force && !formTestPassed()) {
+          setConfirmAdd(true);
           return;
         }
         // 基数组用「自定义源」：内置源常驻、不能写进 sources，否则会被服务端当成占用内置 id
@@ -3305,6 +3326,7 @@ window.__ModuleLoader__.load({
             setDerivedId('');
             setNewTarget('');
             setSourceTests((prev) => ({ ...prev, __form__: undefined }));
+            setConfirmAdd(false);
             await loadState();
           } else {
             showToast(data.message || '添加源失败', true);
@@ -4459,6 +4481,9 @@ window.__ModuleLoader__.load({
             const formTest = sourceTests.__form__;
             // HN 不需要地址，其余必须填了才能测/提交
             const formReady = newKind === 'hn' || Boolean(String(newTarget || '').trim());
+            // 门禁：没测过 → 添加按钮先引导去测；测通了 → 直接加；测挂了 → 「仍然添加」+ 二次确认
+            const tested = formTest?.state === 'ok' && formTestPassed();
+            const failed = formTest?.state === 'fail' && formTest.forKey === JSON.stringify(formSource());
 
             const testBadge = (result) => {
               if (!result) return null;
@@ -4595,15 +4620,45 @@ window.__ModuleLoader__.load({
                     }, formTest?.state === 'testing' ? '测试中…' : '测试'),
                     h('button', {
                       className: 'hs-btn primary',
-                      disabled: !formReady,
-                      onClick: handleAddSource
-                    }, '+ 添加')
+                      // 没测过就不可点：先测。测挂了才放开成「仍然添加」（走二次确认）
+                      disabled: !formReady || formTest?.state === 'testing' || (!tested && !failed),
+                      title: tested
+                        ? '测试已通过，可以添加'
+                        : failed ? '测试没通过，点这里二次确认后再加' : '先点「测试」确认能连通',
+                      onClick: () => handleAddSource(tested)
+                    }, failed ? '仍然添加' : '+ 添加')
                   ]),
                   h('div', { className: 'hs-form-hint' }, [
                     derivedId
                       ? `来源标注 id：${derivedId}（自动推导，不用手填）`
                       : '填好地址后自动推导来源 id，用于「来源：xxx」标注',
+                    formReady && !tested && !failed && formTest?.state !== 'testing'
+                      && h('span', { style: { marginLeft: 10, color: '#fbbf24' } }, '先点「测试」确认能连通，通过后才能添加'),
                     formTest && h('span', { style: { marginLeft: 10 } }, testBadge(formTest))
+                  ]),
+                  // 测不通时的二次确认：说清原因，再决定要不要加
+                  confirmAdd && h('div', {
+                    style: {
+                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      marginTop: 8, padding: '8px 12px', borderRadius: 8,
+                      background: 'rgba(245, 158, 11, 0.08)',
+                      border: '1px solid rgba(245, 158, 11, 0.28)',
+                      borderLeft: '3px solid #fbbf24', fontSize: 12
+                    }
+                  }, [
+                    h('span', { style: { color: '#fbbf24' } }, failed
+                      ? `连通性测试没通过${formTest?.error ? `：${String(formTest.error).slice(0, 80)}` : ''}。仍然添加？`
+                      : '还没测试连通性。仍然添加？'),
+                    h('button', {
+                      className: 'hs-btn',
+                      style: { padding: '3px 10px', fontSize: 11, marginLeft: 'auto' },
+                      onClick: () => setConfirmAdd(false)
+                    }, '取消'),
+                    h('button', {
+                      className: 'hs-btn primary',
+                      style: { padding: '3px 10px', fontSize: 11 },
+                      onClick: () => handleAddSource(true)
+                    }, '确认添加')
                   ])
                 ])
               ]),

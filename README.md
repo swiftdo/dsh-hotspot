@@ -229,7 +229,13 @@ node src/cli.js doctor --online              # 自检：配置 / 目标项目 / 
 >
 > **量大不等于候选多**。arXiv cs.AI 一天三百多条、Hugging Face 的历史文章近九百条，它们都会进当天 raw（`sinceHours` 只挡超过时间窗的），但候选仍按 `rank.limit`（默认 15）截断 —— 这些源的用处是「选题面宽」，不是「候选变多」。想压掉噪音就把它们的 `keywords` / 黑名单调严，或者直接在面板里关掉。
 
-**自定义源不用填 id**：面板会从域名推导（`www.ifanr.com/feed` → `ifanr`、`plink.anyfeeder.com/people` → `anyfeeder-people`、GitHub Release `apple/swift` → `apple-swift`、HN → `hn`），撞上已有 id 自动加 `-2`。id 只用于「来源：xxx」标注，推导结果在表单里只读展示。**每条源都能单独测连通性**：点「测试」就地抓一次，行内显示 `✓ 12 条 · 380ms` 或失败原因，不入库、不改配置。
+**自定义源不用填 id**：面板会从域名推导（`www.ifanr.com/feed` → `ifanr`、`plink.anyfeeder.com/people` → `anyfeeder-people`、GitHub Release `apple/swift` → `apple-swift`、HN → `hn`），撞上已有 id 自动加 `-2`。id 只用于「来源：xxx」标注，推导结果在表单里只读展示。
+
+**添加前必须先测通**：点「测试」就地抓一次，行内显示 `✓ 12 条 · 380ms` 或失败原因，不入库、不改配置。
+
+- 判定「通」= HTTP 能取到且能解析成 feed，**窗口内 0 条也算通**（冷门源可能一天都不更新，拿条数当门槛会误杀）；
+- 没测过 → 添加按钮不可点，提示「先点测试」；改任何一个字段都会让上一次的通过失效（`forKey` 是测试时的表单快照）；
+- 测不通 → 按钮变成「仍然添加」，点了会展开一条二次确认（带失败原因），确认后才写进配置 —— 临时超时和真挂了在面板上分不出来，硬拦会让人卡在一个其实能用的源上。
 
 ## 怎么确认它真的可用
 

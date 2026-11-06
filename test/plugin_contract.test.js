@@ -102,6 +102,9 @@ test('订阅源页：内置源常驻可关不可删，id 自动推导，行内�
   assert.ok(!client.includes('setNewId'), '添加表单不再手填 id');
   assert.ok(client.includes('sources/test'), '每行都能测一次连通性');
   assert.ok(client.includes('hs-src-test'), '测试结果就地显示在那一行');
+  assert.ok(client.includes('formTestPassed'), '添加前要校验「当前这份表单测过且通过」');
+  assert.ok(client.includes('仍然添加'), '测不通时给二次确认，而不是直接拦住');
+  assert.ok(client.includes('确认添加'), '二次确认要有明确的确认按钮');
   assert.ok(client.includes('hs-src-rss'), 'RSS 地址条保留');
 });
 
